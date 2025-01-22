@@ -1,2 +1,0 @@
-robotic_arm
--DCATKIN_DEVEL_PREFIX=/home/lucas-pc/RoboticArm/devel -DCMAKE_INSTALL_PREFIX=/home/lucas-pc/RoboticArm/install -G Unix Makefiles

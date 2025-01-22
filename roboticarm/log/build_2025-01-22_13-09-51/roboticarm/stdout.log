@@ -1,0 +1,31 @@
+running egg_info
+creating build/roboticarm/roboticarm.egg-info
+writing build/roboticarm/roboticarm.egg-info/PKG-INFO
+writing dependency_links to build/roboticarm/roboticarm.egg-info/dependency_links.txt
+writing entry points to build/roboticarm/roboticarm.egg-info/entry_points.txt
+writing requirements to build/roboticarm/roboticarm.egg-info/requires.txt
+writing top-level names to build/roboticarm/roboticarm.egg-info/top_level.txt
+writing manifest file 'build/roboticarm/roboticarm.egg-info/SOURCES.txt'
+reading manifest file 'build/roboticarm/roboticarm.egg-info/SOURCES.txt'
+writing manifest file 'build/roboticarm/roboticarm.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/lucas-pc/RoboticArm/roboticarm/build/roboticarm/build
+creating /home/lucas-pc/RoboticArm/roboticarm/build/roboticarm/build/lib
+creating /home/lucas-pc/RoboticArm/roboticarm/build/roboticarm/build/lib/roboticarm
+copying roboticarm/__init__.py -> /home/lucas-pc/RoboticArm/roboticarm/build/roboticarm/build/lib/roboticarm
+running install
+running install_lib
+creating /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/lib/python3.10/site-packages/roboticarm
+copying /home/lucas-pc/RoboticArm/roboticarm/build/roboticarm/build/lib/roboticarm/__init__.py -> /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/lib/python3.10/site-packages/roboticarm
+byte-compiling /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/lib/python3.10/site-packages/roboticarm/__init__.py to __init__.cpython-310.pyc
+running install_data
+creating /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/share/ament_index
+creating /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/share/ament_index/resource_index
+creating /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/share/ament_index/resource_index/packages
+copying resource/roboticarm -> /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/share/ament_index/resource_index/packages
+copying package.xml -> /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/share/roboticarm
+running install_egg_info
+Copying build/roboticarm/roboticarm.egg-info to /home/lucas-pc/RoboticArm/roboticarm/install/roboticarm/lib/python3.10/site-packages/roboticarm-0.0.0-py3.10.egg-info
+running install_scripts
+writing list of installed files to '/home/lucas-pc/RoboticArm/roboticarm/build/roboticarm/install.log'
