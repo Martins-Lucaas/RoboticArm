@@ -1,1 +1,0 @@
-HOPE HAND FINGER PROTOTYPE by REINCER on Thingiverse: https://www.thingiverse.com/thing:3875608
