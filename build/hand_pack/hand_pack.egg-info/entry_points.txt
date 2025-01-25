@@ -1,0 +1,3 @@
+[console_scripts]
+hand_node = hand_pack.hand_node:main
+

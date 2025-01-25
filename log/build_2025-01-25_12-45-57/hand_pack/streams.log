@@ -1,0 +1,23 @@
+[0.981s] Invoking command in '/home/lucas-pc/RoboticArm/src/hand_pack': PYTHONPATH=/home/lucas-pc/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/lucas-pc/RoboticArm/build/hand_pack/build install --record /home/lucas-pc/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data
+[1.360s] running egg_info
+[1.360s] writing ../../build/hand_pack/hand_pack.egg-info/PKG-INFO
+[1.361s] writing dependency_links to ../../build/hand_pack/hand_pack.egg-info/dependency_links.txt
+[1.361s] writing entry points to ../../build/hand_pack/hand_pack.egg-info/entry_points.txt
+[1.361s] writing requirements to ../../build/hand_pack/hand_pack.egg-info/requires.txt
+[1.361s] writing top-level names to ../../build/hand_pack/hand_pack.egg-info/top_level.txt
+[1.362s] reading manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[1.363s] writing manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[1.363s] running build
+[1.363s] running build_py
+[1.363s] running install
+[1.363s] running install_lib
+[1.365s] running install_data
+[1.365s] copying launch/display.launch.py -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/launch
+[1.366s] copying urdf/hand.xacro -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[1.366s] running install_egg_info
+[1.368s] removing '/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.0-py3.10.egg-info' (and everything under it)
+[1.369s] Copying ../../build/hand_pack/hand_pack.egg-info to /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.0-py3.10.egg-info
+[1.369s] running install_scripts
+[1.399s] Installing hand_node script to /home/lucas-pc/RoboticArm/install/hand_pack/lib/hand_pack
+[1.399s] writing list of installed files to '/home/lucas-pc/RoboticArm/build/hand_pack/install.log'
+[1.413s] Invoked command in '/home/lucas-pc/RoboticArm/src/hand_pack' returned '0': PYTHONPATH=/home/lucas-pc/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/lucas-pc/RoboticArm/build/hand_pack/build install --record /home/lucas-pc/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data
