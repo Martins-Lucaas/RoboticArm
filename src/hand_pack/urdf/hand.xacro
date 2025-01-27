@@ -2,16 +2,24 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="hj_hand">
 
 
-    <link name="base_link">
-        <visual>
-            <geometry>
-                <box size="0.01 0.10 0.01"/> <!-- Ajuste conforme necessário -->
-            </geometry>
-            <material name="white">
-                <color rgba="1 1 1 1"/>
-            </material>
-        </visual>
-    </link>
+  <!-- Definição da base da mão -->
+    <xacro:macro name="base_link" params="parent">
+        <link name="hand_base_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://hand_pack/urdf/mesh/hand_model.stl"/>
+                </geometry>
+            </visual>
+        </link>
+
+        <!-- Junta a mão ao braço -->
+        <joint name="hand_mount" type="fixed">
+            <parent link="${parent}"/>
+            <child link="hand_base_link"/>
+            <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        </joint>
+
+    </xacro:macro>
 
       <xacro:macro name="hj_hand" params="parent *origin">
             <xacro:include filename="$(find hand_pack)/urdf/hj_hand_transmission.xacro" />
@@ -41,7 +49,7 @@
        
 
 <!--****************WRIST PLATE************************* -->  
-      <link name="wrist_plate">
+      <link name="hand_wrist_plate">
             <visual>
                   <geometry>
                         <mesh filename="package://hand_pack/urdf/mesh/F03_AL_link_hand_wrist_part.stl" scale="0.001 0.001 0.001"/> 
@@ -58,10 +66,10 @@
                   <origin xyz = "0.0 0.0 0.0" rpy = "1.57 0.0 0.0"/>
             </collision>
       </link>
-      <joint name="wrist_plate_joint" type="fixed">
+      <joint name="hand_wrist_plate_joint" type="fixed">
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <parent link="${parent}"/>
-            <child link="wrist_plate"/>
+            <child link="hand_wrist_plate"/>
             <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
       </joint>
 
@@ -97,8 +105,8 @@
             </inertial>
       </link>
 
-      <joint name="hand_wrist_plate_to_hand_palm" type="fixed">
-            <parent link="wrist_plate"/>
+      <joint name="hand_hand_wrist_plate_to_hand_palm" type="fixed">
+            <parent link="hand_wrist_plate"/>
             <child link="hand_palm"/>
             <origin xyz="0 0 .026"/>
       </joint>
@@ -1342,10 +1350,5 @@
       </joint>
       <!--motor little  end-->
 </xacro:macro>
-
-<xacro:hj_hand parent="base_link">
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-</xacro:hj_hand>
-
 </robot>
 
