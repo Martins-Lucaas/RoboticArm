@@ -4,7 +4,7 @@
 /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/__pycache__/__init__.cpython-310.pyc
 /home/lucas-pc/RoboticArm/install/hand_pack/share/ament_index/resource_index/packages/hand_pack
 /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/package.xml
-/home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/launch/combined_launch.py
+/home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/launch/display.launch.py
 /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/hj_hand_transmission.xacro
 /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/hj_hand_world.urdf.xacro
 /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/combined_robot.urdf.xacro

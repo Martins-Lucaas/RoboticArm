@@ -1,40 +1,16 @@
-# Copyright (c) 2021 PickNik, Inc.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-#    * Redistributions of source code must retain the above copyright
-#      notice, this list of conditions and the following disclaimer.
-#
-#    * Redistributions in binary form must reproduce the above copyright
-#      notice, this list of conditions and the following disclaimer in the
-#      documentation and/or other materials provided with the distribution.
-#
-#    * Neither the name of the {copyright_holder} nor the names of its
-#      contributors may be used to endorse or promote products derived from
-#      this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-#
-# Author: Denis Stogl
-
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
+from launch.conditions import IfCondition, UnlessCondition
+from launch.substitutions import (
+    Command,
+    FindExecutable,
+    LaunchConfiguration,
+    PathJoinSubstitution
+)
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
-
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 def generate_launch_description():
     declared_arguments = []
@@ -89,13 +65,23 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "tf_prefix",
             default_value='""',
-            description="Prefix of the joint names, useful for "
-            "multi-robot setup. If changed than also joint names in the controllers' configuration "
-            "have to be updated.",
+            description="Prefix of the joint names for multi-robot setups.",
         )
     )
 
-    # Initialize Arguments
+    # Argumento para escolher entre Gazebo ou RViz
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "gazebo",
+            default_value="false",
+            choices=["true", "false"],
+            description="If 'true', launch Gazebo instead of RViz."
+        )
+    )
+
+    # ---------------------------------------------------------------------
+    # Initialize LaunchConfigurations
+    # ---------------------------------------------------------------------
     ur_type = LaunchConfiguration("ur_type")
     safety_limits = LaunchConfiguration("safety_limits")
     safety_pos_margin = LaunchConfiguration("safety_pos_margin")
@@ -103,36 +89,39 @@ def generate_launch_description():
     description_file = LaunchConfiguration("description_file")
     tf_prefix = LaunchConfiguration("tf_prefix")
     rviz_config_file = LaunchConfiguration("rviz_config_file")
+    gazebo_arg = LaunchConfiguration("gazebo")
 
+    # ---------------------------------------------------------------------
+    # Robot description
+    # ---------------------------------------------------------------------
     robot_description_content = Command(
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
             " ",
             description_file,
             " ",
-            "safety_limits:=",
-            safety_limits,
+            "safety_limits:=", safety_limits,
             " ",
-            "safety_pos_margin:=",
-            safety_pos_margin,
+            "safety_pos_margin:=", safety_pos_margin,
             " ",
-            "safety_k_position:=",
-            safety_k_position,
+            "safety_k_position:=", safety_k_position,
             " ",
-            "name:=",
-            "ur",
+            "name:=", "ur",
             " ",
-            "ur_type:=",
-            ur_type,
+            "ur_type:=", ur_type,
             " ",
-            "tf_prefix:=",
-            tf_prefix,
+            "tf_prefix:=", tf_prefix,
         ]
     )
     robot_description = {
-        "robot_description": ParameterValue(value=robot_description_content, value_type=str)
+        "robot_description": ParameterValue(
+            value=robot_description_content, value_type=str
+        )
     }
 
+    # ---------------------------------------------------------------------
+    # ROS Nodes
+    # ---------------------------------------------------------------------
     joint_state_publisher_node = Node(
         package="joint_state_publisher_gui",
         executable="joint_state_publisher_gui",
@@ -143,18 +132,65 @@ def generate_launch_description():
         output="both",
         parameters=[robot_description],
     )
+
+    # ---------------------------------------------------------------------
+    # RViz (apenas se gazebo==false)
+    # ---------------------------------------------------------------------
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         output="log",
         arguments=["-d", rviz_config_file],
+        condition=UnlessCondition(gazebo_arg),
     )
 
+    # ---------------------------------------------------------------------
+    # Gazebo
+    # ---------------------------------------------------------------------
+    # Inicia o Gazebo
+    gazebo_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('gazebo_ros'),
+                'launch',
+                'gazebo.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'world': PathJoinSubstitution([
+                FindPackageShare('ur_description'),
+                'worlds',
+                'empty.world'  # Altere para seu mundo personalizado
+            ])
+        }.items(),
+        condition=IfCondition(gazebo_arg)
+    )
+
+    # Spawn do robô no Gazebo
+    spawn_entity_node = Node(
+        package='gazebo_ros',
+        executable='spawn_entity.py',
+        arguments=[
+            '-topic', 'robot_description',
+            '-entity', 'ur_robot',
+            '-x', '0.0',
+            '-y', '0.0',
+            '-z', '0.1'
+        ],
+        output='screen',
+        condition=IfCondition(gazebo_arg)
+    )
+
+    # ---------------------------------------------------------------------
+    # Junta todos os componentes
+    # ---------------------------------------------------------------------
     nodes_to_start = [
         joint_state_publisher_node,
         robot_state_publisher_node,
-        rviz_node,
+        rviz_node,            # UnlessCondition(gazebo_arg)
+        gazebo_launch,        # IfCondition(gazebo_arg)
+        spawn_entity_node,    # IfCondition(gazebo_arg)
     ]
 
     return LaunchDescription(declared_arguments + nodes_to_start)

@@ -10,7 +10,7 @@ setup.py
 ../../build/hand_pack/hand_pack.egg-info/zip-safe
 hand_pack/__init__.py
 hand_pack/hand_node.py
-launch/combined_launch.py
+launch/display.launch.py
 resource/hand_pack
 test/test_copyright.py
 test/test_flake8.py
