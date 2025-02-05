@@ -18,6 +18,7 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument(
             "ur_type",
+            default_value="ur3",
             description="Type/series of used UR robot.",
             choices=["ur3", "ur3e", "ur5", "ur5e", "ur10", "ur10e", "ur16e", "ur20", "ur30"],
         )
@@ -75,12 +76,12 @@ def generate_launch_description():
             "gazebo",
             default_value="false",
             choices=["true", "false"],
-            description="If 'true', launch Gazebo instead of RViz."
+            description="If 'true', inicia o gazebo ao inves do RVIZ."
         )
     )
 
     # ---------------------------------------------------------------------
-    # Initialize LaunchConfigurations
+    # Configurações de launch
     # ---------------------------------------------------------------------
     ur_type = LaunchConfiguration("ur_type")
     safety_limits = LaunchConfiguration("safety_limits")
@@ -134,7 +135,7 @@ def generate_launch_description():
     )
 
     # ---------------------------------------------------------------------
-    # RViz (apenas se gazebo==false)
+    # RViz (apenas se gazebo=false)
     # ---------------------------------------------------------------------
     rviz_node = Node(
         package="rviz2",
@@ -161,7 +162,7 @@ def generate_launch_description():
             'world': PathJoinSubstitution([
                 FindPackageShare('ur_description'),
                 'worlds',
-                'empty.world'  # Altere para seu mundo personalizado
+                'gazebo.world'  #Necessário criar o mundo de configuração ainda
             ])
         }.items(),
         condition=IfCondition(gazebo_arg)
