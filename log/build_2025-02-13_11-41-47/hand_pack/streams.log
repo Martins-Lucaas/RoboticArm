@@ -1,0 +1,52 @@
+[0.463s] Invoking command in '/home/biolab-linux/RoboticArm/build/hand_pack': PYTHONPATH=/home/biolab-linux/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/biolab-linux/RoboticArm/build/hand_pack/build
+[0.653s] running develop
+[0.775s] Removing /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand-pack.egg-link (link to .)
+[0.802s] Invoked command in '/home/biolab-linux/RoboticArm/build/hand_pack' returned '0': PYTHONPATH=/home/biolab-linux/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/biolab-linux/RoboticArm/build/hand_pack/build
+[0.803s] Invoking command in '/home/biolab-linux/RoboticArm/src/hand_pack': PYTHONPATH=/home/biolab-linux/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/biolab-linux/RoboticArm/build/hand_pack/build install --record /home/biolab-linux/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data --force
+[0.982s] running egg_info
+[0.983s] writing ../../build/hand_pack/hand_pack.egg-info/PKG-INFO
+[0.983s] writing dependency_links to ../../build/hand_pack/hand_pack.egg-info/dependency_links.txt
+[0.983s] writing entry points to ../../build/hand_pack/hand_pack.egg-info/entry_points.txt
+[0.983s] writing requirements to ../../build/hand_pack/hand_pack.egg-info/requires.txt
+[0.983s] writing top-level names to ../../build/hand_pack/hand_pack.egg-info/top_level.txt
+[0.984s] reading manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[0.985s] writing manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[0.985s] running build
+[0.985s] running build_py
+[0.985s] creating /home/biolab-linux/RoboticArm/build/hand_pack/build
+[0.985s] creating /home/biolab-linux/RoboticArm/build/hand_pack/build/lib
+[0.985s] creating /home/biolab-linux/RoboticArm/build/hand_pack/build/lib/hand_pack
+[0.985s] copying hand_pack/__init__.py -> /home/biolab-linux/RoboticArm/build/hand_pack/build/lib/hand_pack
+[0.986s] copying hand_pack/hand_node.py -> /home/biolab-linux/RoboticArm/build/hand_pack/build/lib/hand_pack
+[0.986s] running install
+[0.986s] running install_lib
+[0.986s] creating /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack
+[0.986s] copying /home/biolab-linux/RoboticArm/build/hand_pack/build/lib/hand_pack/__init__.py -> /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack
+[0.986s] copying /home/biolab-linux/RoboticArm/build/hand_pack/build/lib/hand_pack/hand_node.py -> /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack
+[0.987s] byte-compiling /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/__init__.py to __init__.cpython-310.pyc
+[0.987s] byte-compiling /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/hand_node.py to hand_node.cpython-310.pyc
+[0.987s] running install_data
+[0.987s] copying resource/hand_pack -> /home/biolab-linux/RoboticArm/install/hand_pack/share/ament_index/resource_index/packages
+[0.987s] copying package.xml -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack
+[0.987s] copying launch/display.launch.py -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/launch
+[0.987s] copying urdf/hj_hand_gazebo.xacro -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[0.988s] copying urdf/combined_robot.urdf.xacro -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[0.988s] copying urdf/hj_hand_world.urdf.xacro -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[0.988s] copying urdf/hj_hand_transmission.xacro -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[0.988s] copying urdf/hand.xacro -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[0.988s] copying urdf/mesh/F03_AL_link_hand_wrist_part.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.988s] copying urdf/mesh/F03_AL_link_DIP.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.989s] copying urdf/mesh/F03_Finger_base.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.989s] copying urdf/mesh/F01_AL_link_hand.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.993s] copying urdf/mesh/F01_AL_link_hand_down.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.994s] copying urdf/mesh/F03_Thumb_joint.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.994s] copying urdf/mesh/F03_AL_palm.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.995s] copying urdf/mesh/F03_Thumb_base.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.995s] copying urdf/mesh/F03_AL_link_PIP.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.995s] copying urdf/mesh/F03_AL_link_MCP.stl -> /home/biolab-linux/RoboticArm/install/hand_pack/share/hand_pack/urdf/mesh
+[0.995s] running install_egg_info
+[0.997s] Copying ../../build/hand_pack/hand_pack.egg-info to /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.1-py3.10.egg-info
+[0.998s] running install_scripts
+[1.012s] Installing hand_node script to /home/biolab-linux/RoboticArm/install/hand_pack/lib/hand_pack
+[1.012s] writing list of installed files to '/home/biolab-linux/RoboticArm/build/hand_pack/install.log'
+[1.031s] Invoked command in '/home/biolab-linux/RoboticArm/src/hand_pack' returned '0': PYTHONPATH=/home/biolab-linux/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/biolab-linux/RoboticArm/build/hand_pack/build install --record /home/biolab-linux/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data --force

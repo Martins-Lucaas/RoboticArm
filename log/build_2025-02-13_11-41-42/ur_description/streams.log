@@ -1,0 +1,202 @@
+[0.217s] Invoking command in '/home/biolab-linux/RoboticArm/build/ur_description': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/biolab-linux/RoboticArm/install/hand_pack:/opt/ros/humble /usr/bin/cmake /home/biolab-linux/RoboticArm/src/ur_description -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/biolab-linux/RoboticArm/install/ur_description
+[0.259s] -- The C compiler identification is GNU 11.4.0
+[0.302s] -- The CXX compiler identification is GNU 11.4.0
+[0.309s] -- Detecting C compiler ABI info
+[0.354s] -- Detecting C compiler ABI info - done
+[0.359s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.359s] -- Detecting C compile features
+[0.359s] -- Detecting C compile features - done
+[0.362s] -- Detecting CXX compiler ABI info
+[0.415s] -- Detecting CXX compiler ABI info - done
+[0.421s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.421s] -- Detecting CXX compile features
+[0.421s] -- Detecting CXX compile features - done
+[0.423s] -- Found ament_cmake: 1.3.11 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.511s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[0.558s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[0.579s] -- Found ament_cmake_pytest: 1.3.11 (/opt/ros/humble/share/ament_cmake_pytest/cmake)
+[1.084s] -- Configuring done
+[1.087s] -- Generating done
+[1.088s] -- Build files have been written to: /home/biolab-linux/RoboticArm/build/ur_description
+[1.092s] Invoked command in '/home/biolab-linux/RoboticArm/build/ur_description' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/biolab-linux/RoboticArm/install/hand_pack:/opt/ros/humble /usr/bin/cmake /home/biolab-linux/RoboticArm/src/ur_description -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/biolab-linux/RoboticArm/install/ur_description
+[1.093s] Invoking command in '/home/biolab-linux/RoboticArm/build/ur_description': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/biolab-linux/RoboticArm/install/hand_pack:/opt/ros/humble /usr/bin/cmake --build /home/biolab-linux/RoboticArm/build/ur_description -- -j12 -l12
+[1.108s] Invoked command in '/home/biolab-linux/RoboticArm/build/ur_description' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/biolab-linux/RoboticArm/install/hand_pack:/opt/ros/humble /usr/bin/cmake --build /home/biolab-linux/RoboticArm/build/ur_description -- -j12 -l12
+[1.111s] Invoking command in '/home/biolab-linux/RoboticArm/build/ur_description': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/biolab-linux/RoboticArm/install/hand_pack:/opt/ros/humble /usr/bin/cmake --install /home/biolab-linux/RoboticArm/build/ur_description
+[1.113s] -- Install configuration: ""
+[1.114s] -- Execute custom install script
+[1.114s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/initial_positions.yaml
+[1.117s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10/default_kinematics.yaml
+[1.120s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10/joint_limits.yaml
+[1.122s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10/physical_parameters.yaml
+[1.125s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10/visual_parameters.yaml
+[1.128s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10e/default_kinematics.yaml
+[1.131s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10e/joint_limits.yaml
+[1.134s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10e/physical_parameters.yaml
+[1.136s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur10e/visual_parameters.yaml
+[1.138s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur16e/default_kinematics.yaml
+[1.141s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur16e/joint_limits.yaml
+[1.144s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur16e/physical_parameters.yaml
+[1.146s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur16e/visual_parameters.yaml
+[1.149s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur20/default_kinematics.yaml
+[1.151s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur20/joint_limits.yaml
+[1.154s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur20/physical_parameters.yaml
+[1.156s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur20/visual_parameters.yaml
+[1.159s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3/default_kinematics.yaml
+[1.162s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3/joint_limits.yaml
+[1.164s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3/physical_parameters.yaml
+[1.167s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3/visual_parameters.yaml
+[1.169s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur30/default_kinematics.yaml
+[1.172s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur30/joint_limits.yaml
+[1.174s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur30/physical_parameters.yaml
+[1.177s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur30/visual_parameters.yaml
+[1.179s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3e/default_kinematics.yaml
+[1.182s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3e/joint_limits.yaml
+[1.185s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3e/physical_parameters.yaml
+[1.187s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur3e/visual_parameters.yaml
+[1.190s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5/default_kinematics.yaml
+[1.192s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5/joint_limits.yaml
+[1.195s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5/physical_parameters.yaml
+[1.197s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5/visual_parameters.yaml
+[1.200s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5e/default_kinematics.yaml
+[1.203s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5e/joint_limits.yaml
+[1.205s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5e/physical_parameters.yaml
+[1.208s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/config/ur5e/visual_parameters.yaml
+[1.210s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/launch/gazebo.world
+[1.213s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/launch/view_ur.launch.py
+[1.217s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/collision/base.stl
+[1.219s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/collision/forearm.stl
+[1.222s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/collision/shoulder.stl
+[1.224s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/collision/upperarm.stl
+[1.226s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/collision/wrist1.stl
+[1.229s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/collision/wrist2.stl
+[1.231s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/collision/wrist3.stl
+[1.234s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/visual/base.dae
+[1.236s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/visual/forearm.dae
+[1.241s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/visual/shoulder.dae
+[1.243s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/visual/upperarm.dae
+[1.246s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/visual/wrist1.dae
+[1.249s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/visual/wrist2.dae
+[1.251s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10/visual/wrist3.dae
+[1.254s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/collision/base.stl
+[1.256s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/collision/forearm.stl
+[1.259s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/collision/shoulder.stl
+[1.261s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/collision/upperarm.stl
+[1.263s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/collision/wrist1.stl
+[1.265s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/collision/wrist2.stl
+[1.268s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/collision/wrist3.stl
+[1.271s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/visual/base.dae
+[1.273s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/visual/forearm.dae
+[1.276s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/visual/shoulder.dae
+[1.278s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/visual/upperarm.dae
+[1.280s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/visual/wrist1.dae
+[1.283s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/visual/wrist2.dae
+[1.285s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur10e/visual/wrist3.dae
+[1.288s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur16e/collision/forearm.stl
+[1.291s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur16e/collision/upperarm.stl
+[1.294s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur16e/visual/forearm.dae
+[1.296s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur16e/visual/upperarm.dae
+[1.299s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/LICENSE.txt
+[1.302s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/collision/base.stl
+[1.305s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/collision/forearm.stl
+[1.307s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/collision/shoulder.stl
+[1.310s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/collision/upperarm.stl
+[1.312s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/collision/wrist1.stl
+[1.315s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/collision/wrist2.stl
+[1.318s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/collision/wrist3.stl
+[1.320s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/UR20_DIFF_8bit_2K.png
+[1.323s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/base.dae
+[1.326s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/forearm.dae
+[1.328s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/shoulder.dae
+[1.331s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/upperarm.dae
+[1.333s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/wrist1.dae
+[1.336s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/wrist2.dae
+[1.339s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur20/visual/wrist3.dae
+[1.342s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/collision/base.stl
+[1.344s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/collision/forearm.stl
+[1.346s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/collision/shoulder.stl
+[1.349s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/collision/upperarm.stl
+[1.351s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/collision/wrist1.stl
+[1.353s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/collision/wrist2.stl
+[1.356s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/collision/wrist3.stl
+[1.358s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/visual/base.dae
+[1.360s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/visual/forearm.dae
+[1.363s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/visual/shoulder.dae
+[1.365s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/visual/upperarm.dae
+[1.367s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/visual/wrist1.dae
+[1.370s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/visual/wrist2.dae
+[1.373s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3/visual/wrist3.dae
+[1.375s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur30/LICENSE.txt
+[1.377s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur30/collision/forearm.stl
+[1.380s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur30/collision/upperarm.stl
+[1.383s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur30/visual/UR30_DIFF_8bit_2K.png
+[1.385s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur30/visual/forearm.dae
+[1.387s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur30/visual/upperarm.dae
+[1.390s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/collision/base.stl
+[1.392s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/collision/forearm.stl
+[1.394s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/collision/shoulder.stl
+[1.397s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/collision/upperarm.stl
+[1.399s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/collision/wrist1.stl
+[1.402s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/collision/wrist2.stl
+[1.404s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/collision/wrist3.stl
+[1.407s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/visual/base.dae
+[1.409s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/visual/forearm.dae
+[1.412s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/visual/shoulder.dae
+[1.414s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/visual/upperarm.dae
+[1.417s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/visual/wrist1.dae
+[1.419s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/visual/wrist2.dae
+[1.422s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur3e/visual/wrist3.dae
+[1.425s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/collision/base.stl
+[1.427s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/collision/forearm.stl
+[1.430s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/collision/shoulder.stl
+[1.432s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/collision/upperarm.stl
+[1.435s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/collision/wrist1.stl
+[1.438s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/collision/wrist2.stl
+[1.441s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/collision/wrist3.stl
+[1.444s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/visual/base.dae
+[1.446s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/visual/forearm.dae
+[1.449s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/visual/shoulder.dae
+[1.451s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/visual/upperarm.dae
+[1.454s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/visual/wrist1.dae
+[1.456s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/visual/wrist2.dae
+[1.458s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5/visual/wrist3.dae
+[1.461s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/collision/base.stl
+[1.463s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/collision/forearm.stl
+[1.466s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/collision/shoulder.stl
+[1.468s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/collision/upperarm.stl
+[1.471s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/collision/wrist1.stl
+[1.473s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/collision/wrist2.stl
+[1.476s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/collision/wrist3.stl
+[1.478s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/visual/base.dae
+[1.481s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/visual/forearm.dae
+[1.484s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/visual/shoulder.dae
+[1.486s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/visual/upperarm.dae
+[1.488s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/visual/wrist1.dae
+[1.491s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/visual/wrist2.dae
+[1.493s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/meshes/ur5e/visual/wrist3.dae
+[1.496s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/rviz/view_robot.rviz
+[1.500s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/inc/ur_common.xacro
+[1.502s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/inc/ur_joint_control.xacro
+[1.504s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/inc/ur_sensors.xacro
+[1.507s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/inc/ur_transmissions.xacro
+[1.509s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/ros2_control_mock_hardware.xacro
+[1.512s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/ur.urdf.xacro
+[1.514s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/ur_macro.xacro
+[1.517s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/urdf/ur_mocked.urdf.xacro
+[1.520s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/test/test_ur_urdf_xacro.py
+[1.522s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/test/test_view_ur_launch.py
+[1.525s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ament_index/resource_index/package_run_dependencies/ur_description
+[1.528s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ament_index/resource_index/parent_prefix_path/ur_description
+[1.532s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/environment/ament_prefix_path.sh
+[1.534s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/environment/ament_prefix_path.dsv
+[1.537s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/environment/path.sh
+[1.540s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/environment/path.dsv
+[1.542s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/local_setup.bash
+[1.545s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/local_setup.sh
+[1.547s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/local_setup.zsh
+[1.550s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/local_setup.dsv
+[1.552s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/package.dsv
+[1.555s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ament_index/resource_index/packages/ur_description
+[1.557s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/cmake/ur_descriptionConfig.cmake
+[1.560s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/cmake/ur_descriptionConfig-version.cmake
+[1.562s] -- Symlinking: /home/biolab-linux/RoboticArm/install/ur_description/share/ur_description/package.xml
+[1.566s] Invoked command in '/home/biolab-linux/RoboticArm/build/ur_description' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/biolab-linux/RoboticArm/install/hand_pack:/opt/ros/humble /usr/bin/cmake --install /home/biolab-linux/RoboticArm/build/ur_description

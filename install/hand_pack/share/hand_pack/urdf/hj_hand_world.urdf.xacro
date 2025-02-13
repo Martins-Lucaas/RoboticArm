@@ -1,9 +1,5 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="hj_hand_world">
-      <!-- 
-      Autor: Hyeonjun Park
-      2019.07.17 
-      -->
       <link name="world" />  
 
 

@@ -1,0 +1,21 @@
+[0.465s] Invoking command in '/home/biolab-linux/RoboticArm/src/hand_pack': PYTHONPATH=/home/biolab-linux/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/biolab-linux/RoboticArm/build/hand_pack/build install --record /home/biolab-linux/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data
+[0.628s] running egg_info
+[0.628s] writing ../../build/hand_pack/hand_pack.egg-info/PKG-INFO
+[0.629s] writing dependency_links to ../../build/hand_pack/hand_pack.egg-info/dependency_links.txt
+[0.629s] writing entry points to ../../build/hand_pack/hand_pack.egg-info/entry_points.txt
+[0.629s] writing requirements to ../../build/hand_pack/hand_pack.egg-info/requires.txt
+[0.629s] writing top-level names to ../../build/hand_pack/hand_pack.egg-info/top_level.txt
+[0.630s] reading manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[0.631s] writing manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[0.631s] running build
+[0.631s] running build_py
+[0.631s] running install
+[0.631s] running install_lib
+[0.632s] running install_data
+[0.632s] running install_egg_info
+[0.634s] removing '/home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.1-py3.10.egg-info' (and everything under it)
+[0.634s] Copying ../../build/hand_pack/hand_pack.egg-info to /home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.1-py3.10.egg-info
+[0.635s] running install_scripts
+[0.650s] Installing hand_node script to /home/biolab-linux/RoboticArm/install/hand_pack/lib/hand_pack
+[0.650s] writing list of installed files to '/home/biolab-linux/RoboticArm/build/hand_pack/install.log'
+[0.667s] Invoked command in '/home/biolab-linux/RoboticArm/src/hand_pack' returned '0': PYTHONPATH=/home/biolab-linux/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/biolab-linux/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/biolab-linux/RoboticArm/build/hand_pack/build install --record /home/biolab-linux/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data

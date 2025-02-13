@@ -1,6 +1,0 @@
-Invoking command in '/home/biolab-linux/RoboticArm/build/ur_description': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/biolab-linux/RoboticArm/src/ur_description -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/biolab-linux/RoboticArm/install/ur_description
-Invoked command in '/home/biolab-linux/RoboticArm/build/ur_description' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/biolab-linux/RoboticArm/src/ur_description -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/biolab-linux/RoboticArm/install/ur_description
-Invoking command in '/home/biolab-linux/RoboticArm/build/ur_description': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/biolab-linux/RoboticArm/build/ur_description -- -j12 -l12
-Invoked command in '/home/biolab-linux/RoboticArm/build/ur_description' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/biolab-linux/RoboticArm/build/ur_description -- -j12 -l12
-Invoking command in '/home/biolab-linux/RoboticArm/build/ur_description': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/biolab-linux/RoboticArm/build/ur_description
-Invoked command in '/home/biolab-linux/RoboticArm/build/ur_description' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/biolab-linux/RoboticArm/build/ur_description
