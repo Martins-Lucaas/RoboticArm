@@ -1,1 +1,1 @@
-/opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/environment/path.sh
+/home/lucas-pc/ros2_humble/install/ament_cmake_core/share/ament_cmake_core/cmake/environment_hooks/environment/path.sh

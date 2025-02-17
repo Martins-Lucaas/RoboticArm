@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://wiki.ros.org/xacro" name="$(arg name)">
    <!-- robot name parameter -->
-   <xacro:arg name="name" default="ur5"/>
+   <xacro:arg name="name" default="ur"/>
    <!-- import main macro -->
    <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
 
    <!-- possible 'ur_type' values: ur3, ur3e, ur5, ur5e, ur10, ur10e, ur16e, ur20, ur30 -->
    <!-- the default value should raise an error in case this was called without defining the type -->
-   <xacro:arg name="ur5" default="ur5"/>
+   <xacro:arg name="ur_type" default="ur5x"/>
 
    <!-- parameters -->
    <xacro:arg name="tf_prefix" default="" />
@@ -20,7 +20,7 @@
    <xacro:arg name="safety_pos_margin" default="0.15"/>
    <xacro:arg name="safety_k_position" default="20"/>
 
-   <!--When using  simulations absolute paths are necessary.-->
+   <!--When using gazebo simulations absolute paths are necessary.-->
    <xacro:arg name="force_abs_paths" default="false" />
 
    <!-- create link fixed to the "world" -->

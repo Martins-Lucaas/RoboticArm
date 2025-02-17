@@ -1,1 +1,1 @@
-/home/biolab-linux/RoboticArm/src/ur_description/launch/view_ur.launch.py
+/home/lucas-pc/RoboticArm/src/ur_description/launch/view_ur.launch.py

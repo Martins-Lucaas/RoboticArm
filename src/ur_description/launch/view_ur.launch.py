@@ -1,12 +1,7 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import (
-    Command,
-    FindExecutable,
-    LaunchConfiguration,
-    PathJoinSubstitution
-)
+from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
@@ -14,7 +9,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 def generate_launch_description():
     declared_arguments = []
-    # UR specific arguments
+
+    # Argumentos específicos do robô UR
     declared_arguments.append(
         DeclareLaunchArgument(
             "ur_type",
@@ -69,20 +65,25 @@ def generate_launch_description():
             description="Prefix of the joint names for multi-robot setups.",
         )
     )
-
-    # Argumento para escolher entre Gazebo ou RViz
+    # Escolha entre Gazebo, Webots ou RViz
     declared_arguments.append(
         DeclareLaunchArgument(
             "gazebo",
             default_value="false",
             choices=["true", "false"],
-            description="If 'true', inicia o gazebo ao inves do RVIZ."
+            description="Se 'true', inicia o Gazebo ao invés do RViz.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "webots",
+            default_value="false",
+            choices=["true", "false"],
+            description="Se 'true', inicia o Webots ao invés do RViz ou Gazebo.",
         )
     )
 
-    # ---------------------------------------------------------------------
     # Configurações de launch
-    # ---------------------------------------------------------------------
     ur_type = LaunchConfiguration("ur_type")
     safety_limits = LaunchConfiguration("safety_limits")
     safety_pos_margin = LaunchConfiguration("safety_pos_margin")
@@ -91,10 +92,9 @@ def generate_launch_description():
     tf_prefix = LaunchConfiguration("tf_prefix")
     rviz_config_file = LaunchConfiguration("rviz_config_file")
     gazebo_arg = LaunchConfiguration("gazebo")
+    webots_arg = LaunchConfiguration("webots")
 
-    # ---------------------------------------------------------------------
-    # Robot description
-    # ---------------------------------------------------------------------
+    # Geração da descrição do robô usando xacro
     robot_description_content = Command(
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
@@ -120,13 +120,22 @@ def generate_launch_description():
         )
     }
 
+    # Condição combinada para não iniciar nós de RViz e Joint State Publisher se estiver em simulação (Gazebo ou Webots)
+    sim_condition = PythonExpression([
+        "'", gazebo_arg, "'=='true' or '", webots_arg, "'=='true'"
+    ])
+
     # ---------------------------------------------------------------------
-    # ROS Nodes
+    # Nós ROS
     # ---------------------------------------------------------------------
+
+    # Joint State Publisher GUI só é iniciado se NÃO estiver em simulação (nem Gazebo nem Webots)
     joint_state_publisher_node = Node(
         package="joint_state_publisher_gui",
         executable="joint_state_publisher_gui",
+        condition=UnlessCondition(sim_condition)
     )
+
     robot_state_publisher_node = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -134,22 +143,20 @@ def generate_launch_description():
         parameters=[robot_description],
     )
 
-    # ---------------------------------------------------------------------
-    # RViz (apenas se gazebo=false)
-    # ---------------------------------------------------------------------
+    # RViz é iniciado somente se não estiver em simulação (nem Gazebo nem Webots)
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         output="log",
         arguments=["-d", rviz_config_file],
-        condition=UnlessCondition(gazebo_arg),
+        condition=UnlessCondition(sim_condition),
     )
 
     # ---------------------------------------------------------------------
     # Gazebo
     # ---------------------------------------------------------------------
-    # Inicia o Gazebo
+    # Inclui o launch do Gazebo somente se o argumento gazebo for true
     gazebo_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
@@ -162,13 +169,13 @@ def generate_launch_description():
             'world': PathJoinSubstitution([
                 FindPackageShare('ur_description'),
                 'worlds',
-                'gazebo.world'  #Necessário criar o mundo de configuração ainda
+                'gazebo.world'
             ])
         }.items(),
         condition=IfCondition(gazebo_arg)
     )
 
-    # Spawn do robô no Gazebo
+    # Nó de spawn do robô no Gazebo (será lançado com atraso para garantir que o Gazebo esteja pronto)
     spawn_entity_node = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
@@ -179,8 +186,35 @@ def generate_launch_description():
             '-y', '0.0',
             '-z', '0.1'
         ],
-        output='screen',
+        output='screen'
+    )
+
+    spawn_entity_node_delayed = TimerAction(
+        period=20.0,  # Atraso de 20 segundos; ajuste conforme necessário
+        actions=[spawn_entity_node],
         condition=IfCondition(gazebo_arg)
+    )
+
+    # ---------------------------------------------------------------------
+    # Webots
+    # ---------------------------------------------------------------------
+    # Inclui o launch do Webots somente se o argumento webots for true
+    webots_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('webots_ros2'),
+                'launch',
+                'webots.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'world': PathJoinSubstitution([
+                FindPackageShare('ur_description'),
+                'worlds',
+                'webots.world'
+            ])
+        }.items(),
+        condition=IfCondition(webots_arg)
     )
 
     # ---------------------------------------------------------------------
@@ -189,9 +223,10 @@ def generate_launch_description():
     nodes_to_start = [
         joint_state_publisher_node,
         robot_state_publisher_node,
-        rviz_node,            # UnlessCondition(gazebo_arg)
-        gazebo_launch,        # IfCondition(gazebo_arg)
-        spawn_entity_node,    # IfCondition(gazebo_arg)
+        rviz_node,                    # Inicia se não estiver em simulação
+        gazebo_launch,                # Inicia se gazebo==true
+        spawn_entity_node_delayed,    # Inicia com atraso se gazebo==true
+        webots_launch,                # Inicia se webots==true
     ]
 
     return LaunchDescription(declared_arguments + nodes_to_start)

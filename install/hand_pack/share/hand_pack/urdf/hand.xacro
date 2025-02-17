@@ -494,7 +494,7 @@
                   </material>
             </visual>
             <inertial>
-                  <mass value="0.001"/>
+                  <mass value="0.1"/>
                   <inertia ixx="1.0e-03" ixy="0.0" ixz="0.0"
                iyy="1.0e-03" iyz="0.0"
                izz="1.0e-03" />
@@ -552,7 +552,7 @@
                   </material>
             </visual>
             <inertial>
-                  <mass value="0.001"/>
+                  <mass value="0.1"/>
                   <inertia ixx="1.0e-03" ixy="0.0" ixz="0.0"
                iyy="1.0e-03" iyz="0.0"
                izz="1.0e-03" />
@@ -1159,7 +1159,7 @@
                   </material>
             </visual>
             <inertial>
-                  <mass value="0.001"/>
+                  <mass value="0.1"/>
                   <inertia ixx="1.0e-03" ixy="0.0" ixz="0.0"
                iyy="1.0e-03" iyz="0.0"
                izz="1.0e-03" />
@@ -1217,7 +1217,7 @@
                   </material>
             </visual>
             <inertial>
-                  <mass value="0.001"/>
+                  <mass value="0.1"/>
                   <inertia ixx="1.0e-03" ixy="0.0" ixz="0.0"
                iyy="1.0e-03" iyz="0.0"
                izz="1.0e-03" />
@@ -1275,7 +1275,7 @@
                   </material>
             </visual>
             <inertial>
-                  <mass value="0.001"/>
+                  <mass value="0.1"/>
                   <inertia ixx="1.0e-03" ixy="0.0" ixz="0.0"
                iyy="1.0e-03" iyz="0.0"
                izz="1.0e-03" />
@@ -1333,7 +1333,7 @@
                   </material>
             </visual>
             <inertial>
-                  <mass value="0.001"/>
+                  <mass value="0.1"/>
                   <inertia ixx="1.0e-03" ixy="0.0" ixz="0.0"
                iyy="1.0e-03" iyz="0.0"
                izz="1.0e-03" />

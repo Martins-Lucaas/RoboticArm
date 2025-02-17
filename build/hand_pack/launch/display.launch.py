@@ -1,1 +1,1 @@
-/home/biolab-linux/RoboticArm/src/hand_pack/launch/display.launch.py
+/home/lucas-pc/RoboticArm/src/hand_pack/launch/display.launch.py

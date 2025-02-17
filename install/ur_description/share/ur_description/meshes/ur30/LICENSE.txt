@@ -1,1 +1,1 @@
-/home/biolab-linux/RoboticArm/src/ur_description/meshes/ur30/LICENSE.txt
+/home/lucas-pc/RoboticArm/src/ur_description/meshes/ur30/LICENSE.txt
