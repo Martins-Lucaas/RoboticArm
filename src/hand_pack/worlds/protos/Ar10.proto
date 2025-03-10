@@ -4,6 +4,7 @@
 # This is a proto file for Webots for the Ar10
 # Extracted from: ar10.urdf
 
+
 PROTO Ar10 [
   field  SFVec3f     translation     0 0 0
   field  SFRotation  rotation        0 0 1 0
@@ -220,7 +221,7 @@ PROTO Ar10 [
                                       ]
                                       name "fingertip1"
                                       boundingObject Box {
-                                         size 0.000015000 0.000015000 0.000030000
+                                         size 0.0001 0.0001 0.0001
                                       }
                                       physics Physics {
                                         density -1
@@ -234,12 +235,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger1.1c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -254,12 +251,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger1.1b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -274,12 +267,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger1.1a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -294,12 +283,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb1"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -426,12 +411,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger1.2c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -446,12 +427,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger1.2b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -466,12 +443,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger1.2a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -486,12 +459,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb2"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -633,7 +602,7 @@ PROTO Ar10 [
                                       ]
                                       name "fingertip2"
                                       boundingObject Box {
-                                         size 0.015000 0.015000 0.030000
+                                         size 0.0001 0.0001 0.0001
                                       }
                                       physics Physics {
                                         density -1
@@ -647,12 +616,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger2.1c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -667,12 +632,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger2.1b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -687,12 +648,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger2.1a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -707,12 +664,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb3"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -839,12 +792,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger2.2c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -859,12 +808,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger2.2b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -879,12 +824,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger2.2a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -899,12 +840,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb4"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -1046,7 +983,7 @@ PROTO Ar10 [
                                       ]
                                       name "fingertip3"
                                       boundingObject Box {
-                                         size 0.015000 0.015000 0.030000
+                                         size 0.0001 0.0001 0.0001
                                       }
                                       physics Physics {
                                         density -1
@@ -1060,12 +997,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger3.1c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -1080,12 +1013,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger3.1b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -1100,12 +1029,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger3.1a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -1120,12 +1045,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb5"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -1252,12 +1173,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger3.2c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -1272,12 +1189,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger3.2b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -1292,12 +1205,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger3.2a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -1312,12 +1221,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb6"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -1459,7 +1364,7 @@ PROTO Ar10 [
                                       ]
                                       name "fingertip4"
                                       boundingObject Box {
-                                         size 0.015000 0.015000 0.030000
+                                         size 0.0001 0.0001 0.0001
                                       }
                                       physics Physics {
                                         density -1
@@ -1473,12 +1378,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger4.1c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -1493,12 +1394,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger4.1b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -1513,12 +1410,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger4.1a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -1533,12 +1426,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb7"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -1665,12 +1554,8 @@ PROTO Ar10 [
                                     }
                                   ]
                                   name "finger4.2c"
-                                  boundingObject Transform {
-                                    translation 0.000000 -0.003500 0.008250
-                                    rotation -0.577503 0.577503 0.577044 2.093475
-                                    children [
-                                      USE Fingertip
-                                    ]
+                                  boundingObject Box {
+                                    size 0.0001 0.0001 0.0001
                                   }
                                   physics Physics {
                                     density -1
@@ -1685,12 +1570,8 @@ PROTO Ar10 [
                               }
                             ]
                             name "finger4.2b"
-                            boundingObject Transform {
-                              translation 0.000000 -0.003500 0.012500
-                              rotation -0.577503 0.577503 0.577044 2.093475
-                              children [
-                                USE rosfull30
-                              ]
+                            boundingObject Box {
+                              size 0.0001 0.0001 0.0001
                             }
                             physics Physics {
                               density -1
@@ -1705,12 +1586,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "finger4.2a"
-                      boundingObject Transform {
-                        translation 0.000000 -0.003250 0.013500
-                        rotation -0.577503 0.577503 0.577044 2.093475
-                        children [
-                          USE hole45
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -1725,12 +1602,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb8"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -1759,12 +1632,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb9"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -1909,14 +1778,8 @@ PROTO Ar10 [
                                           }
                                         ]
                                         name "thumbtip"
-                                        boundingObject Transform {
-                                          translation 0.000000 -0.012000 0.010000
-                                          rotation 1.000000 0.000000 0.000000 0.590000
-                                          children [
-                                            Box {
-                                               size 0.015000 0.026000 0.015000
-                                            }
-                                          ]
+                                        boundingObject Box {
+                                          size 0.0001 0.0001 0.0001
                                         }
                                         physics Physics {
                                           density -1
@@ -1930,12 +1793,8 @@ PROTO Ar10 [
                                       }
                                     ]
                                     name "thumb3.1"
-                                    boundingObject Transform {
-                                      translation 0.000000 0.012500 -0.009500
-                                      rotation 0.000000 0.000000 -1.000000 1.570000
-                                      children [
-                                        USE Thumb_3-Rev2
-                                      ]
+                                    boundingObject Box {
+                                      size 0.0001 0.0001 0.0001
                                     }
                                     physics Physics {
                                       density -1
@@ -1950,12 +1809,8 @@ PROTO Ar10 [
                                 }
                               ]
                               name "rb11"
-                              boundingObject Transform {
-                                translation -0.002000 -0.003750 0.003750
-                                rotation 0.577351 0.577810 -0.576890 2.094395
-                                children [
-                                  USE rod-end-2mm-silver
-                                ]
+                              boundingObject Box {
+                                size 0.0001 0.0001 0.0001
                               }
                               physics Physics {
                                 density -1
@@ -2014,12 +1869,8 @@ PROTO Ar10 [
                                       }
                                     ]
                                     name "thumb3.2"
-                                    boundingObject Transform {
-                                      translation 0.000000 0.012500 -0.009500
-                                      rotation 0.000000 0.000000 -1.000000 1.570000
-                                      children [
-                                        USE Thumb_3-Rev2
-                                      ]
+                                    boundingObject Box {
+                                      size 0.0001 0.0001 0.0001
                                     }
                                     physics Physics {
                                       density -1
@@ -2034,12 +1885,8 @@ PROTO Ar10 [
                                 }
                               ]
                               name "rb12"
-                              boundingObject Transform {
-                                translation -0.002000 -0.003750 0.003750
-                                rotation 0.577351 0.577810 -0.576890 2.094395
-                                children [
-                                  USE rod-end-2mm-silver
-                                ]
+                              boundingObject Box {
+                                size 0.0001 0.0001 0.0001
                               }
                               physics Physics {
                                 density -1
@@ -2053,12 +1900,8 @@ PROTO Ar10 [
                             }
                           ]
                           name "thumb2"
-                          boundingObject Transform {
-                            translation 0.000000 -0.014500 -0.009500
-                            rotation 0.000000 0.000000 1.000000 1.570000
-                            children [
-                              USE Thumb_2
-                            ]
+                          boundingObject Box {
+                            size 0.0001 0.0001 0.0001
                           }
                           physics Physics {
                             density -1
@@ -2072,12 +1915,8 @@ PROTO Ar10 [
                         }
                       ]
                       name "thumb1"
-                      boundingObject Transform {
-                        translation 0.000000 -0.021250 -0.003250
-                        rotation 0.000000 0.000000 1.000000 1.570000
-                        children [
-                          USE Thumb_1
-                        ]
+                      boundingObject Box {
+                        size 0.0001 0.0001 0.0001
                       }
                       physics Physics {
                         density -1
@@ -2092,12 +1931,8 @@ PROTO Ar10 [
                   }
                 ]
                 name "rb10"
-                boundingObject Transform {
-                  translation -0.002000 -0.003750 0.003750
-                  rotation 0.707388 0.706825 0.000563 3.140466
-                  children [
-                    USE rod-end-2mm-silver
-                  ]
+                boundingObject Box {
+                  size 0.0001 0.0001 0.0001
                 }
                 physics Physics {
                   density -1
@@ -2111,12 +1946,8 @@ PROTO Ar10 [
               }
             ]
             name "palm"
-            boundingObject Transform {
-              translation -0.056750 0.005000 0.002000
-              rotation 1.000000 0.000000 0.000000 1.570000
-              children [
-                USE Palm-RIGHT
-              ]
+            boundingObject Box {
+              size 0.0001 0.0001 0.0001
             }
             physics Physics {
               density -1
@@ -2130,13 +1961,8 @@ PROTO Ar10 [
           }
         ]
         name "circuit_support"
-        boundingObject Transform {
-          translation 0.000000 0.000000 0.025000
-          children [
-            Box {
-               size 0.050000 0.050000 0.050000
-            }
-          ]
+        boundingObject Box {
+          size 0.0001 0.0001 0.0001
         }
         physics Physics {
           density -1
@@ -2150,9 +1976,8 @@ PROTO Ar10 [
       }
     ]
     name IS name
-    boundingObject Cylinder {
-      radius 0.06
-      height 0.002
+    boundingObject Box {
+      size 0.0001 0.0001 0.0001
     }
     physics Physics {
       density -1
