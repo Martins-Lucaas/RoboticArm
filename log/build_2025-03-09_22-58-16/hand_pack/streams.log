@@ -1,0 +1,56 @@
+[1.005s] Invoking command in '/home/lucas-pc/RoboticArm/build/hand_pack': PS1=\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;91m\]$(parse_git_branch)\[\033[00m\]$ PYTHONPATH=/home/lucas-pc/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/lucas-pc/RoboticArm/build/hand_pack/build
+[1.418s] running develop
+[1.653s] Removing /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand-pack.egg-link (link to .)
+[1.668s] Invoked command in '/home/lucas-pc/RoboticArm/build/hand_pack' returned '0': PS1=\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;91m\]$(parse_git_branch)\[\033[00m\]$ PYTHONPATH=/home/lucas-pc/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/lucas-pc/RoboticArm/build/hand_pack/build
+[1.669s] Invoking command in '/home/lucas-pc/RoboticArm/src/hand_pack': PS1=\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;91m\]$(parse_git_branch)\[\033[00m\]$ PYTHONPATH=/home/lucas-pc/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/lucas-pc/RoboticArm/build/hand_pack/build install --record /home/lucas-pc/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data --force
+[2.069s] running egg_info
+[2.070s] writing ../../build/hand_pack/hand_pack.egg-info/PKG-INFO
+[2.070s] writing dependency_links to ../../build/hand_pack/hand_pack.egg-info/dependency_links.txt
+[2.070s] writing entry points to ../../build/hand_pack/hand_pack.egg-info/entry_points.txt
+[2.070s] writing requirements to ../../build/hand_pack/hand_pack.egg-info/requires.txt
+[2.070s] writing top-level names to ../../build/hand_pack/hand_pack.egg-info/top_level.txt
+[2.071s] reading manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[2.072s] writing manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+[2.072s] running build
+[2.072s] running build_py
+[2.072s] creating /home/lucas-pc/RoboticArm/build/hand_pack/build
+[2.072s] creating /home/lucas-pc/RoboticArm/build/hand_pack/build/lib
+[2.072s] creating /home/lucas-pc/RoboticArm/build/hand_pack/build/lib/hand_pack
+[2.072s] copying hand_pack/hand_node.py -> /home/lucas-pc/RoboticArm/build/hand_pack/build/lib/hand_pack
+[2.072s] copying hand_pack/__init__.py -> /home/lucas-pc/RoboticArm/build/hand_pack/build/lib/hand_pack
+[2.073s] running install
+[2.073s] running install_lib
+[2.073s] creating /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack
+[2.073s] copying /home/lucas-pc/RoboticArm/build/hand_pack/build/lib/hand_pack/hand_node.py -> /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack
+[2.073s] copying /home/lucas-pc/RoboticArm/build/hand_pack/build/lib/hand_pack/__init__.py -> /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack
+[2.075s] byte-compiling /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/hand_node.py to hand_node.cpython-310.pyc
+[2.075s] byte-compiling /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/__init__.py to __init__.cpython-310.pyc
+[2.076s] running install_data
+[2.076s] copying resource/hand_pack -> /home/lucas-pc/RoboticArm/install/hand_pack/share/ament_index/resource_index/packages
+[2.076s] copying package.xml -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack
+[2.076s] copying launch/display.launch.py -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/launch
+[2.076s] copying urdf/ar10.urdf -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[2.076s] copying urdf/ar10l.urdf -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf
+[2.076s] creating /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.076s] copying urdf/meshes/30mmROSFULL.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.076s] copying urdf/meshes/Palm-LEFT.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.077s] copying urdf/meshes/Fingertip.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.077s] copying urdf/meshes/wrist plate.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.077s] copying urdf/meshes/link-rod-C4.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.077s] copying urdf/meshes/Thumb 2.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.077s] copying urdf/meshes/30mm 3 hole.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.077s] copying urdf/meshes/45mm 3 hole.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.078s] copying urdf/meshes/Palm -RIGHT.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.078s] copying urdf/meshes/wrist support-right.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.078s] copying urdf/meshes/U-bracket-1.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.078s] copying urdf/meshes/Thumb 1.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.078s] copying urdf/meshes/fingertip-v9.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.078s] copying urdf/meshes/40mm-hex-standoff.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.078s] copying urdf/meshes/rod-end-2mm-BLUE.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.079s] copying urdf/meshes/Thumb 3-Rev2.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+[2.079s] running install_egg_info
+[2.081s] Copying ../../build/hand_pack/hand_pack.egg-info to /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.0-py3.10.egg-info
+[2.082s] running install_scripts
+[2.112s] Installing hand_node script to /home/lucas-pc/RoboticArm/install/hand_pack/lib/hand_pack
+[2.112s] writing list of installed files to '/home/lucas-pc/RoboticArm/build/hand_pack/install.log'
+[2.128s] Invoked command in '/home/lucas-pc/RoboticArm/src/hand_pack' returned '0': PS1=\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;91m\]$(parse_git_branch)\[\033[00m\]$ PYTHONPATH=/home/lucas-pc/RoboticArm/build/hand_pack/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/hand_pack build --build-base /home/lucas-pc/RoboticArm/build/hand_pack/build install --record /home/lucas-pc/RoboticArm/build/hand_pack/install.log --single-version-externally-managed install_data --force

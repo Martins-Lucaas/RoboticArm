@@ -1,0 +1,28 @@
+running develop
+running egg_info
+creating hand_pack.egg-info
+writing hand_pack.egg-info/PKG-INFO
+writing dependency_links to hand_pack.egg-info/dependency_links.txt
+writing entry points to hand_pack.egg-info/entry_points.txt
+writing requirements to hand_pack.egg-info/requires.txt
+writing top-level names to hand_pack.egg-info/top_level.txt
+writing manifest file 'hand_pack.egg-info/SOURCES.txt'
+reading manifest file 'hand_pack.egg-info/SOURCES.txt'
+writing manifest file 'hand_pack.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand-pack.egg-link (link to .)
+Installing hand_node script to /home/lucas-pc/RoboticArm/install/hand_pack/lib/hand_pack
+
+Installed /home/lucas-pc/RoboticArm/build/hand_pack
+running symlink_data
+creating /home/lucas-pc/RoboticArm/install/hand_pack/share/ament_index
+creating /home/lucas-pc/RoboticArm/install/hand_pack/share/ament_index/resource_index
+creating /home/lucas-pc/RoboticArm/install/hand_pack/share/ament_index/resource_index/packages
+symbolically linking /home/lucas-pc/RoboticArm/build/hand_pack/resource/hand_pack -> /home/lucas-pc/RoboticArm/install/hand_pack/share/ament_index/resource_index/packages
+symbolically linking /home/lucas-pc/RoboticArm/build/hand_pack/package.xml -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack
+creating /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/launch
+symbolically linking /home/lucas-pc/RoboticArm/build/hand_pack/launch/display.launch.py -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/launch
+creating /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf
+symbolically linking /home/lucas-pc/RoboticArm/build/hand_pack/urdf/hj_hand_transmission.xacro -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf
+symbolically linking /home/lucas-pc/RoboticArm/build/hand_pack/urdf/hj_hand_gazebo.xacro -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf
+symbolically linking /home/lucas-pc/RoboticArm/build/hand_pack/urdf/hand.xacro -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf

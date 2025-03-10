@@ -8,18 +8,17 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 def generate_launch_description():
     hand_pack_path = get_package_share_directory('hand_pack')
-    urdf_file = os.path.join(hand_pack_path, 'urdf', 'hand.xacro')
+    urdf_file = os.path.join(hand_pack_path, 'urdf', 'ar10.urdf')
 
-    # Converte Xacro para URDF
-    robot_description = Command(['xacro ', urdf_file])
+    # Read the URDF file directly
+    with open(urdf_file, 'r') as f:
+        robot_description = f.read()
 
-    # Define parâmetros
-    params = {
-        'robot_description': robot_description
-    }
+    # Define parameters
+    params = {'robot_description': robot_description}
 
     return LaunchDescription([
-        # Publicação do joint_state_publisher_gui
+        # Joint State Publisher GUI
         Node(
             package='joint_state_publisher_gui',
             executable='joint_state_publisher_gui',
@@ -27,7 +26,7 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # Publicação do robot_state_publisher
+        # Robot State Publisher
         Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',
@@ -35,15 +34,15 @@ def generate_launch_description():
             parameters=[params]
         ),
 
-        # Publicação do TF base
+        # Static TF Publisher (World to Base Link)
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
-            arguments=['0', '0', '0', '0', '0', '0', 'world', 'base_link'],
+            arguments=['0', '0', '0', '0', '0', '0', 'world', 'wrist_plate_to_circuit_support'],
             output='screen'
         ),
 
-        # Lançamento do RViz
+        # RViz2 Node
         Node(
             package='rviz2',
             executable='rviz2',

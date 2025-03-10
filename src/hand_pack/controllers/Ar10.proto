@@ -1,0 +1,2167 @@
+#VRML_SIM R2023b utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# This is a proto file for Webots for the Ar10
+# Extracted from: /home/lucas-pc/RoboticArm/src/hand_pack/urdf/ar10.urdf
+
+PROTO Ar10 [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "Ar10"  # Is `Robot.name`.
+  field  SFString    controller      "void"  # Is `Robot.controller`.
+  field  MFString    controllerArgs  []      # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""      # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE   # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE    # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE   # Is `Robot.selfCollision`.
+]
+{
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+    children [
+      Transform {
+        translation -0.036450 0.029100 -0.002000
+        rotation 1.000000 0.000000 0.000000 1.570000
+        scale 0.001000 0.001000 0.001000
+        children [
+          Shape {
+            appearance DEF silver PBRAppearance {
+              baseColor 0.750000 0.750000 0.750000
+              roughness 1.000000
+              metalness 0
+            }
+            geometry DEF wrist_plate Mesh {
+              url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/wrist_plate.STL"
+            }
+          }
+        ]
+      }
+      Solid {
+        children [
+          Pose {
+            translation 0.000000 0.000000 0.025000
+            children [
+              Shape {
+                appearance DEF black PBRAppearance {
+                  baseColor 0.100000 0.100000 0.100000
+                  roughness 1.000000
+                  metalness 0
+                }
+                geometry Box {
+                   size 0.050000 0.050000 0.050000
+                }
+              }
+            ]
+          }
+          Solid {
+            translation 0.000000 0.015500 0.048150
+            children [
+              Transform {
+                translation -0.056750 0.005000 0.002000
+                rotation 1.000000 0.000000 0.000000 1.570000
+                scale 0.001000 0.001000 0.001000
+                children [
+                  Shape {
+                    appearance USE silver
+                    geometry DEF Palm-RIGHT Mesh {
+                      url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/Palm-RIGHT.STL"
+                    }
+                  }
+                ]
+              }
+              Solid {
+                translation 0.023500 -0.012000 0.080000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance DEF lightsilver PBRAppearance {
+                          baseColor 0.300000 0.500000 0.700000
+                          roughness 1.000000
+                          metalness 0
+                        }
+                        geometry DEF rod-end-2mm-silver Mesh {
+                          url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/rod-end-2mm-silver.STL"
+                        }
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor -0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo2"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo2_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation -0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry DEF 45mm_3_hole Mesh {
+                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/45mm_3_hole.STL"
+                              }
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor 0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo3"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo3_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation 0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry DEF 30mmROSFULL Mesh {
+                                      url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/30mmROSFULL.STL"
+                                    }
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor -0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip1"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip1_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation -0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry DEF Fingertip Mesh {
+                                            url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/Fingertip.STL"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                    Solid {
+                                      translation -0.005000 0.000000 -0.020000
+                                      children [
+                                        Transform {
+                                          translation -0.009715 0.011000 -0.015000
+                                          rotation 1.000000 0.000000 0.000000 1.570000
+                                          scale 0.001000 0.001000 0.001000
+                                          children [
+                                            Shape {
+                                              appearance USE black
+                                              geometry DEF fingertip-v9 Mesh {
+                                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/fingertip-v9.STL"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                      name "fingertip1"
+                                      boundingObject Box {
+                                         size 0.015000 0.015000 0.030000
+                                      }
+                                      physics Physics {
+                                        density -1
+                                        mass 1.000000
+                                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                        inertiaMatrix [
+                                          4.000000e-01 4.000000e-01 2.000000e-01
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                  name "finger1.1c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger1.1b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger1.1a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb1"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation 0.010500 -0.012000 0.080000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor 0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo2m"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo2m_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation 0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry USE 45mm_3_hole
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor -0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo3m"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo3m_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation -0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry USE 30mmROSFULL
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor 0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip1b"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip1b_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation 0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry USE Fingertip
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                  name "finger1.2c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger1.2b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger1.2a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb2"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation 0.002700 -0.012000 0.090000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor -0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo4"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo4_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation -0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry USE 45mm_3_hole
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor 0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo5"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo5_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation 0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry USE 30mmROSFULL
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor -0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip2"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip2_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation -0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry USE Fingertip
+                                        }
+                                      ]
+                                    }
+                                    Solid {
+                                      translation -0.005000 0.000000 -0.020000
+                                      children [
+                                        Transform {
+                                          translation -0.009715 0.011000 -0.015000
+                                          rotation 1.000000 0.000000 0.000000 1.570000
+                                          scale 0.001000 0.001000 0.001000
+                                          children [
+                                            Shape {
+                                              appearance USE black
+                                              geometry USE fingertip-v9
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                      name "fingertip2"
+                                      boundingObject Box {
+                                         size 0.015000 0.015000 0.030000
+                                      }
+                                      physics Physics {
+                                        density -1
+                                        mass 1.000000
+                                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                        inertiaMatrix [
+                                          4.000000e-01 4.000000e-01 2.000000e-01
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                  name "finger2.1c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger2.1b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger2.1a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb3"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation -0.011000 -0.012000 0.090000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor 0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo4m"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo4m_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation 0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry USE 45mm_3_hole
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor -0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo5m"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo5m_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation -0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry USE 30mmROSFULL
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor 0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip2b"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip2b_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation 0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry USE Fingertip
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                  name "finger2.2c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger2.2b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger2.2a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb4"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation -0.019000 -0.012000 0.100000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor -0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo6"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo6_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation -0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry USE 45mm_3_hole
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor 0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo7"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo7_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation 0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry USE 30mmROSFULL
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor -0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip3"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip3_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation -0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry USE Fingertip
+                                        }
+                                      ]
+                                    }
+                                    Solid {
+                                      translation -0.005000 0.000000 -0.020000
+                                      children [
+                                        Transform {
+                                          translation -0.009715 0.011000 -0.015000
+                                          rotation 1.000000 0.000000 0.000000 1.570000
+                                          scale 0.001000 0.001000 0.001000
+                                          children [
+                                            Shape {
+                                              appearance USE black
+                                              geometry USE fingertip-v9
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                      name "fingertip3"
+                                      boundingObject Box {
+                                         size 0.015000 0.015000 0.030000
+                                      }
+                                      physics Physics {
+                                        density -1
+                                        mass 1.000000
+                                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                        inertiaMatrix [
+                                          4.000000e-01 4.000000e-01 2.000000e-01
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                  name "finger3.1c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger3.1b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger3.1a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb5"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation -0.032000 -0.012000 0.100000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor 0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo6m"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo6m_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation 0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry USE 45mm_3_hole
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor -0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo7m"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo7m_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation -0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry USE 30mmROSFULL
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor 0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip3b"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip3b_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation 0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry USE Fingertip
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                  name "finger3.2c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger3.2b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger3.2a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb6"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation -0.040000 -0.012000 0.095000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor -0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo8"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo8_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation -0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry USE 45mm_3_hole
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor 0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo9"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo9_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation 0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry USE 30mmROSFULL
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor -0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip4"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip4_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation -0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry USE Fingertip
+                                        }
+                                      ]
+                                    }
+                                    Solid {
+                                      translation -0.005000 0.000000 -0.020000
+                                      children [
+                                        Transform {
+                                          translation -0.009715 0.011000 -0.015000
+                                          rotation 1.000000 0.000000 0.000000 1.570000
+                                          scale 0.001000 0.001000 0.001000
+                                          children [
+                                            Shape {
+                                              appearance USE black
+                                              geometry USE fingertip-v9
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                      name "fingertip4"
+                                      boundingObject Box {
+                                         size 0.015000 0.015000 0.030000
+                                      }
+                                      physics Physics {
+                                        density -1
+                                        mass 1.000000
+                                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                        inertiaMatrix [
+                                          4.000000e-01 4.000000e-01 2.000000e-01
+                                          0.000000e+00 0.000000e+00 0.000000e+00
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                  name "finger4.1c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger4.1b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger4.1a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb7"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation -0.053000 -0.012000 0.095000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.870000
+                      axis -1.000000 -0.000000 0.000000
+                      anchor 0.002000 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo8m"
+                        maxVelocity 0.5
+                        minPosition 0.17
+                        maxPosition 1.57
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo8m_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation 0.002000 0.000000 0.000000
+                      rotation 1.000000 0.000000 0.000000 2.270000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.003250 0.013500
+                          rotation -0.577503 0.577503 0.577044 2.093475
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry USE 45mm_3_hole
+                            }
+                          ]
+                        }
+                        HingeJoint {
+                          jointParameters HingeJointParameters {
+                            position 0.870000
+                            axis -1.000000 0.000000 0.000000
+                            anchor -0.001000 0.000000 -0.045000
+                          }
+                          device [
+                            RotationalMotor {
+                              name "servo9m"
+                              maxVelocity 0.5
+                              minPosition 0.17
+                              maxPosition 1.57
+                              maxTorque 1000.0
+                            }
+                            PositionSensor {
+                              name "servo9m_sensor"
+                            }
+                          ]
+                          endPoint Solid {
+                            translation -0.001000 0.000000 -0.045000
+                            rotation -1.000000 0.000000 0.000000 0.870000
+                            children [
+                              Transform {
+                                translation 0.000000 -0.003500 0.012500
+                                rotation -0.577503 0.577503 0.577044 2.093475
+                                scale 0.001000 0.001000 0.001000
+                                children [
+                                  Shape {
+                                    appearance USE silver
+                                    geometry USE 30mmROSFULL
+                                  }
+                                ]
+                              }
+                              HingeJoint {
+                                jointParameters HingeJointParameters {
+                                  position 0.870000
+                                  axis -1.000000 0.000000 0.000000
+                                  anchor 0.001000 0.000000 -0.030000
+                                }
+                                device [
+                                  RotationalMotor {
+                                    name "tip4b"
+                                    maxVelocity 0.5
+                                    minPosition 0.17
+                                    maxPosition 1.57
+                                    maxTorque 1000.0
+                                  }
+                                  PositionSensor {
+                                    name "tip4b_sensor"
+                                  }
+                                ]
+                                endPoint Solid {
+                                  translation 0.001000 0.000000 -0.030000
+                                  rotation -1.000000 0.000000 0.000000 0.870000
+                                  children [
+                                    Transform {
+                                      translation 0.000000 -0.003500 0.008250
+                                      rotation -0.577503 0.577503 0.577044 2.093475
+                                      scale 0.001000 0.001000 0.001000
+                                      children [
+                                        Shape {
+                                          appearance USE silver
+                                          geometry USE Fingertip
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                  name "finger4.2c"
+                                  boundingObject Pose {
+                                    translation 0.000000 -0.003500 0.008250
+                                    rotation -0.577503 0.577503 0.577044 2.093475
+                                    children [
+                                      USE Fingertip
+                                    ]
+                                  }
+                                  physics Physics {
+                                    density -1
+                                    mass 1.000000
+                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    inertiaMatrix [
+                                      4.000000e-01 4.000000e-01 2.000000e-01
+                                      0.000000e+00 0.000000e+00 0.000000e+00
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                            name "finger4.2b"
+                            boundingObject Pose {
+                              translation 0.000000 -0.003500 0.012500
+                              rotation -0.577503 0.577503 0.577044 2.093475
+                              children [
+                                USE 30mmROSFULL
+                              ]
+                            }
+                            physics Physics {
+                              density -1
+                              mass 1.000000
+                              centerOfMass [ 0.000000 0.000000 0.000000 ]
+                              inertiaMatrix [
+                                4.000000e-01 4.000000e-01 2.000000e-01
+                                0.000000e+00 0.000000e+00 0.000000e+00
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                      name "finger4.2a"
+                      boundingObject Pose {
+                        translation 0.000000 -0.003250 0.013500
+                        rotation -0.577503 0.577503 0.577044 2.093475
+                        children [
+                          USE 45mm_3_hole
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb8"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation -0.039000 -0.012000 0.029500
+                rotation 0.000000 -1.000000 0.000000 1.290000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                ]
+                name "rb9"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+              Solid {
+                translation -0.041000 -0.012000 0.022000
+                rotation 0.000000 -1.000000 0.000000 1.290000
+                children [
+                  Transform {
+                    translation -0.002000 -0.003750 0.003750
+                    rotation 0.707388 0.706825 0.000563 3.140466
+                    scale 0.001000 0.001000 0.001000
+                    children [
+                      Shape {
+                        appearance USE lightsilver
+                        geometry USE rod-end-2mm-silver
+                      }
+                    ]
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 1.500000
+                      axis -1.000000 0.000000 0.000000
+                      anchor -0.001500 0.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "servo0"
+                        maxVelocity 0.5
+                        minPosition 0.85
+                        maxPosition 2.15
+                        maxTorque 1000.0
+                      }
+                      PositionSensor {
+                        name "servo0_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      translation -0.001500 0.000000 0.000000
+                      rotation -1.000000 0.000000 0.000000 3.070000
+                      children [
+                        Transform {
+                          translation 0.000000 -0.021250 -0.003250
+                          rotation 0.000000 0.000000 1.000000 1.570000
+                          scale 0.001000 0.001000 0.001000
+                          children [
+                            Shape {
+                              appearance USE silver
+                              geometry DEF Thumb_1 Mesh {
+                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/Thumb_1.STL"
+                              }
+                            }
+                          ]
+                        }
+                        Solid {
+                          translation 0.006800 0.000000 0.000000
+                          rotation 1.000000 0.000000 0.000000 3.140000
+                          children [
+                            Transform {
+                              translation 0.000000 -0.014500 -0.009500
+                              rotation 0.000000 0.000000 1.000000 1.570000
+                              scale 0.001000 0.001000 0.001000
+                              children [
+                                Shape {
+                                  appearance USE silver
+                                  geometry DEF Thumb_2 Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/Thumb_2.STL"
+                                  }
+                                }
+                              ]
+                            }
+                            Solid {
+                              translation -0.009000 0.036500 0.006500
+                              rotation 0.000000 1.000000 0.000000 1.570000
+                              children [
+                                Transform {
+                                  translation -0.002000 0.003750 0.003750
+                                  rotation 0.577351 0.577810 -0.576890 2.094395
+                                  scale 0.001000 0.001000 0.001000
+                                  children [
+                                    Shape {
+                                      appearance USE lightsilver
+                                      geometry USE rod-end-2mm-silver
+                                    }
+                                  ]
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    position 0.920000
+                                    anchor 0.002000 0.000000 0.000000
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "servo1"
+                                      maxVelocity 0.5
+                                      minPosition 0.34
+                                      maxPosition 1.5
+                                      maxTorque 1000.0
+                                    }
+                                    PositionSensor {
+                                      name "servo1_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    translation 0.002000 0.000000 0.000000
+                                    rotation -1.000000 0.000000 0.000000 2.223185
+                                    children [
+                                      Transform {
+                                        translation 0.000000 0.012500 -0.009500
+                                        rotation 0.000000 0.000000 -1.000000 1.570000
+                                        scale 0.001000 0.001000 0.001000
+                                        children [
+                                          Shape {
+                                            appearance USE silver
+                                            geometry DEF Thumb_3-Rev2 Mesh {
+                                              url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/meshes/Thumb_3-Rev2.STL"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                      Solid {
+                                        translation 0.004857 -0.055000 0.000000
+                                        rotation 1.000000 0.000000 0.000000 3.140000
+                                        children [
+                                          Transform {
+                                            translation 0.009715 0.005000 0.005000
+                                            rotation 0.000762 0.291502 -0.956570 3.141128
+                                            scale 0.001000 0.001000 0.001000
+                                            children [
+                                              Shape {
+                                                appearance USE black
+                                                geometry USE fingertip-v9
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                        name "thumbtip"
+                                        boundingObject Pose {
+                                          translation 0.000000 -0.012000 0.010000
+                                          rotation 1.000000 0.000000 0.000000 0.590000
+                                          children [
+                                            Box {
+                                               size 0.015000 0.026000 0.015000
+                                            }
+                                          ]
+                                        }
+                                        physics Physics {
+                                          density -1
+                                          mass 1.000000
+                                          centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                          inertiaMatrix [
+                                            4.000000e-01 4.000000e-01 2.000000e-01
+                                            0.000000e+00 0.000000e+00 0.000000e+00
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                    name "thumb3.1"
+                                    boundingObject Pose {
+                                      translation 0.000000 0.012500 -0.009500
+                                      rotation 0.000000 0.000000 -1.000000 1.570000
+                                      children [
+                                        USE Thumb_3-Rev2
+                                      ]
+                                    }
+                                    physics Physics {
+                                      density -1
+                                      mass 1.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                      inertiaMatrix [
+                                        4.000000e-01 4.000000e-01 2.000000e-01
+                                        0.000000e+00 0.000000e+00 0.000000e+00
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "rb11"
+                              boundingObject Pose {
+                                translation -0.002000 -0.003750 0.003750
+                                rotation 0.577351 0.577810 -0.576890 2.094395
+                                children [
+                                  USE rod-end-2mm-silver
+                                ]
+                              }
+                              physics Physics {
+                                density -1
+                                mass 1.000000
+                                centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                inertiaMatrix [
+                                  4.000000e-01 4.000000e-01 2.000000e-01
+                                  0.000000e+00 0.000000e+00 0.000000e+00
+                                ]
+                              }
+                            }
+                            Solid {
+                              translation -0.009000 0.036500 -0.006500
+                              rotation 0.000000 1.000000 0.000000 1.570000
+                              children [
+                                Transform {
+                                  translation -0.002000 0.003750 0.003750
+                                  rotation 0.577351 0.577810 -0.576890 2.094395
+                                  scale 0.001000 0.001000 0.001000
+                                  children [
+                                    Shape {
+                                      appearance USE lightsilver
+                                      geometry USE rod-end-2mm-silver
+                                    }
+                                  ]
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    anchor -0.002000 0.000000 0.000000
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "servo1m"
+                                      maxVelocity 0.5
+                                      maxPosition 1.5
+                                      maxTorque 1000.0
+                                    }
+                                    PositionSensor {
+                                      name "servo1m_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    translation -0.002000 0.000000 0.000000
+                                    rotation 1.000000 0.000000 0.000000 3.140000
+                                    children [
+                                      Transform {
+                                        translation 0.000000 0.012500 -0.009500
+                                        rotation 0.000000 0.000000 -1.000000 1.570000
+                                        scale 0.001000 0.001000 0.001000
+                                        children [
+                                          Shape {
+                                            appearance USE silver
+                                            geometry USE Thumb_3-Rev2
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                    name "thumb3.2"
+                                    boundingObject Pose {
+                                      translation 0.000000 0.012500 -0.009500
+                                      rotation 0.000000 0.000000 -1.000000 1.570000
+                                      children [
+                                        USE Thumb_3-Rev2
+                                      ]
+                                    }
+                                    physics Physics {
+                                      density -1
+                                      mass 1.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                      inertiaMatrix [
+                                        4.000000e-01 4.000000e-01 2.000000e-01
+                                        0.000000e+00 0.000000e+00 0.000000e+00
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "rb12"
+                              boundingObject Pose {
+                                translation -0.002000 -0.003750 0.003750
+                                rotation 0.577351 0.577810 -0.576890 2.094395
+                                children [
+                                  USE rod-end-2mm-silver
+                                ]
+                              }
+                              physics Physics {
+                                density -1
+                                mass 1.000000
+                                centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                inertiaMatrix [
+                                  4.000000e-01 4.000000e-01 2.000000e-01
+                                  0.000000e+00 0.000000e+00 0.000000e+00
+                                ]
+                              }
+                            }
+                          ]
+                          name "thumb2"
+                          boundingObject Pose {
+                            translation 0.000000 -0.014500 -0.009500
+                            rotation 0.000000 0.000000 1.000000 1.570000
+                            children [
+                              USE Thumb_2
+                            ]
+                          }
+                          physics Physics {
+                            density -1
+                            mass 1.000000
+                            centerOfMass [ 0.000000 0.000000 0.000000 ]
+                            inertiaMatrix [
+                              4.000000e-01 4.000000e-01 2.000000e-01
+                              0.000000e+00 0.000000e+00 0.000000e+00
+                            ]
+                          }
+                        }
+                      ]
+                      name "thumb1"
+                      boundingObject Pose {
+                        translation 0.000000 -0.021250 -0.003250
+                        rotation 0.000000 0.000000 1.000000 1.570000
+                        children [
+                          USE Thumb_1
+                        ]
+                      }
+                      physics Physics {
+                        density -1
+                        mass 1.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                        inertiaMatrix [
+                          4.000000e-01 4.000000e-01 2.000000e-01
+                          0.000000e+00 0.000000e+00 0.000000e+00
+                        ]
+                      }
+                    }
+                  }
+                ]
+                name "rb10"
+                boundingObject Pose {
+                  translation -0.002000 -0.003750 0.003750
+                  rotation 0.707388 0.706825 0.000563 3.140466
+                  children [
+                    USE rod-end-2mm-silver
+                  ]
+                }
+                physics Physics {
+                  density -1
+                  mass 1.000000
+                  centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  inertiaMatrix [
+                    4.000000e-01 4.000000e-01 2.000000e-01
+                    0.000000e+00 0.000000e+00 0.000000e+00
+                  ]
+                }
+              }
+            ]
+            name "palm"
+            boundingObject Pose {
+              translation -0.056750 0.005000 0.002000
+              rotation 1.000000 0.000000 0.000000 1.570000
+              children [
+                USE Palm-RIGHT
+              ]
+            }
+            physics Physics {
+              density -1
+              mass 1.000000
+              centerOfMass [ 0.000000 0.000000 0.000000 ]
+              inertiaMatrix [
+                4.000000e-01 4.000000e-01 2.000000e-01
+                0.000000e+00 0.000000e+00 0.000000e+00
+              ]
+            }
+          }
+        ]
+        name "circuit_support"
+        boundingObject Pose {
+          translation 0.000000 0.000000 0.025000
+          children [
+            Box {
+               size 0.050000 0.050000 0.050000
+            }
+          ]
+        }
+        physics Physics {
+          density -1
+          mass 1.000000
+          centerOfMass [ 0.000000 0.000000 0.000000 ]
+          inertiaMatrix [
+            4.000000e-01 4.000000e-01 2.000000e-01
+            0.000000e+00 0.000000e+00 0.000000e+00
+          ]
+        }
+      }
+    ]
+    name IS name
+    boundingObject Cylinder {
+      radius 0.06
+      height 0.002
+    }
+    physics Physics {
+      density -1
+      mass 1.000000
+      centerOfMass [ 0.000000 0.000000 0.000000 ]
+      inertiaMatrix [
+        4.000000e-01 4.000000e-01 2.000000e-01
+        0.000000e+00 0.000000e+00 0.000000e+00
+      ]
+    }
+  }
+}
