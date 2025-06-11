@@ -1,0 +1,46 @@
+running egg_info
+writing ../../build/hand_pack/hand_pack.egg-info/PKG-INFO
+writing dependency_links to ../../build/hand_pack/hand_pack.egg-info/dependency_links.txt
+writing entry points to ../../build/hand_pack/hand_pack.egg-info/entry_points.txt
+writing requirements to ../../build/hand_pack/hand_pack.egg-info/requires.txt
+writing top-level names to ../../build/hand_pack/hand_pack.egg-info/top_level.txt
+reading manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+writing manifest file '../../build/hand_pack/hand_pack.egg-info/SOURCES.txt'
+running build
+running build_py
+running install
+running install_lib
+running install_data
+copying urdf/linear_meshes/right_base_link.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_middle_link.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_middle_follower.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_thumb_link.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_thumb_distal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_ring_follower.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_ring_distal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_little_link.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_index_follower.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_index_proximal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_ring_proximal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_ring_knuckle.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_index_knuckle.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_middle_distal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_little_knuckle.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_thumb_chassis.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_index_distal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_ring_link.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_little_follower.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_lisa.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_thumb_follower.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_little_proximal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_thumb_proximal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_middle_proximal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_middle_knuckle.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_index_link.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+copying urdf/linear_meshes/right_little_distal.STL -> /home/lucas-pc/RoboticArm/install/hand_pack/share/hand_pack/urdf/meshes
+running install_egg_info
+removing '/home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.0-py3.10.egg-info' (and everything under it)
+Copying ../../build/hand_pack/hand_pack.egg-info to /home/lucas-pc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.0-py3.10.egg-info
+running install_scripts
+Installing hand_node script to /home/lucas-pc/RoboticArm/install/hand_pack/lib/hand_pack
+writing list of installed files to '/home/lucas-pc/RoboticArm/build/hand_pack/install.log'

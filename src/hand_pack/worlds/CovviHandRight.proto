@@ -1,0 +1,2301 @@
+#VRML_SIM R2023b utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# This is a proto file for Webots for the CovviHandRight
+# Extracted from: /home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_covvi_hand_right_scaled.urdf
+
+PROTO CovviHandRight [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "CovviHandRight"  # Is `Robot.name`.
+  field  SFString    controller      "void"            # Is `Robot.controller`.
+  field  MFString    controllerArgs  []                # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""                # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE             # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE              # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE             # Is `Robot.selfCollision`.
+]
+{
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+    children [
+      Shape {
+        appearance DEF r48384 PBRAppearance {
+          baseColor 0.500000 0.500000 0.500000
+          transparency 1.000000
+          roughness 1.000000
+          metalness 0
+        }
+        geometry Box {
+           size 1.000000 1.000000 1.000000
+        }
+      }
+      Solid {
+        rotation 0.000000 0.707107 -0.707107 3.141593
+        children [
+          Shape {
+            appearance DEF r81841 PBRAppearance {
+              baseColor 0.500000 0.500000 0.500000
+              transparency 1.000000
+              roughness 1.000000
+              metalness 0
+            }
+            geometry Box {
+               size 1.000000 1.000000 1.000000
+            }
+          }
+          Solid {
+            translation 0.002143 -0.067948 0.012606
+            children [
+              Transform {
+                scale 0.001250 0.001250 0.001250
+                children [
+                  Shape {
+                    appearance DEF base_link_material PBRAppearance {
+                      baseColor 0.700000 0.700000 0.700000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                    geometry DEF right_base_link Mesh {
+                      url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_base_link.STL"
+                    }
+                  }
+                ]
+              }
+              HingeJoint {
+                jointParameters HingeJointParameters {
+                  axis 0.000000 0.000000 1.000000
+                }
+                device [
+                  RotationalMotor {
+                    name "Thumb"
+                    maxPosition 1.0
+                    maxTorque 10000
+                  }
+                  PositionSensor {
+                    name "Thumb_sensor"
+                  }
+                ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance DEF r37082 PBRAppearance {
+                        baseColor 0.500000 0.500000 0.500000
+                        transparency 1.000000
+                        roughness 1.000000
+                        metalness 0
+                      }
+                    }
+                  ]
+                  name "Thumb_driver_link"
+                  physics Physics {
+                    density -1
+                    mass 0.000000
+                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  }
+                }
+              }
+              HingeJoint {
+                jointParameters HingeJointParameters {
+                  axis 0.000000 0.000000 1.000000
+                }
+                device [
+                  RotationalMotor {
+                    name "Index"
+                    maxPosition 1.0
+                    maxTorque 10000
+                  }
+                  PositionSensor {
+                    name "Index_sensor"
+                  }
+                ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance DEF r47461 PBRAppearance {
+                        baseColor 0.500000 0.500000 0.500000
+                        transparency 1.000000
+                        roughness 1.000000
+                        metalness 0
+                      }
+                    }
+                  ]
+                  name "Index_driver_link"
+                  physics Physics {
+                    density -1
+                    mass 0.000000
+                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  }
+                }
+              }
+              HingeJoint {
+                jointParameters HingeJointParameters {
+                  axis 0.000000 0.000000 1.000000
+                }
+                device [
+                  RotationalMotor {
+                    name "Middle"
+                    maxPosition 1.0
+                    maxTorque 10000
+                  }
+                  PositionSensor {
+                    name "Middle_sensor"
+                  }
+                ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance DEF r7722 PBRAppearance {
+                        baseColor 0.500000 0.500000 0.500000
+                        transparency 1.000000
+                        roughness 1.000000
+                        metalness 0
+                      }
+                    }
+                  ]
+                  name "Middle_driver_link"
+                  physics Physics {
+                    density -1
+                    mass 0.000000
+                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  }
+                }
+              }
+              HingeJoint {
+                jointParameters HingeJointParameters {
+                  axis 0.000000 0.000000 1.000000
+                }
+                device [
+                  RotationalMotor {
+                    name "Ring"
+                    maxPosition 1.0
+                    maxTorque 10000
+                  }
+                  PositionSensor {
+                    name "Ring_sensor"
+                  }
+                ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance DEF r66101 PBRAppearance {
+                        baseColor 0.500000 0.500000 0.500000
+                        transparency 1.000000
+                        roughness 1.000000
+                        metalness 0
+                      }
+                    }
+                  ]
+                  name "Ring_driver_link"
+                  physics Physics {
+                    density -1
+                    mass 0.000000
+                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  }
+                }
+              }
+              HingeJoint {
+                jointParameters HingeJointParameters {
+                  axis 0.000000 0.000000 1.000000
+                }
+                device [
+                  RotationalMotor {
+                    name "Little"
+                    maxPosition 1.0
+                    maxTorque 10000
+                  }
+                  PositionSensor {
+                    name "Little_sensor"
+                  }
+                ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance DEF r58325 PBRAppearance {
+                        baseColor 0.500000 0.500000 0.500000
+                        transparency 1.000000
+                        roughness 1.000000
+                        metalness 0
+                      }
+                    }
+                  ]
+                  name "Little_driver_link"
+                  physics Physics {
+                    density -1
+                    mass 0.000000
+                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  }
+                }
+              }
+              HingeJoint {
+                jointParameters HingeJointParameters {
+                  axis 0.000000 0.000000 1.000000
+                }
+                device [
+                  RotationalMotor {
+                    name "Rotate"
+                    maxPosition 1.0
+                    maxTorque 10000
+                  }
+                  PositionSensor {
+                    name "Rotate_sensor"
+                  }
+                ]
+                endPoint Solid {
+                  children [
+                    Shape {
+                      appearance DEF r13443 PBRAppearance {
+                        baseColor 0.500000 0.500000 0.500000
+                        transparency 1.000000
+                        roughness 1.000000
+                        metalness 0
+                      }
+                    }
+                  ]
+                  name "Rotate_driver_link"
+                  physics Physics {
+                    density -1
+                    mass 0.000000
+                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                  }
+                }
+              }
+              Solid {
+                translation 0.013299 0.024865 0.015496
+                children [
+                  Shape {
+                    appearance DEF _lisa_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.536689
+                      axis 0.000000 1.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_lisa_j01"
+                        minPosition 1.49011609718e-08
+                        maxPosition 1.0733774346499283
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_lisa_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      rotation 0.000000 1.000000 0.000000 0.536689
+                      children [
+                        Shape {
+                          appearance DEF r48572 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation -0.013299 -0.024865 -0.015496
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF lisa_material PBRAppearance {
+                                    baseColor 0.700000 0.700000 0.100000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_lisa Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_lisa.STL"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                          name "lisa"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_lisa_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_lisa_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation 0.030298 0.028649 0.015689
+                children [
+                  Shape {
+                    appearance DEF _thumb_chassis_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.766698
+                      axis -0.000000 -1.000000 0.000000
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_thumb_chassis_j01"
+                        minPosition 2.107342389479e-08
+                        maxPosition 1.5333962039203162
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_thumb_chassis_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      rotation -0.000000 -1.000000 0.000000 0.766698
+                      children [
+                        Shape {
+                          appearance DEF r29002 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation -0.030298 -0.028649 -0.015689
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF thumb_chassis_material PBRAppearance {
+                                    baseColor 0.700000 0.100000 0.700000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_thumb_chassis Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_chassis.STL"
+                                  }
+                                }
+                              ]
+                            }
+                            Solid {
+                              translation 0.057441 0.027078 0.013009
+                              children [
+                                Shape {
+                                  appearance DEF _thumb_proximal_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    axis 0.148668 -0.130526 0.980235
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_thumb_proximal_j01"
+                                      minPosition -1.6653e-16
+                                      maxPosition 0.7202218861710602
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_thumb_proximal_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    children [
+                                      Shape {
+                                        appearance DEF r67118 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation -0.057441 -0.027078 -0.013009
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF thumb_proximal_material PBRAppearance {
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_thumb_proximal Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_proximal.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                          Solid {
+                                            translation 0.107607 0.084086 0.012754
+                                            children [
+                                              Shape {
+                                                appearance DEF _thumb_distal_l0_material PBRAppearance {
+                                                  baseColor 0.500000 0.500000 0.500000
+                                                  transparency 1.000000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis 0.148668 -0.130526 0.980235
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "_thumb_distal_j01"
+                                                    minPosition -3.3307e-16
+                                                    maxPosition 1.0668601844050443
+                                                    maxTorque 10000
+                                                  }
+                                                  PositionSensor {
+                                                    name "_thumb_distal_j01_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance DEF r72482 PBRAppearance {
+                                                        baseColor 0.500000 0.500000 0.500000
+                                                        transparency 1.000000
+                                                        roughness 1.000000
+                                                        metalness 0
+                                                      }
+                                                    }
+                                                    Solid {
+                                                      translation -0.107607 -0.084086 -0.012754
+                                                      children [
+                                                        Transform {
+                                                          scale 0.001250 0.001250 0.001250
+                                                          children [
+                                                            Shape {
+                                                              appearance DEF thumb_distal_material PBRAppearance {
+                                                                roughness 1.000000
+                                                                metalness 0
+                                                              }
+                                                              geometry DEF right_thumb_distal Mesh {
+                                                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_distal.STL"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                      name "thumb_distal"
+                                                      physics Physics {
+                                                        density -1
+                                                        mass 0.000000
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "_thumb_distal_l1"
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.000000
+                                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "_thumb_distal_l0"
+                                            physics Physics {
+                                              density -1
+                                              mass 0.000000
+                                            }
+                                          }
+                                        ]
+                                        name "thumb_proximal"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_thumb_proximal_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_thumb_proximal_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                            Solid {
+                              translation 0.046351 0.032309 0.015440
+                              children [
+                                Shape {
+                                  appearance DEF _thumb_link_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    axis 0.148668 -0.130526 0.980235
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_thumb_link_j01"
+                                      minPosition -1.6653e-16
+                                      maxPosition 0.767994546714617
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_thumb_link_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    children [
+                                      Shape {
+                                        appearance DEF r43178 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation -0.046351 -0.032309 -0.015440
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF thumb_link_material PBRAppearance {
+                                                  baseColor 0.700000 0.100000 0.100000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_thumb_link Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_link.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                          Solid {
+                                            translation 0.054417 0.056962 0.017329
+                                            children [
+                                              Shape {
+                                                appearance DEF _thumb_follower_l0_material PBRAppearance {
+                                                  baseColor 0.500000 0.500000 0.500000
+                                                  transparency 1.000000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.148666 0.130525 -0.980236
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "_thumb_follower_j01"
+                                                    minPosition -2.2204e-16
+                                                    maxPosition 0.9373276382628143
+                                                    maxTorque 10000
+                                                  }
+                                                  PositionSensor {
+                                                    name "_thumb_follower_j01_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance DEF r80207 PBRAppearance {
+                                                        baseColor 0.500000 0.500000 0.500000
+                                                        transparency 1.000000
+                                                        roughness 1.000000
+                                                        metalness 0
+                                                      }
+                                                    }
+                                                    Solid {
+                                                      translation -0.054417 -0.056962 -0.017329
+                                                      children [
+                                                        Transform {
+                                                          scale 0.001250 0.001250 0.001250
+                                                          children [
+                                                            Shape {
+                                                              appearance DEF thumb_follower_material PBRAppearance {
+                                                                baseColor 0.100000 0.700000 0.100000
+                                                                roughness 1.000000
+                                                                metalness 0
+                                                              }
+                                                              geometry DEF right_thumb_follower Mesh {
+                                                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_follower.STL"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                      name "thumb_follower"
+                                                      physics Physics {
+                                                        density -1
+                                                        mass 0.000000
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "_thumb_follower_l1"
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.000000
+                                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "_thumb_follower_l0"
+                                            physics Physics {
+                                              density -1
+                                              mass 0.000000
+                                            }
+                                          }
+                                        ]
+                                        name "thumb_link"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_thumb_link_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_thumb_link_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                          ]
+                          name "thumb_chassis"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_thumb_chassis_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_thumb_chassis_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation 0.028877 0.114197 -0.018447
+                children [
+                  Shape {
+                    appearance DEF _index_proximal_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      position 0.758022
+                      axis 0.993581 -0.052307 -0.100299
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_index_proximal_j01"
+                        minPosition 1.490116086078e-08
+                        maxPosition 1.5160434140362977
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_index_proximal_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      rotation 0.993581 -0.052307 -0.100299 0.758022
+                      children [
+                        Shape {
+                          appearance DEF r69401 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation -0.028877 -0.114197 0.018447
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF index_proximal_material PBRAppearance {
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_index_proximal Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_proximal.STL"
+                                  }
+                                }
+                              ]
+                            }
+                            Solid {
+                              translation 0.030141 0.151570 -0.021296
+                              children [
+                                Shape {
+                                  appearance DEF _index_distal_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    position 0.667871
+                                    axis 0.993581 -0.052307 -0.100299
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_index_distal_j01"
+                                      minPosition 2.10734239503e-08
+                                      maxPosition 1.3357411094427798
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_index_distal_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    rotation 0.993581 -0.052307 -0.100299 0.667871
+                                    children [
+                                      Shape {
+                                        appearance DEF r61005 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation -0.030141 -0.151570 0.021296
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF index_distal_material PBRAppearance {
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_index_distal Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_distal.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                        name "index_distal"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_index_distal_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_index_distal_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                            Solid {
+                              translation 0.027321 0.106486 -0.029725
+                              children [
+                                Shape {
+                                  appearance DEF _index_knuckle_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    position 0.625908
+                                    axis -0.993581 0.052307 0.100299
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_index_knuckle_j01"
+                                      minPosition 2.107342400581e-08
+                                      maxPosition 1.251815219067927
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_index_knuckle_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    rotation -0.993581 0.052307 0.100299 0.625908
+                                    children [
+                                      Shape {
+                                        appearance DEF r79316 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation -0.027321 -0.106486 0.029725
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF index_knuckle_material PBRAppearance {
+                                                  baseColor 0.100000 0.100000 0.700000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_index_knuckle Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_knuckle.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                          Solid {
+                                            translation 0.026579 0.083979 -0.026081
+                                            children [
+                                              Shape {
+                                                appearance DEF _index_follower_l0_material PBRAppearance {
+                                                  baseColor 0.500000 0.500000 0.500000
+                                                  transparency 1.000000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.993582 0.052306 0.100298
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "_index_follower_j01"
+                                                    minPosition -5.551e-17
+                                                    maxPosition 0.264226274439239
+                                                    maxTorque 10000
+                                                  }
+                                                  PositionSensor {
+                                                    name "_index_follower_j01_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance DEF r82929 PBRAppearance {
+                                                        baseColor 0.500000 0.500000 0.500000
+                                                        transparency 1.000000
+                                                        roughness 1.000000
+                                                        metalness 0
+                                                      }
+                                                    }
+                                                    Solid {
+                                                      translation -0.026579 -0.083979 0.026081
+                                                      children [
+                                                        Transform {
+                                                          scale 0.001250 0.001250 0.001250
+                                                          children [
+                                                            Shape {
+                                                              appearance DEF index_follower_material PBRAppearance {
+                                                                baseColor 0.100000 0.700000 0.100000
+                                                                roughness 1.000000
+                                                                metalness 0
+                                                              }
+                                                              geometry DEF right_index_follower Mesh {
+                                                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_follower.STL"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                      name "index_follower"
+                                                      physics Physics {
+                                                        density -1
+                                                        mass 0.000000
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "_index_follower_l1"
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.000000
+                                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "_index_follower_l0"
+                                            physics Physics {
+                                              density -1
+                                              mass 0.000000
+                                            }
+                                          }
+                                        ]
+                                        name "index_knuckle"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_index_knuckle_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_index_knuckle_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                          ]
+                          name "index_proximal"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_index_proximal_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_index_proximal_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation 0.027887 0.115952 -0.023727
+                children [
+                  Shape {
+                    appearance DEF _index_link_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      axis 0.993581 -0.052307 -0.100299
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_index_link_j01"
+                        minPosition -3.3307e-16
+                        maxPosition 1.335740387825475
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_index_link_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      children [
+                        Shape {
+                          appearance DEF r18117 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation -0.027887 -0.115952 0.023727
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF index_link_material PBRAppearance {
+                                    baseColor 0.700000 0.100000 0.100000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_index_link Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_link.STL"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                          name "index_link"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_index_link_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_index_link_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation 0.004195 0.117971 -0.019425
+                children [
+                  Shape {
+                    appearance DEF _middle_proximal_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      axis 0.991069 0.000000 -0.133353
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_middle_proximal_j01"
+                        minPosition -5.5511e-16
+                        maxPosition 1.5160436897871299
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_middle_proximal_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      children [
+                        Shape {
+                          appearance DEF r35313 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation -0.004195 -0.117971 0.019425
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF middle_proximal_material PBRAppearance {
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_middle_proximal Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_proximal.STL"
+                                  }
+                                }
+                              ]
+                            }
+                            Solid {
+                              translation 0.003938 0.160444 -0.020923
+                              children [
+                                Shape {
+                                  appearance DEF _middle_distal_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    position 0.674930
+                                    axis 0.991069 -0.000000 -0.133353
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_middle_distal_j01"
+                                      minPosition 2.107342389479e-08
+                                      maxPosition 1.349860136396837
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_middle_distal_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    rotation 0.991069 -0.000000 -0.133353 0.674930
+                                    children [
+                                      Shape {
+                                        appearance DEF r17832 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation -0.003938 -0.160444 0.020923
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF middle_distal_material PBRAppearance {
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_middle_distal Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_distal.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                        name "middle_distal"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_middle_distal_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_middle_distal_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                            Solid {
+                              translation 0.002654 0.110268 -0.030711
+                              children [
+                                Shape {
+                                  appearance DEF _middle_knuckle_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    axis -0.991069 -0.000000 0.133353
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_middle_knuckle_j01"
+                                      minPosition -2.2204e-16
+                                      maxPosition 1.2518149925752489
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_middle_knuckle_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    children [
+                                      Shape {
+                                        appearance DEF r26979 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation -0.002654 -0.110268 0.030711
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF middle_knuckle_material PBRAppearance {
+                                                  baseColor 0.100000 0.100000 0.700000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_middle_knuckle Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_knuckle.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                          Solid {
+                                            translation 0.003196 0.087728 -0.027240
+                                            children [
+                                              Shape {
+                                                appearance DEF _middle_follower_l0_material PBRAppearance {
+                                                  baseColor 0.500000 0.500000 0.500000
+                                                  transparency 1.000000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.991069 -0.000000 0.133353
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "_middle_follower_j01"
+                                                    minPosition -5.551e-17
+                                                    maxPosition 0.26422641895880317
+                                                    maxTorque 10000
+                                                  }
+                                                  PositionSensor {
+                                                    name "_middle_follower_j01_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance DEF r16493 PBRAppearance {
+                                                        baseColor 0.500000 0.500000 0.500000
+                                                        transparency 1.000000
+                                                        roughness 1.000000
+                                                        metalness 0
+                                                      }
+                                                    }
+                                                    Solid {
+                                                      translation -0.003196 -0.087728 0.027240
+                                                      children [
+                                                        Transform {
+                                                          scale 0.001250 0.001250 0.001250
+                                                          children [
+                                                            Shape {
+                                                              appearance DEF middle_follower_material PBRAppearance {
+                                                                baseColor 0.100000 0.700000 0.100000
+                                                                roughness 1.000000
+                                                                metalness 0
+                                                              }
+                                                              geometry DEF right_middle_follower Mesh {
+                                                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_follower.STL"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                      name "middle_follower"
+                                                      physics Physics {
+                                                        density -1
+                                                        mass 0.000000
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "_middle_follower_l1"
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.000000
+                                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "_middle_follower_l0"
+                                            physics Physics {
+                                              density -1
+                                              mass 0.000000
+                                            }
+                                          }
+                                        ]
+                                        name "middle_knuckle"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_middle_knuckle_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_middle_knuckle_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                          ]
+                          name "middle_proximal"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_middle_proximal_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_middle_proximal_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation 0.002971 0.119709 -0.024659
+                children [
+                  Shape {
+                    appearance DEF _middle_link_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      axis 0.991069 -0.000000 -0.133353
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_middle_link_j01"
+                        minPosition -2.7756e-16
+                        maxPosition 1.3498602891370064
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_middle_link_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      children [
+                        Shape {
+                          appearance DEF r5837 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation -0.002971 -0.119709 0.024659
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF middle_link_material PBRAppearance {
+                                    baseColor 0.700000 0.100000 0.100000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_middle_link Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_link.STL"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                          name "middle_link"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_middle_link_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_middle_link_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation -0.020253 0.117971 -0.013614
+                children [
+                  Shape {
+                    appearance DEF _ring_proximal_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      axis 0.990465 0.034899 -0.133272
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_ring_proximal_j01"
+                        minPosition -2.2204e-16
+                        maxPosition 1.5160432876219354
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_ring_proximal_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      children [
+                        Shape {
+                          appearance DEF r1173 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation 0.020253 -0.117971 0.013614
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF ring_proximal_material PBRAppearance {
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_ring_proximal Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_proximal.STL"
+                                  }
+                                }
+                              ]
+                            }
+                            Solid {
+                              translation -0.022028 0.157845 -0.016245
+                              children [
+                                Shape {
+                                  appearance DEF _ring_distal_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    axis 0.990465 0.034899 -0.133272
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_ring_distal_j01"
+                                      minPosition -3.3307e-16
+                                      maxPosition 1.3487831762956275
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_ring_distal_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    children [
+                                      Shape {
+                                        appearance DEF r6804 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation 0.022028 -0.157845 0.016245
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF ring_distal_material PBRAppearance {
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_ring_distal Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_distal.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                        name "ring_distal"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_ring_distal_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_ring_distal_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                            Solid {
+                              translation -0.021526 0.110272 -0.024935
+                              children [
+                                Shape {
+                                  appearance DEF _ring_knuckle_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    axis -0.990465 -0.034900 0.133272
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_ring_knuckle_j01"
+                                      minPosition -3.3307e-16
+                                      maxPosition 1.2518151090676142
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_ring_knuckle_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    children [
+                                      Shape {
+                                        appearance DEF r88452 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation 0.021526 -0.110272 0.024935
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF ring_knuckle_material PBRAppearance {
+                                                  baseColor 0.100000 0.100000 0.700000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_ring_knuckle Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_knuckle.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                          Solid {
+                                            translation -0.020204 0.087749 -0.021569
+                                            children [
+                                              Shape {
+                                                appearance DEF _ring_follower_l0_material PBRAppearance {
+                                                  baseColor 0.500000 0.500000 0.500000
+                                                  transparency 1.000000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.990465 -0.034899 0.133273
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "_ring_follower_j01"
+                                                    minPosition -5.551e-17
+                                                    maxPosition 0.26423062522385393
+                                                    maxTorque 10000
+                                                  }
+                                                  PositionSensor {
+                                                    name "_ring_follower_j01_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance DEF r64299 PBRAppearance {
+                                                        baseColor 0.500000 0.500000 0.500000
+                                                        transparency 1.000000
+                                                        roughness 1.000000
+                                                        metalness 0
+                                                      }
+                                                    }
+                                                    Solid {
+                                                      translation 0.020204 -0.087749 0.021569
+                                                      children [
+                                                        Transform {
+                                                          scale 0.001250 0.001250 0.001250
+                                                          children [
+                                                            Shape {
+                                                              appearance DEF ring_follower_material PBRAppearance {
+                                                                baseColor 0.100000 0.700000 0.100000
+                                                                roughness 1.000000
+                                                                metalness 0
+                                                              }
+                                                              geometry DEF right_ring_follower Mesh {
+                                                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_follower.STL"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                      name "ring_follower"
+                                                      physics Physics {
+                                                        density -1
+                                                        mass 0.000000
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "_ring_follower_l1"
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.000000
+                                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "_ring_follower_l0"
+                                            physics Physics {
+                                              density -1
+                                              mass 0.000000
+                                            }
+                                          }
+                                        ]
+                                        name "ring_knuckle"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_ring_knuckle_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_ring_knuckle_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                          ]
+                          name "ring_proximal"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_ring_proximal_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_ring_proximal_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation -0.021571 0.119689 -0.018834
+                children [
+                  Shape {
+                    appearance DEF _ring_link_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      axis 0.990465 0.034899 -0.133272
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_ring_link_j01"
+                        minPosition -2.7756e-16
+                        maxPosition 1.348783640343766
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_ring_link_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      children [
+                        Shape {
+                          appearance DEF r3823 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation 0.021571 -0.119689 0.018834
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF ring_link_material PBRAppearance {
+                                    baseColor 0.700000 0.100000 0.100000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_ring_link Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_link.STL"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                          name "ring_link"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_ring_link_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_ring_link_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation -0.041146 0.105411 -0.004932
+                children [
+                  Shape {
+                    appearance DEF _little_proximal_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      axis 0.978611 0.104422 -0.177246
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_little_proximal_j01"
+                        minPosition -2.2204e-16
+                        maxPosition 1.5160435382454058
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_little_proximal_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      children [
+                        Shape {
+                          appearance DEF r3524 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation 0.041146 -0.105411 0.004932
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF little_proximal_material PBRAppearance {
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_little_proximal Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_proximal.STL"
+                                  }
+                                }
+                              ]
+                            }
+                            Solid {
+                              translation -0.045041 0.134856 -0.009152
+                              children [
+                                Shape {
+                                  appearance DEF _little_distal_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    position 0.658321
+                                    axis 0.978611 0.104422 -0.177246
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_little_distal_j01"
+                                      minPosition 1.490116086078e-08
+                                      maxPosition 1.3166415436093635
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_little_distal_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    rotation 0.978611 0.104422 -0.177246 0.658321
+                                    children [
+                                      Shape {
+                                        appearance DEF r81183 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation 0.045041 -0.134856 0.009152
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF little_distal_material PBRAppearance {
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_little_distal Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_distal.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                        name "little_distal"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_little_distal_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_little_distal_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                            Solid {
+                              translation -0.042401 0.097693 -0.016243
+                              children [
+                                Shape {
+                                  appearance DEF _little_knuckle_l0_material PBRAppearance {
+                                    baseColor 0.500000 0.500000 0.500000
+                                    transparency 1.000000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                }
+                                HingeJoint {
+                                  jointParameters HingeJointParameters {
+                                    position 0.625908
+                                    axis -0.978611 -0.104422 0.177246
+                                  }
+                                  device [
+                                    RotationalMotor {
+                                      name "_little_knuckle_j01"
+                                      minPosition 1.49011609718e-08
+                                      maxPosition 1.2518153055210535
+                                      maxTorque 10000
+                                    }
+                                    PositionSensor {
+                                      name "_little_knuckle_j01_sensor"
+                                    }
+                                  ]
+                                  endPoint Solid {
+                                    rotation -0.978611 -0.104422 0.177246 0.625908
+                                    children [
+                                      Shape {
+                                        appearance DEF r35148 PBRAppearance {
+                                          baseColor 0.500000 0.500000 0.500000
+                                          transparency 1.000000
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                      }
+                                      Solid {
+                                        translation 0.042401 -0.097693 0.016243
+                                        children [
+                                          Transform {
+                                            scale 0.001250 0.001250 0.001250
+                                            children [
+                                              Shape {
+                                                appearance DEF little_knuckle_material PBRAppearance {
+                                                  baseColor 0.100000 0.100000 0.700000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                                geometry DEF right_little_knuckle Mesh {
+                                                  url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_knuckle.STL"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                          Solid {
+                                            translation -0.039369 0.075302 -0.013114
+                                            children [
+                                              Shape {
+                                                appearance DEF _little_follower_l0_material PBRAppearance {
+                                                  baseColor 0.500000 0.500000 0.500000
+                                                  transparency 1.000000
+                                                  roughness 1.000000
+                                                  metalness 0
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.978611 -0.104421 0.177246
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "_little_follower_j01"
+                                                    minPosition -5.551e-17
+                                                    maxPosition 0.2642262533314631
+                                                    maxTorque 10000
+                                                  }
+                                                  PositionSensor {
+                                                    name "_little_follower_j01_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  children [
+                                                    Shape {
+                                                      appearance DEF r76983 PBRAppearance {
+                                                        baseColor 0.500000 0.500000 0.500000
+                                                        transparency 1.000000
+                                                        roughness 1.000000
+                                                        metalness 0
+                                                      }
+                                                    }
+                                                    Solid {
+                                                      translation 0.039369 -0.075302 0.013114
+                                                      children [
+                                                        Transform {
+                                                          scale 0.001250 0.001250 0.001250
+                                                          children [
+                                                            Shape {
+                                                              appearance DEF little_follower_material PBRAppearance {
+                                                                baseColor 0.100000 0.700000 0.100000
+                                                                roughness 1.000000
+                                                                metalness 0
+                                                              }
+                                                              geometry DEF right_little_follower Mesh {
+                                                                url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_follower.STL"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                      name "little_follower"
+                                                      physics Physics {
+                                                        density -1
+                                                        mass 0.000000
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "_little_follower_l1"
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.000000
+                                                    centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "_little_follower_l0"
+                                            physics Physics {
+                                              density -1
+                                              mass 0.000000
+                                            }
+                                          }
+                                        ]
+                                        name "little_knuckle"
+                                        physics Physics {
+                                          density -1
+                                          mass 0.000000
+                                        }
+                                      }
+                                    ]
+                                    name "_little_knuckle_l1"
+                                    physics Physics {
+                                      density -1
+                                      mass 0.000000
+                                      centerOfMass [ 0.000000 0.000000 0.000000 ]
+                                    }
+                                  }
+                                }
+                              ]
+                              name "_little_knuckle_l0"
+                              physics Physics {
+                                density -1
+                                mass 0.000000
+                              }
+                            }
+                          ]
+                          name "little_proximal"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_little_proximal_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_little_proximal_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+              Solid {
+                translation -0.042700 0.107069 -0.010096
+                children [
+                  Shape {
+                    appearance DEF _little_link_l0_material PBRAppearance {
+                      baseColor 0.500000 0.500000 0.500000
+                      transparency 1.000000
+                      roughness 1.000000
+                      metalness 0
+                    }
+                  }
+                  HingeJoint {
+                    jointParameters HingeJointParameters {
+                      axis 0.978611 0.104422 -0.177246
+                    }
+                    device [
+                      RotationalMotor {
+                        name "_little_link_j01"
+                        minPosition -2.2204e-16
+                        maxPosition 1.3166415935966995
+                        maxTorque 10000
+                      }
+                      PositionSensor {
+                        name "_little_link_j01_sensor"
+                      }
+                    ]
+                    endPoint Solid {
+                      children [
+                        Shape {
+                          appearance DEF r45524 PBRAppearance {
+                            baseColor 0.500000 0.500000 0.500000
+                            transparency 1.000000
+                            roughness 1.000000
+                            metalness 0
+                          }
+                        }
+                        Solid {
+                          translation 0.042700 -0.107069 0.010096
+                          children [
+                            Transform {
+                              scale 0.001250 0.001250 0.001250
+                              children [
+                                Shape {
+                                  appearance DEF little_link_material PBRAppearance {
+                                    baseColor 0.700000 0.100000 0.100000
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF right_little_link Mesh {
+                                    url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_link.STL"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                          name "little_link"
+                          physics Physics {
+                            density -1
+                            mass 0.000000
+                          }
+                        }
+                      ]
+                      name "_little_link_l1"
+                      physics Physics {
+                        density -1
+                        mass 0.000000
+                        centerOfMass [ 0.000000 0.000000 0.000000 ]
+                      }
+                    }
+                  }
+                ]
+                name "_little_link_l0"
+                physics Physics {
+                  density -1
+                  mass 0.000000
+                }
+              }
+            ]
+            name "base_link"
+            physics Physics {
+              density -1
+              mass 0.000000
+            }
+          }
+        ]
+        name "_base_link"
+        physics Physics {
+          density -1
+          mass 0.000000
+          centerOfMass [ 0.000000 0.000000 0.000000 ]
+        }
+      }
+    ]
+    name IS name
+    physics Physics {
+      density -1
+      mass 0.000000
+      centerOfMass [ 0.000000 0.000000 0.000000 ]
+    }
+  }
+}

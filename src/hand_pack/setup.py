@@ -13,7 +13,7 @@ setup(
     ('share/' + package_name, ['package.xml']),
     ('share/' + package_name + '/launch', glob('launch/*.py')),
     ('share/' + package_name + '/urdf', glob('urdf/*.urdf')),
-    ('share/' + package_name + '/urdf/meshes', glob('urdf/meshes/*')),
+    ('share/' + package_name + '/urdf/linear_meshes', glob('urdf/linear_meshes/*')),
     ],
 
     install_requires=['setuptools'],
