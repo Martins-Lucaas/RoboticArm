@@ -38,6 +38,9 @@ PROTO CovviHandRight [
         }
       }
       Solid {
+        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
         rotation 0.000000 0.707107 -0.707107 3.141593
         children [
           Shape {
@@ -52,6 +55,9 @@ PROTO CovviHandRight [
             }
           }
           Solid {
+            boundingObject Box {
+              size 0.05 0.05 0.05
+            }
             translation 0.002143 -0.067948 0.012606
             children [
               Transform {
@@ -96,8 +102,8 @@ PROTO CovviHandRight [
                   ]
                   name "Thumb_driver_link"
                   physics Physics {
-                    density -1
-                    mass 0.000000
+                    
+                    mass 0.000010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -129,8 +135,8 @@ PROTO CovviHandRight [
                   ]
                   name "Index_driver_link"
                   physics Physics {
-                    density -1
-                    mass 0.000000
+                    
+                    mass 0.000010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -162,8 +168,8 @@ PROTO CovviHandRight [
                   ]
                   name "Middle_driver_link"
                   physics Physics {
-                    density -1
-                    mass 0.000000
+                    
+                    mass 0.000010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -195,8 +201,8 @@ PROTO CovviHandRight [
                   ]
                   name "Ring_driver_link"
                   physics Physics {
-                    density -1
-                    mass 0.000000
+                    
+                    mass 0.000010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -228,8 +234,8 @@ PROTO CovviHandRight [
                   ]
                   name "Little_driver_link"
                   physics Physics {
-                    density -1
-                    mass 0.000000
+                    
+                    mass 0.000010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -261,13 +267,16 @@ PROTO CovviHandRight [
                   ]
                   name "Rotate_driver_link"
                   physics Physics {
-                    density -1
-                    mass 0.000000
+                    
+                    mass 0.000010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
               }
               Solid {
+                boundingObject Box {
+                  size 0.05 0.05 0.05
+                }
                 translation 0.013299 0.024865 0.015496
                 children [
                   Shape {
@@ -306,6 +315,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+                            size 0.05 0.05 0.05
+                          }
                           translation -0.013299 -0.024865 -0.015496
                           children [
                             Transform {
@@ -326,15 +338,15 @@ PROTO CovviHandRight [
                           ]
                           name "lisa"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_lisa_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -342,11 +354,14 @@ PROTO CovviHandRight [
                 ]
                 name "_lisa_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
+                boundingObject Box {
+                  size 0.05 0.05 0.05
+                }
                 translation 0.030298 0.028649 0.015689
                 children [
                   Shape {
@@ -385,6 +400,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+                            size 0.05 0.05 0.05
+                          }
                           translation -0.030298 -0.028649 -0.015689
                           children [
                             Transform {
@@ -403,6 +421,9 @@ PROTO CovviHandRight [
                               ]
                             }
                             Solid {
+                              boundingObject Box {
+                                size 0.05 0.05 0.05
+                              }
                               translation 0.057441 0.027078 0.013009
                               children [
                                 Shape {
@@ -439,6 +460,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                      boundingObject Box {
+                                        size 0.05 0.05 0.05
+                                      }
                                         translation -0.057441 -0.027078 -0.013009
                                         children [
                                           Transform {
@@ -456,6 +480,9 @@ PROTO CovviHandRight [
                                             ]
                                           }
                                           Solid {
+                                            boundingObject Box {
+                                              size 0.05 0.05 0.05
+                                             }
                                             translation 0.107607 0.084086 0.012754
                                             children [
                                               Shape {
@@ -492,6 +519,9 @@ PROTO CovviHandRight [
                                                       }
                                                     }
                                                     Solid {
+                                                      boundingObject Box {
+              size 0.05 0.05 0.05
+            }
                                                       translation -0.107607 -0.084086 -0.012754
                                                       children [
                                                         Transform {
@@ -511,15 +541,15 @@ PROTO CovviHandRight [
                                                       ]
                                                       name "thumb_distal"
                                                       physics Physics {
-                                                        density -1
-                                                        mass 0.000000
+                                                        
+                                                        mass 0.000010
                                                       }
                                                     }
                                                   ]
                                                   name "_thumb_distal_l1"
                                                   physics Physics {
-                                                    density -1
-                                                    mass 0.000000
+                                                    
+                                                    mass 0.000010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -527,22 +557,22 @@ PROTO CovviHandRight [
                                             ]
                                             name "_thumb_distal_l0"
                                             physics Physics {
-                                              density -1
-                                              mass 0.000000
+                                              
+                                              mass 0.000010
                                             }
                                           }
                                         ]
                                         name "thumb_proximal"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_thumb_proximal_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -550,11 +580,14 @@ PROTO CovviHandRight [
                               ]
                               name "_thumb_proximal_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                             Solid {
+                              boundingObject Box {
+              size 0.05 0.05 0.05
+            }
                               translation 0.046351 0.032309 0.015440
                               children [
                                 Shape {
@@ -591,6 +624,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+              size 0.05 0.05 0.05
+            }
                                         translation -0.046351 -0.032309 -0.015440
                                         children [
                                           Transform {
@@ -665,15 +701,15 @@ PROTO CovviHandRight [
                                                       ]
                                                       name "thumb_follower"
                                                       physics Physics {
-                                                        density -1
-                                                        mass 0.000000
+                                                        
+                                                        mass 0.000010
                                                       }
                                                     }
                                                   ]
                                                   name "_thumb_follower_l1"
                                                   physics Physics {
-                                                    density -1
-                                                    mass 0.000000
+                                                    
+                                                    mass 0.000010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -681,22 +717,22 @@ PROTO CovviHandRight [
                                             ]
                                             name "_thumb_follower_l0"
                                             physics Physics {
-                                              density -1
-                                              mass 0.000000
+                                              
+                                              mass 0.000010
                                             }
                                           }
                                         ]
                                         name "thumb_link"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_thumb_link_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -704,22 +740,22 @@ PROTO CovviHandRight [
                               ]
                               name "_thumb_link_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                           ]
                           name "thumb_chassis"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_thumb_chassis_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -727,8 +763,8 @@ PROTO CovviHandRight [
                 ]
                 name "_thumb_chassis_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -844,15 +880,15 @@ PROTO CovviHandRight [
                                         ]
                                         name "index_distal"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_index_distal_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -860,8 +896,8 @@ PROTO CovviHandRight [
                               ]
                               name "_index_distal_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                             Solid {
@@ -977,15 +1013,15 @@ PROTO CovviHandRight [
                                                       ]
                                                       name "index_follower"
                                                       physics Physics {
-                                                        density -1
-                                                        mass 0.000000
+                                                        
+                                                        mass 0.000010
                                                       }
                                                     }
                                                   ]
                                                   name "_index_follower_l1"
                                                   physics Physics {
-                                                    density -1
-                                                    mass 0.000000
+                                                    
+                                                    mass 0.000010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -993,22 +1029,22 @@ PROTO CovviHandRight [
                                             ]
                                             name "_index_follower_l0"
                                             physics Physics {
-                                              density -1
-                                              mass 0.000000
+                                              
+                                              mass 0.000010
                                             }
                                           }
                                         ]
                                         name "index_knuckle"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_index_knuckle_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1016,22 +1052,22 @@ PROTO CovviHandRight [
                               ]
                               name "_index_knuckle_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                           ]
                           name "index_proximal"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_index_proximal_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1039,8 +1075,8 @@ PROTO CovviHandRight [
                 ]
                 name "_index_proximal_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -1100,15 +1136,15 @@ PROTO CovviHandRight [
                           ]
                           name "index_link"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_index_link_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1116,8 +1152,8 @@ PROTO CovviHandRight [
                 ]
                 name "_index_link_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -1231,15 +1267,15 @@ PROTO CovviHandRight [
                                         ]
                                         name "middle_distal"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_middle_distal_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1247,8 +1283,8 @@ PROTO CovviHandRight [
                               ]
                               name "_middle_distal_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                             Solid {
@@ -1362,15 +1398,15 @@ PROTO CovviHandRight [
                                                       ]
                                                       name "middle_follower"
                                                       physics Physics {
-                                                        density -1
-                                                        mass 0.000000
+                                                        
+                                                        mass 0.000010
                                                       }
                                                     }
                                                   ]
                                                   name "_middle_follower_l1"
                                                   physics Physics {
-                                                    density -1
-                                                    mass 0.000000
+                                                    
+                                                    mass 0.000010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -1378,22 +1414,22 @@ PROTO CovviHandRight [
                                             ]
                                             name "_middle_follower_l0"
                                             physics Physics {
-                                              density -1
-                                              mass 0.000000
+                                              
+                                              mass 0.000010
                                             }
                                           }
                                         ]
                                         name "middle_knuckle"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_middle_knuckle_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1401,22 +1437,22 @@ PROTO CovviHandRight [
                               ]
                               name "_middle_knuckle_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                           ]
                           name "middle_proximal"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_middle_proximal_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1424,8 +1460,8 @@ PROTO CovviHandRight [
                 ]
                 name "_middle_proximal_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -1485,15 +1521,15 @@ PROTO CovviHandRight [
                           ]
                           name "middle_link"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_middle_link_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1501,8 +1537,8 @@ PROTO CovviHandRight [
                 ]
                 name "_middle_link_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -1614,15 +1650,15 @@ PROTO CovviHandRight [
                                         ]
                                         name "ring_distal"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_ring_distal_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1630,8 +1666,8 @@ PROTO CovviHandRight [
                               ]
                               name "_ring_distal_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                             Solid {
@@ -1745,15 +1781,15 @@ PROTO CovviHandRight [
                                                       ]
                                                       name "ring_follower"
                                                       physics Physics {
-                                                        density -1
-                                                        mass 0.000000
+                                                        
+                                                        mass 0.000010
                                                       }
                                                     }
                                                   ]
                                                   name "_ring_follower_l1"
                                                   physics Physics {
-                                                    density -1
-                                                    mass 0.000000
+                                                    
+                                                    mass 0.000010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -1761,22 +1797,22 @@ PROTO CovviHandRight [
                                             ]
                                             name "_ring_follower_l0"
                                             physics Physics {
-                                              density -1
-                                              mass 0.000000
+                                              
+                                              mass 0.000010
                                             }
                                           }
                                         ]
                                         name "ring_knuckle"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_ring_knuckle_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1784,22 +1820,22 @@ PROTO CovviHandRight [
                               ]
                               name "_ring_knuckle_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                           ]
                           name "ring_proximal"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_ring_proximal_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1807,8 +1843,8 @@ PROTO CovviHandRight [
                 ]
                 name "_ring_proximal_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -1868,15 +1904,15 @@ PROTO CovviHandRight [
                           ]
                           name "ring_link"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_ring_link_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1884,8 +1920,8 @@ PROTO CovviHandRight [
                 ]
                 name "_ring_link_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -1999,15 +2035,15 @@ PROTO CovviHandRight [
                                         ]
                                         name "little_distal"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_little_distal_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -2015,8 +2051,8 @@ PROTO CovviHandRight [
                               ]
                               name "_little_distal_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                             Solid {
@@ -2132,15 +2168,15 @@ PROTO CovviHandRight [
                                                       ]
                                                       name "little_follower"
                                                       physics Physics {
-                                                        density -1
-                                                        mass 0.000000
+                                                        
+                                                        mass 0.000010
                                                       }
                                                     }
                                                   ]
                                                   name "_little_follower_l1"
                                                   physics Physics {
-                                                    density -1
-                                                    mass 0.000000
+                                                    
+                                                    mass 0.000010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -2148,22 +2184,22 @@ PROTO CovviHandRight [
                                             ]
                                             name "_little_follower_l0"
                                             physics Physics {
-                                              density -1
-                                              mass 0.000000
+                                              
+                                              mass 0.000010
                                             }
                                           }
                                         ]
                                         name "little_knuckle"
                                         physics Physics {
-                                          density -1
-                                          mass 0.000000
+                                          
+                                          mass 0.000010
                                         }
                                       }
                                     ]
                                     name "_little_knuckle_l1"
                                     physics Physics {
-                                      density -1
-                                      mass 0.000000
+                                      
+                                      mass 0.000010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -2171,22 +2207,22 @@ PROTO CovviHandRight [
                               ]
                               name "_little_knuckle_l0"
                               physics Physics {
-                                density -1
-                                mass 0.000000
+                                
+                                mass 0.000010
                               }
                             }
                           ]
                           name "little_proximal"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_little_proximal_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -2194,8 +2230,8 @@ PROTO CovviHandRight [
                 ]
                 name "_little_proximal_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
               Solid {
@@ -2255,15 +2291,15 @@ PROTO CovviHandRight [
                           ]
                           name "little_link"
                           physics Physics {
-                            density -1
-                            mass 0.000000
+                            
+                            mass 0.000010
                           }
                         }
                       ]
                       name "_little_link_l1"
                       physics Physics {
-                        density -1
-                        mass 0.000000
+                        
+                        mass 0.000010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -2271,30 +2307,30 @@ PROTO CovviHandRight [
                 ]
                 name "_little_link_l0"
                 physics Physics {
-                  density -1
-                  mass 0.000000
+                  
+                  mass 0.000010
                 }
               }
             ]
             name "base_link"
             physics Physics {
-              density -1
-              mass 0.000000
+              
+              mass 0.000010
             }
           }
         ]
         name "_base_link"
         physics Physics {
-          density -1
-          mass 0.000000
+          
+          mass 0.000010
           centerOfMass [ 0.000000 0.000000 0.000000 ]
         }
       }
     ]
     name IS name
     physics Physics {
-      density -1
-      mass 0.000000
+      
+      mass 0.000010
       centerOfMass [ 0.000000 0.000000 0.000000 ]
     }
   }
