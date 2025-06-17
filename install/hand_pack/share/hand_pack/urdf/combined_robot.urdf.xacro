@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="combined_robot">
+
+  <!-- Inclui o modelo do braço UR -->
+  <xacro:include filename="$(find ur_description)/urdf/ur.urdf.xacro"/>
+  <xacro:arg name="ur_type" default="ur5"/>
+
+  <!-- Inclui o modelo da mão -->
+  <xacro:include filename="$(find hand_pack)/urdf/hand.xacro"/>
+
+  <!-- Junta a mão ao braço -->
+  <joint name="hand_mount" type="fixed">
+    <parent link="wrist_4_link"/>  <!-- Último link do UR5 -->
+    <child link="base_link"/>      <!-- Primeiro link da mão -->
+    <origin xyz="0 0 0.05" rpy="0 0 0"/> <!-- Ajuste conforme necessário -->
+  </joint>
+
+</robot>

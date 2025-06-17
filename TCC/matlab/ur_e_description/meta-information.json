@@ -1,0 +1,52 @@
+{
+    "robots": [
+        {
+            "name": "UR3e",
+            "type": "robotic arm",
+            "manufacturer": "Universal Robots",
+            "xacro-generated": false,
+            "urdf": [
+                "urdf/universalUR3e.urdf"
+            ],
+            "variant": null,
+            "source-link": "https://se.mathworks.com/matlabcentral/fileexchange/98714-robotics-system-toolbox-robot-library-data",
+            "id": 48
+        },
+        {
+            "name": "UR5e",
+            "type": "robotic arm",
+            "manufacturer": "Universal Robots",
+            "xacro-generated": false,
+            "urdf": [
+                "urdf/universalUR5e.urdf"
+            ],
+            "variant": null,
+            "source-link": "https://se.mathworks.com/matlabcentral/fileexchange/98714-robotics-system-toolbox-robot-library-data",
+            "id": 49
+        },
+        {
+            "name": "UR10e",
+            "type": "robotic arm",
+            "manufacturer": "Universal Robots",
+            "xacro-generated": false,
+            "urdf": [
+                "urdf/universalUR10e.urdf"
+            ],
+            "variant": null,
+            "source-link": "https://se.mathworks.com/matlabcentral/fileexchange/98714-robotics-system-toolbox-robot-library-data",
+            "id": 50
+        },
+        {
+            "name": "UR16e",
+            "type": "robotic arm",
+            "manufacturer": "Universal Robots",
+            "xacro-generated": false,
+            "urdf": [
+                "urdf/universalUR16e.urdf"
+            ],
+            "variant": null,
+            "source-link": "https://se.mathworks.com/matlabcentral/fileexchange/98714-robotics-system-toolbox-robot-library-data",
+            "id": 51
+        }
+    ]
+}

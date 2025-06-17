@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="default">
+
+    <!-- Elementos básicos do mundo -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Plugins ROS para integração com spawn -->
+    <plugin name="gazebo_ros_init" filename="libgazebo_ros_init.so">
+      <robotNamespace>/</robotNamespace>
+    </plugin>
+    <plugin name="gazebo_ros_factory" filename="libgazebo_ros_factory.so">
+      <robotNamespace>/</robotNamespace>
+    </plugin>
+
+    <!-- Configuração da interface gráfica para definir o ponto de vista da câmera -->
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <!-- 
+          Posição da camera
+        -->
+        <pose>0 -0 0.1 0 0.3 0</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>
