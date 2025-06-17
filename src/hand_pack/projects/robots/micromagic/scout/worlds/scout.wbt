@@ -1,0 +1,54 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/SandyGround.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/micromagic/scout/protos/Scout.proto"
+
+WorldInfo {
+  info [
+    "A Star Wars inspired scout RX28 walking robot"
+    "Author: Matt Denton"
+    "Date: 08 JUN 2020"
+  ]
+  title "scout"
+  basicTimeStep 10
+  FPS 50
+  defaultDamping Damping {
+  }
+}
+Viewpoint {
+  orientation -0.290899064100266 0.6665006139322486 0.6864070702822962 0.7139140486433699
+  position -1.3040846152715202 -0.7412961252957033 0.8959146079773536
+  follow "robot"
+}
+Fog {
+  color 0.8 0.7 0.45
+  fogType "EXPONENTIAL2"
+  visibilityRange 4
+}
+TexturedBackground {
+  texture "mars"
+}
+DirectionalLight {
+  ambientIntensity 1
+  direction -0.55 0.6 -1
+  intensity 2.7
+  castShadows TRUE
+}
+DirectionalLight {
+  ambientIntensity 1
+  direction 0.5 0.5 -2
+  intensity 0.7
+}
+Floor {
+  translation 0 0 -0.0001
+  size 20 20
+  tileSize 2 2
+  appearance SandyGround {
+  }
+}
+Scout {
+  translation 0 0 0.173064
+  rotation 1 0 0 0.000796322
+}

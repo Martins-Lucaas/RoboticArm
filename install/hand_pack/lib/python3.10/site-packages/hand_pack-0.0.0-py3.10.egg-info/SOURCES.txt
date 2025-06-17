@@ -11,6 +11,7 @@ setup.py
 hand_pack/__init__.py
 hand_pack/hand_node.py
 launch/display.launch.py
+launch/sim.launch.py
 resource/hand_pack
 test/test_copyright.py
 test/test_flake8.py
@@ -45,3 +46,4 @@ urdf/linear_meshes/right_thumb_distal.STL
 urdf/linear_meshes/right_thumb_follower.STL
 urdf/linear_meshes/right_thumb_link.STL
 urdf/linear_meshes/right_thumb_proximal.STL
+worlds/ure.wbt

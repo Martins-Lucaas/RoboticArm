@@ -5,7 +5,8 @@
 # Extracted from: /home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_covvi_hand_right_scaled.urdf
 
 PROTO CovviHandRight [
-  field  SFVec3f     translation     0 0 0
+  field  SFVec3f     
+  translation     0 0 0
   field  SFRotation  rotation        0 0 1 0
   field  SFString    name            "CovviHandRight"  # Is `Robot.name`.
   field  SFString    controller      "void"            # Is `Robot.controller`.
@@ -17,7 +18,8 @@ PROTO CovviHandRight [
 ]
 {
   Robot {
-    translation IS translation
+    translation IS 
+    translation
     rotation IS rotation
     controller IS controller
     controllerArgs IS controllerArgs
@@ -38,9 +40,6 @@ PROTO CovviHandRight [
         }
       }
       Solid {
-        boundingObject Box {
-          size 0.05 0.05 0.05
-        }
         rotation 0.000000 0.707107 -0.707107 3.141593
         children [
           Shape {
@@ -56,8 +55,8 @@ PROTO CovviHandRight [
           }
           Solid {
             boundingObject Box {
-              size 0.05 0.05 0.05
-            }
+          size 0.05 0.05 0.05
+        }
             translation 0.002143 -0.067948 0.012606
             children [
               Transform {
@@ -72,6 +71,7 @@ PROTO CovviHandRight [
                     geometry DEF right_base_link Mesh {
                       url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_base_link.STL"
                     }
+                      castShadows FALSE
                   }
                 ]
               }
@@ -102,8 +102,7 @@ PROTO CovviHandRight [
                   ]
                   name "Thumb_driver_link"
                   physics Physics {
-                    
-                    mass 0.000010
+                    mass 0.001010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -136,7 +135,7 @@ PROTO CovviHandRight [
                   name "Index_driver_link"
                   physics Physics {
                     
-                    mass 0.000010
+                    mass 0.001010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -169,7 +168,7 @@ PROTO CovviHandRight [
                   name "Middle_driver_link"
                   physics Physics {
                     
-                    mass 0.000010
+                    mass 0.001010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -202,7 +201,7 @@ PROTO CovviHandRight [
                   name "Ring_driver_link"
                   physics Physics {
                     
-                    mass 0.000010
+                    mass 0.001010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -235,7 +234,7 @@ PROTO CovviHandRight [
                   name "Little_driver_link"
                   physics Physics {
                     
-                    mass 0.000010
+                    mass 0.001010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
@@ -268,15 +267,12 @@ PROTO CovviHandRight [
                   name "Rotate_driver_link"
                   physics Physics {
                     
-                    mass 0.000010
+                    mass 0.001010
                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                   }
                 }
               }
               Solid {
-                boundingObject Box {
-                  size 0.05 0.05 0.05
-                }
                 translation 0.013299 0.024865 0.015496
                 children [
                   Shape {
@@ -315,9 +311,7 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
-                          boundingObject Box {
-                            size 0.05 0.05 0.05
-                          }
+                         
                           translation -0.013299 -0.024865 -0.015496
                           children [
                             Transform {
@@ -332,6 +326,7 @@ PROTO CovviHandRight [
                                   geometry DEF right_lisa Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_lisa.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
@@ -339,14 +334,14 @@ PROTO CovviHandRight [
                           name "lisa"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_lisa_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -355,13 +350,13 @@ PROTO CovviHandRight [
                 name "_lisa_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
                 boundingObject Box {
-                  size 0.05 0.05 0.05
-                }
+          size 0.05 0.05 0.05
+        }
                 translation 0.030298 0.028649 0.015689
                 children [
                   Shape {
@@ -401,8 +396,8 @@ PROTO CovviHandRight [
                         }
                         Solid {
                           boundingObject Box {
-                            size 0.05 0.05 0.05
-                          }
+          size 0.05 0.05 0.05
+        }
                           translation -0.030298 -0.028649 -0.015689
                           children [
                             Transform {
@@ -417,13 +412,14 @@ PROTO CovviHandRight [
                                   geometry DEF right_thumb_chassis Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_chassis.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
                             Solid {
                               boundingObject Box {
-                                size 0.05 0.05 0.05
-                              }
+          size 0.05 0.05 0.05
+        }
                               translation 0.057441 0.027078 0.013009
                               children [
                                 Shape {
@@ -460,9 +456,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
-                                      boundingObject Box {
-                                        size 0.05 0.05 0.05
-                                      }
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation -0.057441 -0.027078 -0.013009
                                         children [
                                           Transform {
@@ -476,13 +472,14 @@ PROTO CovviHandRight [
                                                 geometry DEF right_thumb_proximal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_proximal.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
                                           Solid {
                                             boundingObject Box {
-                                              size 0.05 0.05 0.05
-                                             }
+          size 0.05 0.05 0.05
+        }
                                             translation 0.107607 0.084086 0.012754
                                             children [
                                               Shape {
@@ -520,8 +517,8 @@ PROTO CovviHandRight [
                                                     }
                                                     Solid {
                                                       boundingObject Box {
-              size 0.05 0.05 0.05
-            }
+          size 0.05 0.05 0.05
+        }
                                                       translation -0.107607 -0.084086 -0.012754
                                                       children [
                                                         Transform {
@@ -535,6 +532,7 @@ PROTO CovviHandRight [
                                                               geometry DEF right_thumb_distal Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_distal.STL"
                                                               }
+                                                                castShadows FALSE
                                                             }
                                                           ]
                                                         }
@@ -542,14 +540,14 @@ PROTO CovviHandRight [
                                                       name "thumb_distal"
                                                       physics Physics {
                                                         
-                                                        mass 0.000010
+                                                        mass 0.001010
                                                       }
                                                     }
                                                   ]
                                                   name "_thumb_distal_l1"
                                                   physics Physics {
                                                     
-                                                    mass 0.000010
+                                                    mass 0.001010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -558,21 +556,21 @@ PROTO CovviHandRight [
                                             name "_thumb_distal_l0"
                                             physics Physics {
                                               
-                                              mass 0.000010
+                                              mass 0.001010
                                             }
                                           }
                                         ]
                                         name "thumb_proximal"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_thumb_proximal_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -581,13 +579,13 @@ PROTO CovviHandRight [
                               name "_thumb_proximal_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                             Solid {
                               boundingObject Box {
-              size 0.05 0.05 0.05
-            }
+          size 0.05 0.05 0.05
+        }
                               translation 0.046351 0.032309 0.015440
                               children [
                                 Shape {
@@ -625,8 +623,8 @@ PROTO CovviHandRight [
                                       }
                                       Solid {
                                         boundingObject Box {
-              size 0.05 0.05 0.05
-            }
+          size 0.05 0.05 0.05
+        }
                                         translation -0.046351 -0.032309 -0.015440
                                         children [
                                           Transform {
@@ -641,10 +639,14 @@ PROTO CovviHandRight [
                                                 geometry DEF right_thumb_link Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_link.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
                                           Solid {
+                                            boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                             translation 0.054417 0.056962 0.017329
                                             children [
                                               Shape {
@@ -681,6 +683,9 @@ PROTO CovviHandRight [
                                                       }
                                                     }
                                                     Solid {
+                                                      boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                                       translation -0.054417 -0.056962 -0.017329
                                                       children [
                                                         Transform {
@@ -695,6 +700,7 @@ PROTO CovviHandRight [
                                                               geometry DEF right_thumb_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_follower.STL"
                                                               }
+                                                                castShadows FALSE
                                                             }
                                                           ]
                                                         }
@@ -702,14 +708,14 @@ PROTO CovviHandRight [
                                                       name "thumb_follower"
                                                       physics Physics {
                                                         
-                                                        mass 0.000010
+                                                        mass 0.001010
                                                       }
                                                     }
                                                   ]
                                                   name "_thumb_follower_l1"
                                                   physics Physics {
                                                     
-                                                    mass 0.000010
+                                                    mass 0.001010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -718,21 +724,21 @@ PROTO CovviHandRight [
                                             name "_thumb_follower_l0"
                                             physics Physics {
                                               
-                                              mass 0.000010
+                                              mass 0.001010
                                             }
                                           }
                                         ]
                                         name "thumb_link"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_thumb_link_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -741,21 +747,21 @@ PROTO CovviHandRight [
                               name "_thumb_link_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                           ]
                           name "thumb_chassis"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_thumb_chassis_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -764,10 +770,13 @@ PROTO CovviHandRight [
                 name "_thumb_chassis_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation 0.028877 0.114197 -0.018447
                 children [
                   Shape {
@@ -806,6 +815,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation -0.028877 -0.114197 0.018447
                           children [
                             Transform {
@@ -819,10 +831,14 @@ PROTO CovviHandRight [
                                   geometry DEF right_index_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_proximal.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation 0.030141 0.151570 -0.021296
                               children [
                                 Shape {
@@ -861,6 +877,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation -0.030141 -0.151570 0.021296
                                         children [
                                           Transform {
@@ -874,6 +893,7 @@ PROTO CovviHandRight [
                                                 geometry DEF right_index_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_distal.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
@@ -881,14 +901,14 @@ PROTO CovviHandRight [
                                         name "index_distal"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_index_distal_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -897,10 +917,13 @@ PROTO CovviHandRight [
                               name "_index_distal_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation 0.027321 0.106486 -0.029725
                               children [
                                 Shape {
@@ -939,6 +962,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation -0.027321 -0.106486 0.029725
                                         children [
                                           Transform {
@@ -953,10 +979,14 @@ PROTO CovviHandRight [
                                                 geometry DEF right_index_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_knuckle.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
                                           Solid {
+                                            boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                             translation 0.026579 0.083979 -0.026081
                                             children [
                                               Shape {
@@ -993,6 +1023,9 @@ PROTO CovviHandRight [
                                                       }
                                                     }
                                                     Solid {
+                                                      boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                                       translation -0.026579 -0.083979 0.026081
                                                       children [
                                                         Transform {
@@ -1007,6 +1040,7 @@ PROTO CovviHandRight [
                                                               geometry DEF right_index_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_follower.STL"
                                                               }
+                                                                castShadows FALSE
                                                             }
                                                           ]
                                                         }
@@ -1014,14 +1048,14 @@ PROTO CovviHandRight [
                                                       name "index_follower"
                                                       physics Physics {
                                                         
-                                                        mass 0.000010
+                                                        mass 0.001010
                                                       }
                                                     }
                                                   ]
                                                   name "_index_follower_l1"
                                                   physics Physics {
                                                     
-                                                    mass 0.000010
+                                                    mass 0.001010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -1030,21 +1064,21 @@ PROTO CovviHandRight [
                                             name "_index_follower_l0"
                                             physics Physics {
                                               
-                                              mass 0.000010
+                                              mass 0.001010
                                             }
                                           }
                                         ]
                                         name "index_knuckle"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_index_knuckle_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1053,21 +1087,21 @@ PROTO CovviHandRight [
                               name "_index_knuckle_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                           ]
                           name "index_proximal"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_index_proximal_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1076,10 +1110,13 @@ PROTO CovviHandRight [
                 name "_index_proximal_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation 0.027887 0.115952 -0.023727
                 children [
                   Shape {
@@ -1116,6 +1153,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation -0.027887 -0.115952 0.023727
                           children [
                             Transform {
@@ -1130,6 +1170,7 @@ PROTO CovviHandRight [
                                   geometry DEF right_index_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_link.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
@@ -1137,14 +1178,14 @@ PROTO CovviHandRight [
                           name "index_link"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_index_link_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1153,10 +1194,13 @@ PROTO CovviHandRight [
                 name "_index_link_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation 0.004195 0.117971 -0.019425
                 children [
                   Shape {
@@ -1193,6 +1237,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation -0.004195 -0.117971 0.019425
                           children [
                             Transform {
@@ -1206,10 +1253,14 @@ PROTO CovviHandRight [
                                   geometry DEF right_middle_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_proximal.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation 0.003938 0.160444 -0.020923
                               children [
                                 Shape {
@@ -1248,6 +1299,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation -0.003938 -0.160444 0.020923
                                         children [
                                           Transform {
@@ -1261,6 +1315,7 @@ PROTO CovviHandRight [
                                                 geometry DEF right_middle_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_distal.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
@@ -1268,14 +1323,14 @@ PROTO CovviHandRight [
                                         name "middle_distal"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_middle_distal_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1284,10 +1339,13 @@ PROTO CovviHandRight [
                               name "_middle_distal_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation 0.002654 0.110268 -0.030711
                               children [
                                 Shape {
@@ -1324,6 +1382,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation -0.002654 -0.110268 0.030711
                                         children [
                                           Transform {
@@ -1338,10 +1399,14 @@ PROTO CovviHandRight [
                                                 geometry DEF right_middle_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_knuckle.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
                                           Solid {
+                                            boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                             translation 0.003196 0.087728 -0.027240
                                             children [
                                               Shape {
@@ -1378,6 +1443,9 @@ PROTO CovviHandRight [
                                                       }
                                                     }
                                                     Solid {
+                                                      boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                                       translation -0.003196 -0.087728 0.027240
                                                       children [
                                                         Transform {
@@ -1392,6 +1460,7 @@ PROTO CovviHandRight [
                                                               geometry DEF right_middle_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_follower.STL"
                                                               }
+                                                                castShadows FALSE
                                                             }
                                                           ]
                                                         }
@@ -1399,14 +1468,14 @@ PROTO CovviHandRight [
                                                       name "middle_follower"
                                                       physics Physics {
                                                         
-                                                        mass 0.000010
+                                                        mass 0.001010
                                                       }
                                                     }
                                                   ]
                                                   name "_middle_follower_l1"
                                                   physics Physics {
                                                     
-                                                    mass 0.000010
+                                                    mass 0.001010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -1415,21 +1484,21 @@ PROTO CovviHandRight [
                                             name "_middle_follower_l0"
                                             physics Physics {
                                               
-                                              mass 0.000010
+                                              mass 0.001010
                                             }
                                           }
                                         ]
                                         name "middle_knuckle"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_middle_knuckle_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1438,21 +1507,21 @@ PROTO CovviHandRight [
                               name "_middle_knuckle_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                           ]
                           name "middle_proximal"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_middle_proximal_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1461,10 +1530,13 @@ PROTO CovviHandRight [
                 name "_middle_proximal_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation 0.002971 0.119709 -0.024659
                 children [
                   Shape {
@@ -1501,6 +1573,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation -0.002971 -0.119709 0.024659
                           children [
                             Transform {
@@ -1515,6 +1590,7 @@ PROTO CovviHandRight [
                                   geometry DEF right_middle_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_link.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
@@ -1522,14 +1598,14 @@ PROTO CovviHandRight [
                           name "middle_link"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_middle_link_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1538,10 +1614,13 @@ PROTO CovviHandRight [
                 name "_middle_link_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation -0.020253 0.117971 -0.013614
                 children [
                   Shape {
@@ -1578,6 +1657,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation 0.020253 -0.117971 0.013614
                           children [
                             Transform {
@@ -1591,10 +1673,14 @@ PROTO CovviHandRight [
                                   geometry DEF right_ring_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_proximal.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation -0.022028 0.157845 -0.016245
                               children [
                                 Shape {
@@ -1631,6 +1717,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation 0.022028 -0.157845 0.016245
                                         children [
                                           Transform {
@@ -1644,6 +1733,7 @@ PROTO CovviHandRight [
                                                 geometry DEF right_ring_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_distal.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
@@ -1651,14 +1741,14 @@ PROTO CovviHandRight [
                                         name "ring_distal"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_ring_distal_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1667,10 +1757,13 @@ PROTO CovviHandRight [
                               name "_ring_distal_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation -0.021526 0.110272 -0.024935
                               children [
                                 Shape {
@@ -1707,6 +1800,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation 0.021526 -0.110272 0.024935
                                         children [
                                           Transform {
@@ -1721,10 +1817,14 @@ PROTO CovviHandRight [
                                                 geometry DEF right_ring_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_knuckle.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
                                           Solid {
+                                            boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                             translation -0.020204 0.087749 -0.021569
                                             children [
                                               Shape {
@@ -1761,6 +1861,9 @@ PROTO CovviHandRight [
                                                       }
                                                     }
                                                     Solid {
+                                                      boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                                       translation 0.020204 -0.087749 0.021569
                                                       children [
                                                         Transform {
@@ -1775,6 +1878,7 @@ PROTO CovviHandRight [
                                                               geometry DEF right_ring_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_follower.STL"
                                                               }
+                                                                castShadows FALSE
                                                             }
                                                           ]
                                                         }
@@ -1782,14 +1886,14 @@ PROTO CovviHandRight [
                                                       name "ring_follower"
                                                       physics Physics {
                                                         
-                                                        mass 0.000010
+                                                        mass 0.001010
                                                       }
                                                     }
                                                   ]
                                                   name "_ring_follower_l1"
                                                   physics Physics {
                                                     
-                                                    mass 0.000010
+                                                    mass 0.001010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -1798,21 +1902,21 @@ PROTO CovviHandRight [
                                             name "_ring_follower_l0"
                                             physics Physics {
                                               
-                                              mass 0.000010
+                                              mass 0.001010
                                             }
                                           }
                                         ]
                                         name "ring_knuckle"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_ring_knuckle_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -1821,21 +1925,21 @@ PROTO CovviHandRight [
                               name "_ring_knuckle_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                           ]
                           name "ring_proximal"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_ring_proximal_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1844,10 +1948,13 @@ PROTO CovviHandRight [
                 name "_ring_proximal_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation -0.021571 0.119689 -0.018834
                 children [
                   Shape {
@@ -1884,6 +1991,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation 0.021571 -0.119689 0.018834
                           children [
                             Transform {
@@ -1898,6 +2008,7 @@ PROTO CovviHandRight [
                                   geometry DEF right_ring_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_link.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
@@ -1905,14 +2016,14 @@ PROTO CovviHandRight [
                           name "ring_link"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_ring_link_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -1921,10 +2032,13 @@ PROTO CovviHandRight [
                 name "_ring_link_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation -0.041146 0.105411 -0.004932
                 children [
                   Shape {
@@ -1961,6 +2075,9 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation 0.041146 -0.105411 0.004932
                           children [
                             Transform {
@@ -1974,10 +2091,14 @@ PROTO CovviHandRight [
                                   geometry DEF right_little_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_proximal.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation -0.045041 0.134856 -0.009152
                               children [
                                 Shape {
@@ -2016,6 +2137,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation 0.045041 -0.134856 0.009152
                                         children [
                                           Transform {
@@ -2029,6 +2153,7 @@ PROTO CovviHandRight [
                                                 geometry DEF right_little_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_distal.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
@@ -2036,14 +2161,14 @@ PROTO CovviHandRight [
                                         name "little_distal"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_little_distal_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -2052,10 +2177,13 @@ PROTO CovviHandRight [
                               name "_little_distal_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                             Solid {
+                              boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                               translation -0.042401 0.097693 -0.016243
                               children [
                                 Shape {
@@ -2094,6 +2222,9 @@ PROTO CovviHandRight [
                                         }
                                       }
                                       Solid {
+                                        boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                         translation 0.042401 -0.097693 0.016243
                                         children [
                                           Transform {
@@ -2108,10 +2239,14 @@ PROTO CovviHandRight [
                                                 geometry DEF right_little_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_knuckle.STL"
                                                 }
+                                                  castShadows FALSE
                                               }
                                             ]
                                           }
                                           Solid {
+                                            boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                             translation -0.039369 0.075302 -0.013114
                                             children [
                                               Shape {
@@ -2148,6 +2283,9 @@ PROTO CovviHandRight [
                                                       }
                                                     }
                                                     Solid {
+                                                      boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                                                       translation 0.039369 -0.075302 0.013114
                                                       children [
                                                         Transform {
@@ -2162,6 +2300,7 @@ PROTO CovviHandRight [
                                                               geometry DEF right_little_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_follower.STL"
                                                               }
+                                                                castShadows FALSE
                                                             }
                                                           ]
                                                         }
@@ -2169,14 +2308,14 @@ PROTO CovviHandRight [
                                                       name "little_follower"
                                                       physics Physics {
                                                         
-                                                        mass 0.000010
+                                                        mass 0.001010
                                                       }
                                                     }
                                                   ]
                                                   name "_little_follower_l1"
                                                   physics Physics {
                                                     
-                                                    mass 0.000010
+                                                    mass 0.001010
                                                     centerOfMass [ 0.000000 0.000000 0.000000 ]
                                                   }
                                                 }
@@ -2185,21 +2324,21 @@ PROTO CovviHandRight [
                                             name "_little_follower_l0"
                                             physics Physics {
                                               
-                                              mass 0.000010
+                                              mass 0.001010
                                             }
                                           }
                                         ]
                                         name "little_knuckle"
                                         physics Physics {
                                           
-                                          mass 0.000010
+                                          mass 0.001010
                                         }
                                       }
                                     ]
                                     name "_little_knuckle_l1"
                                     physics Physics {
                                       
-                                      mass 0.000010
+                                      mass 0.001010
                                       centerOfMass [ 0.000000 0.000000 0.000000 ]
                                     }
                                   }
@@ -2208,21 +2347,21 @@ PROTO CovviHandRight [
                               name "_little_knuckle_l0"
                               physics Physics {
                                 
-                                mass 0.000010
+                                mass 0.001010
                               }
                             }
                           ]
                           name "little_proximal"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_little_proximal_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -2231,10 +2370,13 @@ PROTO CovviHandRight [
                 name "_little_proximal_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
               Solid {
+                boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                 translation -0.042700 0.107069 -0.010096
                 children [
                   Shape {
@@ -2271,6 +2413,10 @@ PROTO CovviHandRight [
                           }
                         }
                         Solid {
+                          
+                          boundingObject Box {
+          size 0.05 0.05 0.05
+        }
                           translation 0.042700 -0.107069 0.010096
                           children [
                             Transform {
@@ -2285,6 +2431,7 @@ PROTO CovviHandRight [
                                   geometry DEF right_little_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_link.STL"
                                   }
+                                    castShadows FALSE
                                 }
                               ]
                             }
@@ -2292,14 +2439,14 @@ PROTO CovviHandRight [
                           name "little_link"
                           physics Physics {
                             
-                            mass 0.000010
+                            mass 0.001010
                           }
                         }
                       ]
                       name "_little_link_l1"
                       physics Physics {
                         
-                        mass 0.000010
+                        mass 0.001010
                         centerOfMass [ 0.000000 0.000000 0.000000 ]
                       }
                     }
@@ -2308,21 +2455,21 @@ PROTO CovviHandRight [
                 name "_little_link_l0"
                 physics Physics {
                   
-                  mass 0.000010
+                  mass 0.001010
                 }
               }
             ]
             name "base_link"
             physics Physics {
               
-              mass 0.000010
+              mass 0.001010
             }
           }
         ]
         name "_base_link"
         physics Physics {
           
-          mass 0.000010
+          mass 0.001010
           centerOfMass [ 0.000000 0.000000 0.000000 ]
         }
       }
@@ -2330,7 +2477,7 @@ PROTO CovviHandRight [
     name IS name
     physics Physics {
       
-      mass 0.000010
+      mass 0.001010
       centerOfMass [ 0.000000 0.000000 0.000000 ]
     }
   }

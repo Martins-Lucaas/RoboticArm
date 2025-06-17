@@ -8,7 +8,7 @@
             <material name="r48384"><color rgba="1 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -20,7 +20,7 @@
             <material name="r81841"><color rgba="0 0 1 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -38,12 +38,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_base_link.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.7 0.7 1.0"/></material>
         </visual>
-        <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_base_link.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -64,7 +58,7 @@
             <material name="r37082"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -79,7 +73,7 @@
             <material name="r47461"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -94,7 +88,7 @@
             <material name="r7722"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -109,7 +103,7 @@
             <material name="r66101"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -124,7 +118,7 @@
             <material name="r58325"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -139,7 +133,7 @@
             <material name="r13443"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -154,12 +148,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_lisa.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.7 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_lisa.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -192,7 +180,7 @@
             <material name="r48572"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -217,12 +205,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_chassis.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.1 0.7 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_chassis.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -255,7 +237,7 @@
             <material name="r29002"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -280,12 +262,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_proximal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_proximal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -318,7 +294,7 @@
             <material name="r67118"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -343,12 +319,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_distal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_distal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -381,7 +351,7 @@
             <material name="r72482"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -406,12 +376,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_link.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.1 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_link.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -444,7 +408,7 @@
             <material name="r43178"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -469,12 +433,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_follower.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.7 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_follower.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -507,7 +465,7 @@
             <material name="r80207"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -532,12 +490,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_index_proximal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_index_proximal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -570,7 +522,7 @@
             <material name="r69401"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -595,12 +547,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_index_distal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_index_distal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -633,7 +579,7 @@
             <material name="r61005"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -658,12 +604,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_index_knuckle.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.1 0.7 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_index_knuckle.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -696,7 +636,7 @@
             <material name="r79316"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -721,12 +661,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_index_follower.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.7 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_index_follower.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -759,7 +693,7 @@
             <material name="r82929"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -784,12 +718,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_index_link.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.1 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_index_link.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -822,7 +750,7 @@
             <material name="r18117"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -847,12 +775,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_proximal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_proximal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -885,7 +807,7 @@
             <material name="r35313"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -910,12 +832,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_distal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_distal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -948,7 +864,7 @@
             <material name="r17832"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -973,12 +889,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_knuckle.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.1 0.7 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_knuckle.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1011,7 +921,7 @@
             <material name="r26979"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1036,12 +946,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_follower.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.7 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_follower.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1074,7 +978,7 @@
             <material name="r16493"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1099,12 +1003,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_link.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.1 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_link.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1137,7 +1035,7 @@
             <material name="r5837"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1162,12 +1060,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_proximal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_proximal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1200,7 +1092,7 @@
             <material name="r1173"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1225,12 +1117,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_distal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_distal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1263,7 +1149,7 @@
             <material name="r6804"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1288,12 +1174,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_knuckle.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.1 0.7 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_knuckle.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1326,7 +1206,7 @@
             <material name="r88452"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1351,12 +1231,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_follower.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.7 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_follower.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1389,7 +1263,7 @@
             <material name="r64299"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1414,12 +1288,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_link.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.1 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_link.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1452,7 +1320,7 @@
             <material name="r3823"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1477,12 +1345,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_little_proximal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_little_proximal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1515,7 +1377,7 @@
             <material name="r3524"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1540,12 +1402,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_little_distal.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="1.0 1.0 1.0 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_little_distal.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1578,7 +1434,7 @@
             <material name="r81183"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1603,12 +1459,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_little_knuckle.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.1 0.7 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_little_knuckle.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1641,7 +1491,7 @@
             <material name="r35148"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1666,12 +1516,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_little_follower.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.1 0.7 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_little_follower.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1704,7 +1548,7 @@
             <material name="r76983"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
@@ -1729,12 +1573,6 @@
             <geometry><mesh filename="package://hand_pack/urdf/linear_meshes/right_little_link.STL" scale="0.00125 0.00125 0.00125"/></geometry>
             <material name=""><color rgba="0.7 0.1 0.1 1.0"/></material>
         </visual>
-         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
-            <geometry>
-            <mesh filename="package://hand_pack/urdf/linear_meshes/right_little_link.STL" scale="0.00125 0.00125 0.00125"/>
-            </geometry>
-        </collision>
         <inertial>
             <mass value="0"/>
             <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
@@ -1767,7 +1605,7 @@
             <material name="r45524"><color rgba="0 0 0 0"/></material>
         </visual>
         <inertial>
-            <mass value="1"/>
+            <mass value="0"/>
             <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
         </inertial>
     </link>
