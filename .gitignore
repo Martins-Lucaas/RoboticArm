@@ -1,0 +1,16 @@
+# Ignorar seguintes paginas
+build/
+install/
+log/
+/src/webots_ros2/
+
+# Ignorar arquivos Python compilados
+*.pyc
+__pycache__/
+
+# Ignorar diretórios de configuração de IDE
+.vscode/
+.idea/
+
+# Ignorar logs
+*.log
