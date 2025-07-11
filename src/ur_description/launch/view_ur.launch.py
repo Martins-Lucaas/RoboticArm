@@ -61,7 +61,7 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument(
             "tf_prefix",
-            default_value='""',
+            default_value="",
             description="Prefix of the joint names for multi-robot setups.",
         )
     )
