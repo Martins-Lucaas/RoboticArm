@@ -56,6 +56,6 @@
     name="$(arg name)"
     tf_prefix="$(arg tf_prefix)"
     mock_sensor_commands="$(arg mock_sensor_commands)"
-    initial_positions="${xacro.load_yaml(initial_positions_file)}"
   />
+
 </robot>

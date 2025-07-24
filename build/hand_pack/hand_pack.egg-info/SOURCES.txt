@@ -17,9 +17,9 @@ test/test_flake8.py
 test/test_pep257.py
 urdf/combined_robot.urdf.xacro
 urdf/hand.xacro
-urdf/hj_hand_gazebo.xacro
-urdf/hj_hand_transmission.xacro
-urdf/hj_hand_world.urdf.xacro
+urdf/hand_gazebo.xacro
+urdf/hand_transmission.xacro
+urdf/hand_world.urdf.xacro
 urdf/mesh/F01_AL_link_hand.stl
 urdf/mesh/F01_AL_link_hand_down.stl
 urdf/mesh/F03_AL_link_DIP.stl

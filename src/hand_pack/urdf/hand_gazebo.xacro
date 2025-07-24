@@ -73,7 +73,7 @@
 
     <gazebo>
       <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
-        <robotNamespace>/hj_hand_chain</robotNamespace>
+        <robotNamespace>/hand_pack_chain</robotNamespace>
         <robotSimType>gazebo_ros_control/DefaultRobotHWSim</robotSimType>
       </plugin>
     </gazebo>

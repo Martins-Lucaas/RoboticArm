@@ -3,7 +3,7 @@
       <link name="world" />  
 
 
-      <xacro:include filename="$(find hri_hand_control)/urdf/hj_hand.urdf.xacro" />
+      <xacro:include filename="$(find hand_pack)/urdf/hj_hand.urdf.xacro" />
       <hj_hand parent="world">
             <origin xyz="0.0 0.0 0.1" rpy="${pi/2} ${pi} 0 "/>
       </hj_hand>
