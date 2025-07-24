@@ -9,24 +9,12 @@ PROTO CovviHandRight [
   translation     0 0 0
   field  SFRotation  rotation        0 0 1 0
   field  SFString    name            "CovviHandRight"  # Is `Robot.name`.
-  field  SFString    controller      "void"            # Is `Robot.controller`.
-  field  MFString    controllerArgs  []                # Is `Robot.controllerArgs`.
-  field  SFString    customData      ""                # Is `Robot.customData`.
-  field  SFBool      supervisor      FALSE             # Is `Robot.supervisor`.
-  field  SFBool      synchronization TRUE              # Is `Robot.synchronization`.
-  field  SFBool      selfCollision   FALSE             # Is `Robot.selfCollision`.
 ]
 {
   Robot {
     translation IS 
     translation
     rotation IS rotation
-    controller IS controller
-    controllerArgs IS controllerArgs
-    customData IS customData
-    supervisor IS supervisor
-    synchronization IS synchronization
-    selfCollision IS selfCollision
     children [
       Shape {
         appearance DEF r48384 PBRAppearance {
@@ -34,10 +22,6 @@ PROTO CovviHandRight [
           transparency 1.000000
           roughness 1.000000
           metalness 0
-          geometry Box { size 0.02 0.02 0.06 }
-        }
-        geometry Box {
-           size 1.000000 1.000000 1.000000
         }
       }
       Solid {
@@ -49,10 +33,6 @@ PROTO CovviHandRight [
               transparency 1.000000
               roughness 1.000000
               metalness 0
-              geometry Box { size 0.02 0.02 0.06 }
-            }
-            geometry Box {
-               size 1.000000 1.000000 1.000000
             }
           }
           Solid {
@@ -69,7 +49,6 @@ PROTO CovviHandRight [
                       baseColor 0.700000 0.700000 0.700000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                     geometry DEF right_base_link Mesh {
                       url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_base_link.STL"
@@ -100,7 +79,6 @@ PROTO CovviHandRight [
                         transparency 1.000000
                         roughness 1.000000
                         metalness 0
-                        geometry Box { size 0.02 0.02 0.06 }
                       }
                     }
                   ]
@@ -133,7 +111,6 @@ PROTO CovviHandRight [
                         transparency 1.000000
                         roughness 1.000000
                         metalness 0
-                        geometry Box { size 0.02 0.02 0.06 }
                       }
                     }
                   ]
@@ -168,7 +145,6 @@ PROTO CovviHandRight [
                         transparency 1.000000
                         roughness 1.000000
                         metalness 0
-                        geometry Box { size 0.02 0.02 0.06 }
                       }
                     }
                   ]
@@ -203,7 +179,6 @@ PROTO CovviHandRight [
                         transparency 1.000000
                         roughness 1.000000
                         metalness 0
-                        geometry Box { size 0.02 0.02 0.06 }
                       }
                     }
                   ]
@@ -238,7 +213,6 @@ PROTO CovviHandRight [
                         transparency 1.000000
                         roughness 1.000000
                         metalness 0
-                        geometry Box { size 0.02 0.02 0.06 }
                       }
                     }
                   ]
@@ -273,7 +247,6 @@ PROTO CovviHandRight [
                         transparency 1.000000
                         roughness 1.000000
                         metalness 0
-                        geometry Box { size 0.02 0.02 0.06 }
                       }
                     }
                   ]
@@ -295,7 +268,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -323,7 +295,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -337,7 +308,6 @@ PROTO CovviHandRight [
                                     baseColor 0.700000 0.700000 0.100000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_lisa Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_lisa.STL"
@@ -384,7 +354,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -412,7 +381,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -429,7 +397,6 @@ PROTO CovviHandRight [
                                     baseColor 0.700000 0.100000 0.700000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_thumb_chassis Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_chassis.STL"
@@ -450,7 +417,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -476,7 +442,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -492,7 +457,6 @@ PROTO CovviHandRight [
                                                 appearance DEF thumb_proximal_material PBRAppearance {
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_thumb_proximal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_proximal.STL"
@@ -513,7 +477,6 @@ PROTO CovviHandRight [
                                                   transparency 1.000000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                               }
                                               HingeJoint {
@@ -532,14 +495,13 @@ PROTO CovviHandRight [
                                                   }
                                                 ]
                                                 endPoint Solid {
-                                                                                  children [
+                                                    children [
                                                     Shape {
                                                       appearance DEF r72482 PBRAppearance {
                                                         baseColor 0.500000 0.500000 0.500000
                                                         transparency 1.000000
                                                         roughness 1.000000
                                                         metalness 0
-                                                        geometry Box { size 0.02 0.02 0.06 }
                                                       }
                                                     }
                                                     Solid {
@@ -555,7 +517,6 @@ PROTO CovviHandRight [
                                                               appearance DEF thumb_distal_material PBRAppearance {
                                                                 roughness 1.000000
                                                                 metalness 0
-                                                                geometry Box { size 0.02 0.02 0.06 }
                                                               }
                                                               geometry DEF right_thumb_distal Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_distal.STL"
@@ -570,7 +531,6 @@ PROTO CovviHandRight [
                                                         
                                                         mass 0.001010
                                                       }
-                                                      boundingObject Box {size 0.02 0.02 0.06}
                                                     }
                                                   ]
                                                   name "_thumb_distal_l1"
@@ -588,7 +548,6 @@ PROTO CovviHandRight [
                                               
                                               mass 0.001010
                                             }
-                                            boundingObject Box {size 0.02 0.02 0.06}
                                           }
                                         ]
                                         name "thumb_proximal"
@@ -596,7 +555,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_thumb_proximal_l1"
@@ -614,7 +572,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                             Solid {
                               boundingObject Box {
@@ -628,7 +585,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -654,7 +610,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -671,7 +626,6 @@ PROTO CovviHandRight [
                                                   baseColor 0.700000 0.100000 0.100000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_thumb_link Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_link.STL"
@@ -692,7 +646,6 @@ PROTO CovviHandRight [
                                                   transparency 1.000000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                               }
                                               HingeJoint {
@@ -718,7 +671,6 @@ PROTO CovviHandRight [
                                                         transparency 1.000000
                                                         roughness 1.000000
                                                         metalness 0
-                                                        geometry Box { size 0.02 0.02 0.06 }
                                                       }
                                                     }
                                                     Solid {
@@ -735,7 +687,6 @@ PROTO CovviHandRight [
                                                                 baseColor 0.100000 0.700000 0.100000
                                                                 roughness 1.000000
                                                                 metalness 0
-                                                                geometry Box { size 0.02 0.02 0.06 }
                                                               }
                                                               geometry DEF right_thumb_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_thumb_follower.STL"
@@ -750,7 +701,6 @@ PROTO CovviHandRight [
                                                         
                                                         mass 0.001010
                                                       }
-                                                      boundingObject Box {size 0.02 0.02 0.06}
                                                     }
                                                   ]
                                                   name "_thumb_follower_l1"
@@ -768,7 +718,6 @@ PROTO CovviHandRight [
                                               
                                               mass 0.001010
                                             }
-                                            boundingObject Box {size 0.02 0.02 0.06}
                                           }
                                         ]
                                         name "thumb_link"
@@ -776,7 +725,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_thumb_link_l1"
@@ -794,7 +742,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                           ]
                           name "thumb_chassis"
@@ -802,7 +749,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_thumb_chassis_l1"
@@ -820,7 +766,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -834,7 +779,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -862,7 +806,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -878,7 +821,6 @@ PROTO CovviHandRight [
                                   appearance DEF index_proximal_material PBRAppearance {
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_index_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_proximal.STL"
@@ -889,8 +831,8 @@ PROTO CovviHandRight [
                             }
                             Solid {
                               boundingObject Box {
-          size 0.05 0.05 0.05
-        }
+                                size 0.05 0.05 0.05
+                              }
                               translation 0.030141 0.151570 -0.021296
                               children [
                                 Shape {
@@ -899,7 +841,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -927,7 +868,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -943,7 +883,6 @@ PROTO CovviHandRight [
                                                 appearance DEF index_distal_material PBRAppearance {
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_index_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_distal.STL"
@@ -958,7 +897,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_index_distal_l1"
@@ -976,7 +914,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                             Solid {
                               boundingObject Box {
@@ -990,7 +927,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -1018,7 +954,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -1035,7 +970,6 @@ PROTO CovviHandRight [
                                                   baseColor 0.100000 0.100000 0.700000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_index_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_knuckle.STL"
@@ -1056,7 +990,6 @@ PROTO CovviHandRight [
                                                   transparency 1.000000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                               }
                                               HingeJoint {
@@ -1082,7 +1015,6 @@ PROTO CovviHandRight [
                                                         transparency 1.000000
                                                         roughness 1.000000
                                                         metalness 0
-                                                        geometry Box { size 0.02 0.02 0.06 }
                                                       }
                                                     }
                                                     Solid {
@@ -1099,7 +1031,6 @@ PROTO CovviHandRight [
                                                                 baseColor 0.100000 0.700000 0.100000
                                                                 roughness 1.000000
                                                                 metalness 0
-                                                                geometry Box { size 0.02 0.02 0.06 }
                                                               }
                                                               geometry DEF right_index_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_follower.STL"
@@ -1114,7 +1045,6 @@ PROTO CovviHandRight [
                                                         
                                                         mass 0.001010
                                                       }
-                                                      boundingObject Box {size 0.02 0.02 0.06}
                                                     }
                                                   ]
                                                   name "_index_follower_l1"
@@ -1132,7 +1062,6 @@ PROTO CovviHandRight [
                                               
                                               mass 0.001010
                                             }
-                                            boundingObject Box {size 0.02 0.02 0.06}
                                           }
                                         ]
                                         name "index_knuckle"
@@ -1140,7 +1069,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_index_knuckle_l1"
@@ -1158,7 +1086,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                           ]
                           name "index_proximal"
@@ -1166,7 +1093,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_index_proximal_l1"
@@ -1184,7 +1110,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -1198,7 +1123,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -1224,7 +1148,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -1241,7 +1164,6 @@ PROTO CovviHandRight [
                                     baseColor 0.700000 0.100000 0.100000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_index_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_index_link.STL"
@@ -1256,7 +1178,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_index_link_l1"
@@ -1274,7 +1195,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -1288,7 +1208,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -1314,7 +1233,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -1330,7 +1248,6 @@ PROTO CovviHandRight [
                                   appearance DEF middle_proximal_material PBRAppearance {
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_middle_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_proximal.STL"
@@ -1351,7 +1268,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -1379,7 +1295,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -1395,7 +1310,6 @@ PROTO CovviHandRight [
                                                 appearance DEF middle_distal_material PBRAppearance {
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_middle_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_distal.STL"
@@ -1410,7 +1324,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_middle_distal_l1"
@@ -1428,7 +1341,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                             Solid {
                               boundingObject Box {
@@ -1442,7 +1354,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -1468,7 +1379,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -1485,7 +1395,6 @@ PROTO CovviHandRight [
                                                   baseColor 0.100000 0.100000 0.700000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_middle_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_knuckle.STL"
@@ -1496,8 +1405,8 @@ PROTO CovviHandRight [
                                           }
                                           Solid {
                                             boundingObject Box {
-          size 0.05 0.05 0.05
-        }
+                                              size 0.05 0.05 0.05
+                                            }
                                             translation 0.003196 0.087728 -0.027240
                                             children [
                                               Shape {
@@ -1506,7 +1415,6 @@ PROTO CovviHandRight [
                                                   transparency 1.000000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                               }
                                               HingeJoint {
@@ -1525,14 +1433,13 @@ PROTO CovviHandRight [
                                                   }
                                                 ]
                                                 endPoint Solid {
-                                                                                  children [
+                                                    children [
                                                     Shape {
                                                       appearance DEF r16493 PBRAppearance {
                                                         baseColor 0.500000 0.500000 0.500000
                                                         transparency 1.000000
                                                         roughness 1.000000
                                                         metalness 0
-                                                        geometry Box { size 0.02 0.02 0.06 }
                                                       }
                                                     }
                                                     Solid {
@@ -1549,7 +1456,6 @@ PROTO CovviHandRight [
                                                                 baseColor 0.100000 0.700000 0.100000
                                                                 roughness 1.000000
                                                                 metalness 0
-                                                                geometry Box { size 0.02 0.02 0.06 }
                                                               }
                                                               geometry DEF right_middle_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_follower.STL"
@@ -1564,7 +1470,6 @@ PROTO CovviHandRight [
                                                         
                                                         mass 0.001010
                                                       }
-                                                      boundingObject Box {size 0.02 0.02 0.06}
                                                     }
                                                   ]
                                                   name "_middle_follower_l1"
@@ -1582,7 +1487,6 @@ PROTO CovviHandRight [
                                               
                                               mass 0.001010
                                             }
-                                            boundingObject Box {size 0.02 0.02 0.06}
                                           }
                                         ]
                                         name "middle_knuckle"
@@ -1590,7 +1494,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_middle_knuckle_l1"
@@ -1608,7 +1511,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                           ]
                           name "middle_proximal"
@@ -1616,7 +1518,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_middle_proximal_l1"
@@ -1634,7 +1535,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -1648,7 +1548,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -1674,7 +1573,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -1691,7 +1589,6 @@ PROTO CovviHandRight [
                                     baseColor 0.700000 0.100000 0.100000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_middle_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_middle_link.STL"
@@ -1706,7 +1603,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_middle_link_l1"
@@ -1724,7 +1620,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -1738,7 +1633,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -1764,7 +1658,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -1780,7 +1673,6 @@ PROTO CovviHandRight [
                                   appearance DEF ring_proximal_material PBRAppearance {
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_ring_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_proximal.STL"
@@ -1801,7 +1693,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -1820,14 +1711,13 @@ PROTO CovviHandRight [
                                     }
                                   ]
                                   endPoint Solid {
-                                                      children [
+                                      children [
                                       Shape {
                                         appearance DEF r6804 PBRAppearance {
                                           baseColor 0.500000 0.500000 0.500000
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -1843,7 +1733,6 @@ PROTO CovviHandRight [
                                                 appearance DEF ring_distal_material PBRAppearance {
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_ring_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_distal.STL"
@@ -1858,7 +1747,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_ring_distal_l1"
@@ -1876,7 +1764,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                             Solid {
                               boundingObject Box {
@@ -1890,7 +1777,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -1916,7 +1802,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -1933,7 +1818,6 @@ PROTO CovviHandRight [
                                                   baseColor 0.100000 0.100000 0.700000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_ring_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_knuckle.STL"
@@ -1954,7 +1838,6 @@ PROTO CovviHandRight [
                                                   transparency 1.000000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                               }
                                               HingeJoint {
@@ -1980,7 +1863,6 @@ PROTO CovviHandRight [
                                                         transparency 1.000000
                                                         roughness 1.000000
                                                         metalness 0
-                                                        geometry Box { size 0.02 0.02 0.06 }
                                                       }
                                                     }
                                                     Solid {
@@ -1997,7 +1879,6 @@ PROTO CovviHandRight [
                                                                 baseColor 0.100000 0.700000 0.100000
                                                                 roughness 1.000000
                                                                 metalness 0
-                                                                geometry Box { size 0.02 0.02 0.06 }
                                                               }
                                                               geometry DEF right_ring_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_follower.STL"
@@ -2012,7 +1893,6 @@ PROTO CovviHandRight [
                                                         
                                                         mass 0.001010
                                                       }
-                                                      boundingObject Box {size 0.02 0.02 0.06}
                                                     }
                                                   ]
                                                   name "_ring_follower_l1"
@@ -2030,7 +1910,6 @@ PROTO CovviHandRight [
                                               
                                               mass 0.001010
                                             }
-                                            boundingObject Box {size 0.02 0.02 0.06}
                                           }
                                         ]
                                         name "ring_knuckle"
@@ -2038,7 +1917,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_ring_knuckle_l1"
@@ -2056,7 +1934,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                           ]
                           name "ring_proximal"
@@ -2064,7 +1941,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_ring_proximal_l1"
@@ -2082,7 +1958,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -2096,7 +1971,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -2122,7 +1996,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -2139,7 +2012,6 @@ PROTO CovviHandRight [
                                     baseColor 0.700000 0.100000 0.100000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_ring_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_ring_link.STL"
@@ -2154,7 +2026,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_ring_link_l1"
@@ -2172,7 +2043,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -2186,7 +2056,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -2212,7 +2081,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -2228,7 +2096,6 @@ PROTO CovviHandRight [
                                   appearance DEF little_proximal_material PBRAppearance {
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_little_proximal Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_proximal.STL"
@@ -2249,7 +2116,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -2277,7 +2143,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -2293,7 +2158,6 @@ PROTO CovviHandRight [
                                                 appearance DEF little_distal_material PBRAppearance {
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_little_distal Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_distal.STL"
@@ -2308,7 +2172,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_little_distal_l1"
@@ -2326,7 +2189,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                             Solid {
                               boundingObject Box {
@@ -2340,7 +2202,6 @@ PROTO CovviHandRight [
                                     transparency 1.000000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                 }
                                 HingeJoint {
@@ -2368,7 +2229,6 @@ PROTO CovviHandRight [
                                           transparency 1.000000
                                           roughness 1.000000
                                           metalness 0
-                                          geometry Box { size 0.02 0.02 0.06 }
                                         }
                                       }
                                       Solid {
@@ -2385,7 +2245,6 @@ PROTO CovviHandRight [
                                                   baseColor 0.100000 0.100000 0.700000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                                 geometry DEF right_little_knuckle Mesh {
                                                   url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_knuckle.STL"
@@ -2406,7 +2265,6 @@ PROTO CovviHandRight [
                                                   transparency 1.000000
                                                   roughness 1.000000
                                                   metalness 0
-                                                  geometry Box { size 0.02 0.02 0.06 }
                                                 }
                                               }
                                               HingeJoint {
@@ -2432,7 +2290,6 @@ PROTO CovviHandRight [
                                                         transparency 1.000000
                                                         roughness 1.000000
                                                         metalness 0
-                                                        geometry Box { size 0.02 0.02 0.06 }
                                                       }
                                                     }
                                                     Solid {
@@ -2449,7 +2306,6 @@ PROTO CovviHandRight [
                                                                 baseColor 0.100000 0.700000 0.100000
                                                                 roughness 1.000000
                                                                 metalness 0
-                                                                geometry Box { size 0.02 0.02 0.06 }
                                                               }
                                                               geometry DEF right_little_follower Mesh {
                                                                 url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_follower.STL"
@@ -2464,7 +2320,6 @@ PROTO CovviHandRight [
                                                         
                                                         mass 0.001010
                                                       }
-                                                      boundingObject Box {size 0.02 0.02 0.06}
                                                     }
                                                   ]
                                                   name "_little_follower_l1"
@@ -2482,7 +2337,6 @@ PROTO CovviHandRight [
                                               
                                               mass 0.001010
                                             }
-                                            boundingObject Box {size 0.02 0.02 0.06}
                                           }
                                         ]
                                         name "little_knuckle"
@@ -2490,7 +2344,6 @@ PROTO CovviHandRight [
                                           
                                           mass 0.001010
                                         }
-                                        boundingObject Box {size 0.02 0.02 0.06}
                                       }
                                     ]
                                     name "_little_knuckle_l1"
@@ -2508,7 +2361,6 @@ PROTO CovviHandRight [
                                 
                                 mass 0.001010
                               }
-                              boundingObject Box {size 0.02 0.02 0.06}
                             }
                           ]
                           name "little_proximal"
@@ -2516,7 +2368,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_little_proximal_l1"
@@ -2534,7 +2385,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
               Solid {
                 boundingObject Box {
@@ -2548,7 +2398,6 @@ PROTO CovviHandRight [
                       transparency 1.000000
                       roughness 1.000000
                       metalness 0
-                      geometry Box { size 0.02 0.02 0.06 }
                     }
                   }
                   HingeJoint {
@@ -2574,7 +2423,6 @@ PROTO CovviHandRight [
                             transparency 1.000000
                             roughness 1.000000
                             metalness 0
-                            geometry Box { size 0.02 0.02 0.06 }
                           }
                         }
                         Solid {
@@ -2592,7 +2440,6 @@ PROTO CovviHandRight [
                                     baseColor 0.700000 0.100000 0.100000
                                     roughness 1.000000
                                     metalness 0
-                                    geometry Box { size 0.02 0.02 0.06 }
                                   }
                                   geometry DEF right_little_link Mesh {
                                     url "/home/lucas-pc/RoboticArm/src/hand_pack/urdf/linear_meshes/right_little_link.STL"
@@ -2607,7 +2454,6 @@ PROTO CovviHandRight [
                             
                             mass 0.001010
                           }
-                          boundingObject Box {size 0.02 0.02 0.06}
                         }
                       ]
                       name "_little_link_l1"
@@ -2625,7 +2471,6 @@ PROTO CovviHandRight [
                   
                   mass 0.001010
                 }
-                boundingObject Box {size 0.02 0.02 0.06}
               }
             ]
             name "base_link"
@@ -2633,7 +2478,6 @@ PROTO CovviHandRight [
               
               mass 0.001010
             }
-            boundingObject Box {size 0.02 0.02 0.06}
           }
         ]
         name "_base_link"

@@ -8,7 +8,7 @@ TIME_STEP = 32
 robot = Robot()
 
 # nomes das juntas do UR5e
-joint_names = [
+arm_joint_names = [
     "shoulder_pan_joint",
     "shoulder_lift_joint",
     "elbow_joint",
@@ -17,22 +17,24 @@ joint_names = [
     "wrist_3_joint"
 ]
 
-# pega cada motor, configura posição e velocidade
-joints = {}
-for name in joint_names:
+# pega motores do braço
+arm_joints = {}
+for name in arm_joint_names:
     m = robot.getDevice(name)
     if m is None:
         print(f"⚠️ Device '{name}' not found on UR5e")
     else:
-        m.setPosition(0.0)    # posição inicial
-        m.setVelocity(1)    # velocidade máxima
-    joints[name] = m
+        m.setPosition(0.0)
+        m.setVelocity(1)
+    arm_joints[name] = m
+
 
 # loop principal
 while robot.step(TIME_STEP) != -1:
     t = robot.getTime()
-    # Exemplo de controle simples: oscila each joint
-    for name, m in joints.items():
+
+    # movimento oscilatório do braço
+    for name, m in arm_joints.items():
         if m:
-            target = 0.5 * math.sin(t)  # só como demonstração
+            target = 0.5 * math.sin(t)
             m.setPosition(target)
