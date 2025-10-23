@@ -1,0 +1,674 @@
+<robot name="cr10_with_shadow_hand">
+<link name="cr10_dummy_link"/>
+<link name="cr10_base_link">
+<inertial>
+<origin xyz="-0.0017435 -4.7141E-06 0.032774" rpy="0 0 0"/>
+<mass value="1.8265"/>
+<inertia ixx="0.0041731" ixy="5.9354E-07" ixz="2.52E-05" iyy="0.0043128" iyz="-5.4503E-07" izz="0.0067702"/>
+</inertial>
+<visual>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/base_link.STL"/>
+</geometry>
+<material name="cr10_">
+<color rgba="1 1 1 1"/>
+</material>
+</visual>
+<collision>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/base_link.STL"/>
+</geometry>
+</collision>
+</link>
+<joint name="cr10_dummy_joint" type="fixed">
+<parent link="cr10_dummy_link"/>
+<child link="cr10_base_link"/>
+</joint>
+<link name="cr10_Link1">
+<inertial>
+<origin xyz="-1.6635E-06 -0.010819 0.0028389" rpy="0 0 0"/>
+<mass value="4.1649"/>
+<inertia ixx="0.020714" ixy="-1.9343E-07" ixz="1.6036E-07" iyy="0.018824" iyz="-9.6731E-05" izz="0.014575"/>
+</inertial>
+<visual>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link1.STL"/>
+</geometry>
+<material name="cr10_">
+<color rgba="1 1 1 1"/>
+</material>
+</visual>
+<collision>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link1.STL"/>
+</geometry>
+</collision>
+</link>
+<joint name="cr10_joint1" type="revolute">
+<origin xyz="0 0 0.1765" rpy="0 0 0"/>
+<parent link="cr10_base_link"/>
+<child link="cr10_Link1"/>
+<axis xyz="0 0 1"/>
+<limit lower="-6.27" upper="6.27" effort="0" velocity="0"/>
+</joint>
+<link name="cr10_Link2">
+<inertial>
+<origin xyz="-0.24631 3.5816E-07 0.19515" rpy="0 0 0"/>
+<mass value="11.314"/>
+<inertia ixx="0.033616" ixy="-8.2998E-07" ixz="-0.0033352" iyy="0.30683" iyz="-6.6457E-08" izz="0.29972"/>
+</inertial>
+<visual>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link2.STL"/>
+</geometry>
+<material name="cr10_">
+<color rgba="1 1 1 1"/>
+</material>
+</visual>
+<collision>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link2.STL"/>
+</geometry>
+</collision>
+</link>
+<joint name="cr10_joint2" type="revolute">
+<origin xyz="0 0 0" rpy="1.5708 1.5708 0"/>
+<parent link="cr10_Link1"/>
+<child link="cr10_Link2"/>
+<axis xyz="0 0 1"/>
+<limit lower="-6.27" upper="6.27" effort="0" velocity="0"/>
+</joint>
+<link name="cr10_Link3">
+<inertial>
+<origin xyz="-0.270855859955203 2.5144690851208E-07 0.0622960395387155" rpy="0 0 0"/>
+<mass value="4.89191189064363"/>
+<inertia ixx="0.00715720724136357" ixy="-5.62017408817872E-07" ixz="-0.00257748068989916" iyy="0.239673426443838" iyz="9.26228295895878E-08" izz="0.238369168055991"/>
+</inertial>
+<visual>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link3.STL"/>
+</geometry>
+<material name="cr10_">
+<color rgba="1 1 1 1"/>
+</material>
+</visual>
+<collision>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link3.STL"/>
+</geometry>
+</collision>
+</link>
+<joint name="cr10_joint3" type="revolute">
+<origin xyz="-0.607 0 0" rpy="0 0 0"/>
+<parent link="cr10_Link2"/>
+<child link="cr10_Link3"/>
+<axis xyz="0 0 1"/>
+<limit lower="-2.861" upper="2.861" effort="0" velocity="0"/>
+</joint>
+<link name="cr10_Link4">
+<inertial>
+<origin xyz="-2.53137491438456E-07 0.00798724498566683 -0.00589074229668524" rpy="0 0 0"/>
+<mass value="1.16884294495796"/>
+<inertia ixx="0.00292614933092813" ixy="8.20440076221281E-09" ixz="-8.19990423351321E-09" iyy="0.00150052997722543" iyz="-5.4492521866877E-05" izz="0.00273274943535585"/>
+</inertial>
+<visual>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link4.STL"/>
+</geometry>
+<material name="cr10_">
+<color rgba="1 1 1 1"/>
+</material>
+</visual>
+<collision>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link4.STL"/>
+</geometry>
+</collision>
+</link>
+<joint name="cr10_joint4" type="revolute">
+<origin xyz="-0.568 0 0.191" rpy="0 0 -1.5708"/>
+<parent link="cr10_Link3"/>
+<child link="cr10_Link4"/>
+<axis xyz="0 0 1"/>
+<limit lower="-6.27" upper="6.27" effort="0" velocity="0"/>
+</joint>
+<link name="cr10_Link5">
+<inertial>
+<origin xyz="5.50699455951951E-07 -0.0145467578029201 -0.00454887087411437" rpy="0 0 0"/>
+<mass value="1.22303084244711"/>
+<inertia ixx="0.00337905462069531" ixy="3.57819902464362E-08" ixz="-7.51828060542842E-09" iyy="0.00149255573951137" iyz="8.41917918947542E-05" izz="0.00323300312341709"/>
+</inertial>
+<visual>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link5.STL"/>
+</geometry>
+<material name="cr10_">
+<color rgba="1 1 1 1"/>
+</material>
+</visual>
+<collision>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link5.STL"/>
+</geometry>
+</collision>
+</link>
+<joint name="cr10_joint5" type="revolute">
+<origin xyz="0 -0.125 0" rpy="1.5708 0 0"/>
+<parent link="cr10_Link4"/>
+<child link="cr10_Link5"/>
+<axis xyz="0 0 1"/>
+<limit lower="-6.27" upper="6.27" effort="0" velocity="0"/>
+</joint>
+<link name="cr10_Link6">
+<inertial>
+<origin xyz="1.42987471244488E-10 2.29640694859867E-05 -0.0205297780389956" rpy="0 0 0"/>
+<mass value="0.205439548775225"/>
+<inertia ixx="0.000110115425573789" ixy="-8.21487875808426E-14" ixz="4.28615843947113E-14" iyy="0.000110662465957898" iyz="3.68879932665237E-08" izz="0.00020518429573024"/>
+</inertial>
+<visual>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link6.STL"/>
+</geometry>
+<material name="cr10_">
+<color rgba="1 1 1 1"/>
+</material>
+</visual>
+<collision>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+<geometry>
+<mesh filename="package://covvi/urdf/cr10/Link6.STL"/>
+</geometry>
+</collision>
+</link>
+<joint name="cr10_joint6" type="revolute">
+<origin xyz="0 0.1084 0" rpy="-1.5708 0 0"/>
+<parent link="cr10_Link5"/>
+<child link="cr10_Link6"/>
+<axis xyz="0 0 1"/>
+<limit lower="-6.27" upper="6.27" effort="0" velocity="0"/>
+</joint>
+<link name="hand_forearm">
+<visual>
+<geometry name="forearm_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/forearm.dae"/>
+</geometry>
+<material name="hand_mh_grey">
+<color rgba="0.7 0.7 0.7 1"/>
+</material>
+</visual>
+<collision>
+<geometry name="forearm_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/forearm.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_wrist">
+<visual>
+<geometry name="wrist_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/wrist.dae"/>
+</geometry>
+<material name="hand_mh_grey">
+<color rgba="0.7 0.7 0.7 1"/>
+</material>
+</visual>
+<collision>
+<geometry name="wrist_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/wrist.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_palm">
+<visual>
+<geometry name="palm_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/palm.dae"/>
+</geometry>
+<material name="hand_mh_grey">
+<color rgba="0.7 0.7 0.7 1"/>
+</material>
+</visual>
+<collision>
+<geometry name="palm_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/palm.stl"/>
+</geometry>
+</collision>
+</link>
+<joint name="hand_forearm_joint" type="revolute">
+<parent link="hand_forearm"/>
+<child link="hand_wrist"/>
+<origin rpy="0 0 0" xyz="0 -0.010 0.213"/>
+<axis xyz="0 1 0"/>
+<limit effort="10.0" lower="-0.523598775598" upper="0.174532925199" velocity="2.0"/>
+</joint>
+<joint name="hand_wrist_joint" type="revolute">
+<parent link="hand_wrist"/>
+<child link="hand_palm"/>
+<origin rpy="0 0 0" xyz="0 0 0.034"/>
+<axis xyz="1 0 0"/>
+<limit effort="5.0" lower="-0.698131700798" upper="0.488692190558" velocity="2.0"/>
+</joint>
+<link name="hand_thumb_base"/>
+<link name="hand_thumb_proximal">
+<visual>
+<geometry name="thumb_proximal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/thumb_proximal.dae"/>
+</geometry>
+<material name="hand_mh_yellow">
+<color rgba="1.0 0.85 0.0 1"/>
+</material>
+</visual>
+<collision>
+<geometry name="thumb_proximal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/thumb_proximal.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_thumb_hub"/>
+<link name="hand_thumb_middle">
+<visual>
+<geometry name="thumb_middle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/thumb_middle.dae"/>
+</geometry>
+<material name="hand_mh_yellow">
+<color rgba="1.0 0.85 0.0 1"/>
+</material>
+</visual>
+<collision>
+<geometry name="thumb_middle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/thumb_middle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_thumb_distal">
+<visual>
+<geometry name="thumb_distal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/thumb_distal.dae"/>
+</geometry>
+<material name="hand_mh_yellow">
+<color rgba="1.0 0.85 0.0 1"/>
+</material>
+</visual>
+<collision>
+<geometry name="thumb_distal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/thumb_distal.stl"/>
+</geometry>
+</collision>
+</link>
+<joint name="hand_thumb_joint1" type="revolute">
+<parent link="hand_palm"/>
+<child link="hand_thumb_base"/>
+<origin rpy="0 0.785398163397 0.0" xyz="0.034 -0.0085 0.029"/>
+<axis xyz="0 0 -1"/>
+<limit effort="4.0" lower="-1.0471975512" upper="1.0471975512" velocity="4.0"/>
+</joint>
+<joint name="hand_thumb_joint2" type="revolute">
+<parent link="hand_thumb_base"/>
+<child link="hand_thumb_proximal"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0.0" upper="1.2217304764" velocity="4.0"/>
+</joint>
+<joint name="hand_thumb_joint3" type="revolute">
+<parent link="hand_thumb_proximal"/>
+<child link="hand_thumb_hub"/>
+<origin rpy="0 0 0" xyz="0 0 0.038"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="-0.209439510239" upper="0.209439510239" velocity="4.0"/>
+</joint>
+<joint name="hand_thumb_joint4" type="revolute">
+<parent link="hand_thumb_hub"/>
+<child link="hand_thumb_middle"/>
+<axis xyz="0 -1 0"/>
+<limit effort="4.0" lower="-0.698131700798" upper="0.698131700798" velocity="2.0"/>
+</joint>
+<joint name="hand_thumb_joint5" type="revolute">
+<parent link="hand_thumb_middle"/>
+<child link="hand_thumb_distal"/>
+<origin rpy="0 0 -1.57079632679" xyz="0 0 0.032"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="4.0"/>
+</joint>
+<link name="hand_index_finger_knuckle">
+<visual>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="index_finger_knuckle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/knuckle.dae"/>
+</geometry>
+</visual>
+<collision>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="index_finger_knuckle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/knuckle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_index_finger_proximal">
+<visual>
+<geometry name="index_finger_proximal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_proximal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="index_finger_proximal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_proximal.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_index_finger_middle">
+<visual>
+<geometry name="index_finger_middle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_middle.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="index_finger_middle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_middle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_index_finger_distal">
+<visual>
+<geometry name="index_finger_distal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_distal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="index_finger_distal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_distal.stl"/>
+</geometry>
+</collision>
+</link>
+<joint name="hand_index_finger_joint1" type="revolute">
+<parent link="hand_palm"/>
+<child link="hand_index_finger_knuckle"/>
+<origin rpy="0 0 0" xyz="0.033 0 0.095"/>
+<axis xyz="0 -1 0"/>
+<limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+</joint>
+<joint name="hand_index_finger_join2" type="revolute">
+<parent link="hand_index_finger_knuckle"/>
+<child link="hand_index_finger_proximal"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_index_finger_joint3" type="revolute">
+<parent link="hand_index_finger_proximal"/>
+<child link="hand_index_finger_middle"/>
+<origin rpy="0 0 0" xyz="0 0 0.045"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_index_finger_joint4" type="revolute">
+<parent link="hand_index_finger_middle"/>
+<child link="hand_index_finger_distal"/>
+<origin rpy="0 0 0" xyz="0 0 0.025"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<link name="hand_middle_finger_knuckle">
+<visual>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="middle_finger_knuckle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/knuckle.dae"/>
+</geometry>
+</visual>
+<collision>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="middle_finger_knuckle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/knuckle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_middle_finger_proximal">
+<visual>
+<geometry name="middle_finger_proximal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_proximal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="middle_finger_proximal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_proximal.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_middle_finger_middle">
+<visual>
+<geometry name="middle_finger_middle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_middle.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="middle_finger_middle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_middle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_middle_finger_distal">
+<visual>
+<geometry name="middle_finger_distal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_distal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="middle_finger_distal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_distal.stl"/>
+</geometry>
+</collision>
+</link>
+<joint name="hand_middle_finger_joint1" type="revolute">
+<parent link="hand_palm"/>
+<child link="hand_middle_finger_knuckle"/>
+<origin rpy="0 0 0" xyz="0.011 0 0.099"/>
+<axis xyz="0 -1 0"/>
+<limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+</joint>
+<joint name="hand_middle_finger_joint2" type="revolute">
+<parent link="hand_middle_finger_knuckle"/>
+<child link="hand_middle_finger_proximal"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_middle_finger_joint3" type="revolute">
+<parent link="hand_middle_finger_proximal"/>
+<child link="hand_middle_finger_middle"/>
+<origin rpy="0 0 0" xyz="0 0 0.045"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_middle_finger_joint4" type="revolute">
+<parent link="hand_middle_finger_middle"/>
+<child link="hand_middle_finger_distal"/>
+<origin rpy="0 0 0" xyz="0 0 0.025"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<link name="hand_ring_finger_knuckle">
+<visual>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="ring_finger_knuckle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/knuckle.dae"/>
+</geometry>
+</visual>
+<collision>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="ring_finger_knuckle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/knuckle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_ring_finger_proximal">
+<visual>
+<geometry name="ring_finger_proximal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_proximal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="ring_finger_proximal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_proximal.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_ring_finger_middle">
+<visual>
+<geometry name="ring_finger_middle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_middle.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="ring_finger_middle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_middle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_ring_finger_distal">
+<visual>
+<geometry name="ring_finger_distal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_distal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="ring_finger_distal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_distal.stl"/>
+</geometry>
+</collision>
+</link>
+<joint name="hand_ring_finger_joint1" type="revolute">
+<parent link="hand_palm"/>
+<child link="hand_ring_finger_knuckle"/>
+<origin rpy="0 0 0" xyz="-0.011 0 0.095"/>
+<axis xyz="0 1 0"/>
+<limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+</joint>
+<joint name="hand_ring_finger_joint2" type="revolute">
+<parent link="hand_ring_finger_knuckle"/>
+<child link="hand_ring_finger_proximal"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_ring_finger_joint3" type="revolute">
+<parent link="hand_ring_finger_proximal"/>
+<child link="hand_ring_finger_middle"/>
+<origin rpy="0 0 0" xyz="0 0 0.045"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_ring_finger_joint4" type="revolute">
+<parent link="hand_ring_finger_middle"/>
+<child link="hand_ring_finger_distal"/>
+<origin rpy="0 0 0" xyz="0 0 0.025"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<link name="hand_little_finger_metacarpal">
+<visual>
+<geometry name="little_finger_metacarpal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/metacarpal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="little_finger_metacarpal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/metacarpal.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_little_finger_knuckle">
+<visual>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="little_finger_knuckle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/knuckle.dae"/>
+</geometry>
+</visual>
+<collision>
+<origin rpy="0 0 0" xyz="0 0 0.0005"/>
+<geometry name="little_finger_knuckle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/knuckle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_little_finger_proximal">
+<visual>
+<geometry name="little_finger_proximal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_proximal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="little_finger_proximal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_proximal.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_little_finger_middle">
+<visual>
+<geometry name="little_finger_middle_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_middle.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="little_finger_middle_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_middle.stl"/>
+</geometry>
+</collision>
+</link>
+<link name="hand_little_finger_distal">
+<visual>
+<geometry name="little_finger_distal_visual">
+<mesh filename="package://covvi/shadow_hand/meshes/visual/finger_distal.dae"/>
+</geometry>
+</visual>
+<collision>
+<geometry name="little_finger_distal_collision">
+<mesh filename="package://covvi/shadow_hand/meshes/collision/finger_distal.stl"/>
+</geometry>
+</collision>
+</link>
+<joint name="hand_little_finger_joint1" type="revolute">
+<parent link="hand_palm"/>
+<child link="hand_little_finger_metacarpal"/>
+<origin rpy="0 0 0" xyz="-0.033 0 0.02071"/>
+<axis xyz="0.573576436 0 0.819152044"/>
+<limit effort="4.0" lower="0" upper="0.785398163397" velocity="2.0"/>
+</joint>
+<joint name="hand_little_finger_joint2" type="revolute">
+<parent link="hand_little_finger_metacarpal"/>
+<child link="hand_little_finger_knuckle"/>
+<origin rpy="0 0 0" xyz="0 0 0.06579"/>
+<axis xyz="0 1 0"/>
+<limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+</joint>
+<joint name="hand_little_finger_joint3" type="revolute">
+<parent link="hand_little_finger_knuckle"/>
+<child link="hand_little_finger_proximal"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_little_finger_joint4" type="revolute">
+<parent link="hand_little_finger_proximal"/>
+<child link="hand_little_finger_middle"/>
+<origin rpy="0 0 0" xyz="0 0 0.045"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="hand_little_finger_joint5" type="revolute">
+<parent link="hand_little_finger_middle"/>
+<child link="hand_little_finger_distal"/>
+<origin rpy="0 0 0" xyz="0 0 0.025"/>
+<axis xyz="1 0 0"/>
+<limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+</joint>
+<joint name="cr10_to_shadow_hand" type="fixed">
+<parent link="cr10_Link6"/>
+<child link="hand_forearm"/>
+<origin xyz="0 0 0" rpy="0 0 0"/>
+</joint>
+</robot>
