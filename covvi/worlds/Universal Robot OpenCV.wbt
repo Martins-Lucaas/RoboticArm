@@ -1,0 +1,341 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/factory/conveyors/protos/ConveyorBelt.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/devices/robotiq/protos/Robotiq3fGripper.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/solids/protos/SolidBox.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/robots/universal_robots/protos/UR5e.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/appearances/protos/GalvanizedMetal.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/samples/contests/robocup/protos/RobocupSoccerField.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/appearances/protos/CorrugatedMetal.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/factory/containers/protos/MetalStorageBox.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/balls/protos/Ball.proto"
+
+WorldInfo {
+  basicTimeStep 16
+  contactProperties [
+    ContactProperties {
+      softCFM 0.0001
+    }
+  ]
+}
+Viewpoint {
+  orientation -0.22436406585996135 0.48818819125416407 0.8434056294991007 0.9978630943498915
+  position -1.5382902835516767 -3.57825204075831 1.8567582492049686
+  followType "None"
+}
+TexturedBackground {
+  texture "stadium"
+}
+TexturedBackgroundLight {
+}
+UR5e {
+  hidden rotation_12 0 0 -1 1.032382731180714e-07
+  translation -0.25 -1.53 0.303
+  controller "fruit_sorting_ctrl_opencv"
+  supervisor TRUE
+  selfCollision FALSE
+  toolSlot [
+    Camera {
+      translation 0 0.13 -0.137
+      rotation -0.6215129473320627 -0.6215169473317238 -0.4769049595863601 2.25159
+      children [
+        Pose {
+          translation -0.002 0 0
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0.239216 0.239216 0.239216
+              }
+              geometry Box {
+                size 0.003 0.01 0.01
+              }
+            }
+          ]
+        }
+        Pose {
+          rotation 0 1 0 -1.5707953071795862
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0 0 0.498039
+              }
+              geometry Cylinder {
+                height 0.0015
+                radius 0.003
+              }
+            }
+          ]
+        }
+        Pose {
+          translation -0.002 0 -0.03
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0.239216 0.239216 0.239216
+              }
+              geometry Box {
+                size 0.002 0.006 0.05
+              }
+            }
+          ]
+        }
+        Pose {
+          translation 0.0265 0 -0.071
+          rotation 0 1 0 2.0944
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0.239216 0.239216 0.239216
+              }
+              geometry Box {
+                size 0.002 0.006 0.067
+              }
+            }
+          ]
+        }
+      ]
+      fieldOfView 1.1
+      width 200
+      height 150
+      antiAliasing TRUE
+      recognition Recognition {
+        frameColor 0.333333 1 0
+      }
+    }
+    DistanceSensor {
+      translation 0 0.09 0
+      rotation 0 0 1 1.5708
+      type "infra-red"
+    }
+    Display {
+      width 200
+      height 150
+    }
+    Robotiq3fGripper {
+    }
+    Speaker {
+    }
+  ]
+}
+DEF stuffs Group {
+  children [
+    ConveyorBelt {
+      translation 0.571 0.63 0
+      rotation 0 0 1 -1.5707953071795862
+      size 4.6 0.26 0.3
+      appearance GalvanizedMetal {
+        colorOverride 0 0 0
+      }
+      speed 0.15
+      timer 900
+    }
+    SolidBox {
+      translation -0.16 -1.53 0.15
+      name "Robot Stand"
+      size 0.5 0.3 0.3
+      appearance GalvanizedMetal {
+      }
+    }
+    DEF Gen Solid {
+      translation 0.56 2.74 0
+      children [
+        DEF generator Group {
+          children [
+            Pose {
+              translation -0.2 0 0.22
+              children [
+                Shape {
+                  appearance GalvanizedMetal {
+                  }
+                  geometry Box {
+                    size 0.1 0.5 0.44
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.2 0 0.22
+              children [
+                Shape {
+                  appearance GalvanizedMetal {
+                  }
+                  geometry Box {
+                    size 0.1 0.5 0.44
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0 0 0.49
+              children [
+                Shape {
+                  appearance GalvanizedMetal {
+                  }
+                  geometry Box {
+                    size 0.5 0.5 0.1
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+      boundingObject USE generator
+    }
+    Solid {
+      translation 0.57 0.94 0.31
+      rotation 0 0 1 -1.5707953071795862
+      children [
+        DEF rail Group {
+          children [
+            Transform {
+              translation 0 -0.145 0
+              scale 0.01 0.01 0.01
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                  }
+                  geometry Mesh {
+                    url [
+                      "obj/rail/rail.obj"
+                    ]
+                  }
+                }
+              ]
+            }
+            Transform {
+              translation 0 0.145 0
+              rotation 0 0 1 3.14159
+              scale 0.01 0.01 0.01
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                  }
+                  geometry Mesh {
+                    url [
+                      "obj/rail/rail.obj"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+      name "rail"
+    }
+  ]
+}
+Robot {
+  translation 0.1 0 0.1
+  children [
+    Camera {
+      translation 0.6 -0.55 1.2
+      rotation 0.37796405332525124 0.1565580220880684 -0.912487128738712 2.41886
+      fieldOfView 1.2
+      width 200
+      height 150
+      antiAliasing TRUE
+    }
+  ]
+  name "Fruit CTRL"
+  controller "fruit_ctrl_Py"
+  supervisor TRUE
+}
+RobocupSoccerField {
+}
+ConveyorBelt {
+  translation -0.16 0.28 0
+  rotation 0 0 1 1.57079
+  name "conveyor belt(1)"
+  size 3 0.5 0.2
+  appearance CorrugatedMetal {
+    colorOverride 1 0.592157 0.0235294
+    textureTransform TextureTransform {
+      scale 2 2
+    }
+  }
+}
+MetalStorageBox {
+  translation 0 -2.24 -0.31
+}
+ConveyorBelt {
+  translation -0.77 -0.22 0
+  rotation 0 0 1 1.5708
+  name "conveyor belt(2)"
+  size 4 0.5 0.2
+  appearance CorrugatedMetal {
+    colorOverride 0 1 0
+    textureTransform TextureTransform {
+      scale 2 2
+    }
+  }
+}
+Ball {
+  translation 0.5800001151415741 -0.002277117931450424 0.3499833031633953
+  rotation -0.9999999999998879 -1.7532214515672008e-07 4.3978724158983276e-07 2.0523842590065144
+  color 0 0 1
+  radius 0.05
+}
+Ball {
+  translation 0.5800001144537954 1.8977229120564159 0.34998424198817535
+  rotation -0.9999999999998997 -1.66466854823386e-07 4.155536547028607e-07 2.0523827462745685
+  name "ball(9)"
+  color 0 0 1
+  radius 0.05
+}
+Ball {
+  translation 0.5800001150257523 0.3177228871192332 0.349983461281253
+  rotation -0.99999999999989 -1.738305959420023e-07 4.3570580482327224e-07 2.0523840042311443
+  name "ball(1)"
+  color 0 1 0
+  radius 0.05
+}
+Ball {
+  translation 0.5800001147832307 0.987722897693978 0.3499837923405176
+  rotation -0.9999999999998941 -1.7070784078819973e-07 4.271602820381122e-07 2.052383470794552
+  name "ball(5)"
+  color 0 1 0
+  radius 0.05
+}
+Ball {
+  translation 0.5800001146710116 1.2977229025867123 0.3499839455171922
+  rotation -0.9999999999998962 -1.6926305352926878e-07 4.232063814868667e-07 2.0523832239802466
+  name "ball(6)"
+  color 0 1 0
+  radius 0.05
+}
+Ball {
+  translation 0.5800001148990657 0.6677228926433749 0.3499836342226598
+  rotation -0.9999999999998923 -1.7219927264170835e-07 4.31241729367654e-07 2.0523837255703548
+  name "ball(3)"
+  radius 0.05
+}
+Ball {
+  translation 0.5800001145443053 1.6477229081107223 0.34998411845859906
+  rotation -0.9999999999998983 -1.6763191116928353e-07 4.1874229367692857e-07 2.0523829453187026
+  name "ball(7)"
+  radius 0.05
+}
+Ball {
+  translation 0.5800001152465313 -0.2922771225086701 0.3499831598690868
+  rotation -0.9999999999998861 -1.7667391972652375e-07 4.434860401204682e-07 2.052384489896415
+  name "ball(2)"
+  radius 0.05
+}
+Ball {
+  translation 0.5800001154347201 -0.8122771307161769 0.34998290292756806
+  rotation -0.9999999999998826 -1.7909788423376893e-07 4.501183657189522e-07 2.052384903905467
+  name "ball(8)"
+  color 0 0 1
+  radius 0.05
+}
+Ball {
+  translation 0.5800001153514843 -0.5822771270859192 0.3499830165747783
+  rotation -0.9999999999998842 -1.7802572876124987e-07 4.471848385754969e-07 2.052384720786176
+  name "ball(4)"
+  color 0 1 0
+  radius 0.05
+}
