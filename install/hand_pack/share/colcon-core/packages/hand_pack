@@ -1,1 +1,1 @@
-robot_state_publisher:rviz2
+gazebo_ros:gazebo_ros2_control:joint_state_publisher:robot_state_publisher:ros2_control:ros2_controllers:rqt_joint_trajectory_controller:rviz2

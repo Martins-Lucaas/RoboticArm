@@ -1,0 +1,18 @@
+<launch>
+  <set_env name="GAZEBO_MODEL_PATH" value="/home/lucas-lpc/RoboticArm/src"/>
+
+  <arg name="world_file" default="$(find-pkg-share hand_pack)/worlds/base_hand.world"/>
+
+  <include file="$(find-pkg-share gazebo_ros)/launch/gazebo.launch.py">
+    <arg name="world" value="$(var world_file)"/>
+  </include>
+
+  <node pkg="robot_state_publisher" exec="robot_state_publisher" output="screen">
+    <param name="robot_description" value="$(command 'xacro $(find-pkg-share hand_pack)/urdf/linear_covvi_hand_gazebo.urdf')"/>
+  </node>
+
+  <node pkg="gazebo_ros" exec="spawn_entity.py" args="-topic robot_description -entity covvi_hand -z 0.1 -R 1.5708" output="screen"/>
+
+  <node pkg="controller_manager" exec="spawner" args="joint_state_broadcaster" output="screen"/>
+  <node pkg="controller_manager" exec="spawner" args="hand_position_controller" output="screen"/>
+</launch>

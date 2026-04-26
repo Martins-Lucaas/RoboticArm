@@ -12,9 +12,11 @@ config/hand_controller.yaml
 hand_pack/__init__.py
 hand_pack/hand_node.py
 launch/display.launch.py
-launch/gazebo.launch.py
+launch/hand_control_gui.launch.py
+launch/hand_gazebo.launch.py
+launch/spawn_hand.launch.py
+launch/spawn_hand.launch.xml
 resource/hand_pack
-rviz/display_config.rviz
 test/test_copyright.py
 test/test_flake8.py
 test/test_pep257.py
@@ -47,3 +49,4 @@ urdf/linear_meshes/right_thumb_distal.STL
 urdf/linear_meshes/right_thumb_follower.STL
 urdf/linear_meshes/right_thumb_link.STL
 urdf/linear_meshes/right_thumb_proximal.STL
+worlds/base_hand.world
