@@ -1,0 +1,19 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    hand_position_controller:
+      type: joint_state_publisher/JointGroupPositionController
+
+hand_position_controller:
+  ros__parameters:
+    joints:
+      - Thumb
+      - Index
+      - Middle
+      - Ring
+      - Little
+      - Rotate

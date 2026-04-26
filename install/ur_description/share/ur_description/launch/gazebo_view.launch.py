@@ -1,1 +1,0 @@
-/home/lucas-pc/RoboticArm/src/ur_description/launch/gazebo_view.launch.py

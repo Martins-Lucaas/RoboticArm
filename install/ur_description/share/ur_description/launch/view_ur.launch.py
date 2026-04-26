@@ -1,1 +1,0 @@
-/home/lucas-pc/RoboticArm/src/ur_description/launch/view_ur.launch.py
