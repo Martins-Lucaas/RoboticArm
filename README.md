@@ -1,49 +1,96 @@
-# RoboticArm
+* Digital Twin & ROS 2 Control
 
-RoboticArm is a project developed to control and simulate a robotic arm using ROS2. It is designed to integrate several hardware and software components, allowing the manipulation and control of the movement of a robotic arm, with a focus on simulation and integration with sensors, actuators, and other biomedical devices.
+Este repositório contém o Gêmeo Digital (Digital Twin) da mão biônica COVVI, desenvolvido para simulação avançada e controle em tempo real utilizando ROS 2 e Gazebo. O projeto foca na precisão cinemática, estabilidade física e facilidade de operação manual através de uma interface gráfica (GUI) dedicada.
+🚀 Funcionalidades
 
-## Features
+    Simulação de Alta Fidelidade: URDF otimizado com malhas (meshes) originais da COVVI Hand.
 
-- Robotic arm movement control and simulation
-- Integration with ROS2 (Robot Operating System 2)
-- Support for sensors, actuators, and biomedical device integration
-- Modular code structure for easy extension and maintenance
+    Estabilidade Física: Correção de inércias, massas e tratamento de juntas mecânicas auxiliares (fixed joints) para evitar oscilações em ambiente Gazebo.
 
-## Getting Started
+    Interface de Controle Customizada: GUI desenvolvida em Python (Tkinter) para controle individual de cada dedo e rotação do polegar, com ajuste dinâmico de velocidade e interpolação.
 
-### Prerequisites
+    Integração ROS 2 Control: Utiliza joint_trajectory_controller para movimentos suaves e precisos.
 
-- Python (main programming language)
-- ROS2 installed on your system
-- Any additional hardware requirements (robotic arm, sensors, actuators, etc.)
+    Arquitetura Modular: Pronto para integração com braços robóticos industriais (UR, Kuka, etc.) ou próteses biomédicas.
 
-### Installation
+🛠️ Requisitos do Sistema
+Pré-requisitos
 
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/Martins-Lucaas/RoboticArm.git
-    cd RoboticArm
-    ```
-2. Install dependencies (if any, specify in requirements.txt or package.xml).
+    Sistema Operacional: Ubuntu 22.04 (Jammy Jellyfish)
 
-### Usage
+    ROS 2: Humble Hawksbill
 
-- Run your ROS2 environment.
-- Launch the simulation or control scripts provided in the repository.
-- Follow code or documentation for integrating additional sensors or devices.
+    Simulador: Gazebo Classic
 
-## Contributing
+Dependências do ROS 2
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Certifique-se de ter os seguintes pacotes instalados:
+Bash
 
-## License
+sudo apt update
+sudo apt install ros-humble-gazebo-ros-pkgs \
+                 ros-humble-ros2-control \
+                 ros-humble-ros2-controllers \
+                 ros-humble-xacro \
+                 python3-tk -y
 
-This project currently does not have an explicit license. Please contact the repository owner for more information.
+📂 Estrutura do Projeto
+Plaintext
 
-## Contact
+hand_pack/
+├── config/             # Configurações do ROS 2 Control (YAML)
+├── hand_pack/          # Módulo Python (Scripts da GUI e Lógica)
+│   ├── hand_gui.py     # Interface gráfica de sliders
+├── launch/             # Arquivos de inicialização (XML/Python)
+├── urdf/               # Modelos cinemáticos e arquivos Xacro
+│   └── linear_meshes/  # Malhas 3D (.STL) da mão
+└── worlds/             # Ambientes de simulação do Gazebo
 
-Repository Owner: [Martins-Lucaas](https://github.com/Martins-Lucaas)
+🔧 Instalação
 
----
+    Clone o repositório no seu workspace:
+    Bash
 
-Feel free to provide more details to enrich this README!
+    cd ~/RoboticArm/src
+    git clone https://github.com/Martins-Lucaas/RoboticArm.git .
+
+    Compile o workspace:
+    Bash
+
+    cd ~/RoboticArm
+    colcon build --packages-select hand_pack
+    source install/setup.bash
+
+🎮 Como Usar
+
+Para lançar a simulação no Gazebo junto com a interface de controle manual, execute:
+Bash
+
+ros2 launch hand_pack spawn_hand.launch.xml
+
+Controles da GUI:
+
+    Tempo de Movimento: Define quão rápido os dedos fecham (segundos).
+
+    Sliders Proximais: Controlam a flexão principal (Thumb, Index, Middle, Ring, Little).
+
+    Rotate: Controla a oposição/rotação do polegar.
+
+    Sliders Distais (_j01): Controlam as falanges das pontas dos dedos.
+
+🧠 Detalhes Técnicos (Physics Tuning)
+
+Para atingir o estado de "Digital Twin perfeito", este projeto implementa:
+
+    Mímica de Juntas: Links mecânicos de suporte (_l1) configurados como invisíveis e fixos para garantir a integridade da malha visual sem afetar a física.
+
+    Power-Up de Atuadores: Limites de esforço (effort="1000") e velocidade ajustados para simular a força real dos motores COVVI sem atrasos de processamento.
+
+🤝 Contribuição
+
+Contribuições para melhorar a estabilidade física ou adicionar grips (gestos) pré-definidos são bem-vindas. Sinta-se à vontade para abrir uma Issue ou enviar um Pull Request.
+📄 Licença
+
+Este projeto é distribuído sob a licença Apache-2.0.
+
+Desenvolvido por: Lucas Martins
