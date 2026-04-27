@@ -20,6 +20,7 @@ resource/hand_pack
 test/test_copyright.py
 test/test_flake8.py
 test/test_pep257.py
+urdf/invisible_mech_covvi_hand.urdf
 urdf/linear_covvi_hand_gazebo.urdf
 urdf/linear_covvi_hand_right.urdf
 urdf/linear_meshes/right_base_link.STL

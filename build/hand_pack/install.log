@@ -9,6 +9,7 @@
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/display.launch.py
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/hand_gazebo.launch.py
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/spawn_hand.launch.xml
+/home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/invisible_mech_covvi_hand.urdf
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/linear_covvi_hand_right.urdf
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/linear_covvi_hand_gazebo.urdf
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/linear_meshes/right_thumb_link.STL

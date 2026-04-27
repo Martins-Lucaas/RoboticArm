@@ -1,12 +1,10 @@
 controller_manager:
   ros__parameters:
-    update_rate: 100  # Taxa de atualização (100 Hz)
-
+    update_rate: 100
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
-
     hand_position_controller:
-      type: joint_trajectory_controller/JointTrajectoryController # <-- TIPO CORRETO PARA O RQT
+      type: joint_trajectory_controller/JointTrajectoryController
 
 hand_position_controller:
   ros__parameters:
@@ -17,9 +15,15 @@ hand_position_controller:
       - Ring
       - Little
       - Rotate
-    # O JointTrajectoryController exige que você declare as interfaces
+      - _thumb_distal_j01
+      - _index_distal_j01
+      - _middle_distal_j01
+      - _ring_distal_j01
+      - _little_distal_j01
     command_interfaces:
       - position
     state_interfaces:
       - position
       - velocity
+    open_loop_control: true
+    allow_partial_joints_goal: true

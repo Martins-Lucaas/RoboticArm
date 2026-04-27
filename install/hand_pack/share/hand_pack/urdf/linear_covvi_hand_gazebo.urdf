@@ -1,5 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <robot name="covvi_digital_twin_perfect">
+    <gazebo>
+        <self_collide>false</self_collide>
+    </gazebo>
     <link name="world" />
     <link name="base_footprint" />
     <link name="base_link">
@@ -1720,7 +1723,7 @@
         <axis xyz="0.9935814462116063 -0.05230730452290644 -0.10029883168612273" />
         <child link="_index_link_l0" />
     </joint>
-    <joint name="_index_link_j01" type="revolute">
+    <joint name="_index_link_j01" type="fixed">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_index_link_l0" />
         <child link="_index_link_l1" />
@@ -1815,7 +1818,7 @@
         <axis xyz="0.991068591048481 -2.638530424585682e-09 -0.13335309459168482" />
         <child link="_middle_link_l0" />
     </joint>
-    <joint name="_middle_link_j01" type="revolute">
+    <joint name="_middle_link_j01" type="fixed">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_middle_link_l0" />
         <child link="_middle_link_l1" />
@@ -1910,7 +1913,7 @@
         <axis xyz="0.9904648586488499 0.03489949747682052 -0.1332718607117766" />
         <child link="_ring_link_l0" />
     </joint>
-    <joint name="_ring_link_j01" type="revolute">
+    <joint name="_ring_link_j01" type="fixed">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_ring_link_l0" />
         <child link="_ring_link_l1" />
@@ -2005,7 +2008,7 @@
         <axis xyz="0.9786112669174357 0.10442180910601918 -0.17724580120634031" />
         <child link="_little_link_l0" />
     </joint>
-    <joint name="_little_link_j01" type="revolute">
+    <joint name="_little_link_j01" type="fixed">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_little_link_l0" />
         <child link="_little_link_l1" />
@@ -2023,39 +2026,28 @@
             <parameters>$(find hand_pack)/config/hand_controller.yaml</parameters>
         </plugin>
     </gazebo>
+
+    <gazebo>
+        <plugin name="mimic_index_prox" filename="libgazebo_mimic_joint_plugin.so">
+            <joint>Index</joint>
+            <mimicJoint>_index_proximal_j01</mimicJoint>
+            <multiplier>1.516</multiplier>
+        </plugin>
+    </gazebo>
+
     <ros2_control name="GazeboSystem" type="system">
-        <hardware>
-            <plugin>gazebo_ros2_control/GazeboSystem</plugin>
-        </hardware>
-        <joint name="Thumb">
-            <command_interface name="position" />
-            <state_interface name="position" />
-            <state_interface name="velocity" />
-        </joint>
-        <joint name="Index">
-            <command_interface name="position" />
-            <state_interface name="position" />
-            <state_interface name="velocity" />
-        </joint>
-        <joint name="Middle">
-            <command_interface name="position" />
-            <state_interface name="position" />
-            <state_interface name="velocity" />
-        </joint>
-        <joint name="Ring">
-            <command_interface name="position" />
-            <state_interface name="position" />
-            <state_interface name="velocity" />
-        </joint>
-        <joint name="Little">
-            <command_interface name="position" />
-            <state_interface name="position" />
-            <state_interface name="velocity" />
-        </joint>
-        <joint name="Rotate">
-            <command_interface name="position" />
-            <state_interface name="position" />
-            <state_interface name="velocity" />
-        </joint>
+        <hardware><plugin>gazebo_ros2_control/GazeboSystem</plugin></hardware>
+        <joint name="Thumb"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="Index"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="Middle"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="Ring"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="Little"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="Rotate"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        
+        <joint name="_thumb_distal_j01"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="_index_distal_j01"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="_middle_distal_j01"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="_ring_distal_j01"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+        <joint name="_little_distal_j01"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
     </ros2_control>
 </robot>

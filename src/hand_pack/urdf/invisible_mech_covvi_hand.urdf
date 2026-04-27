@@ -202,7 +202,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r48572">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -253,7 +253,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r29002">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -304,7 +304,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r67118">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -355,7 +355,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r72482">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -406,7 +406,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r43178">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -457,7 +457,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r80207">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -508,7 +508,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r69401">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -559,7 +559,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r61005">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -610,7 +610,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r79316">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -661,7 +661,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r82929">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -712,7 +712,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r18117">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -763,7 +763,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r35313">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -814,7 +814,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r17832">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -865,7 +865,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r26979">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -916,7 +916,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r16493">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -967,7 +967,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r5837">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1018,7 +1018,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r1173">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1069,7 +1069,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r6804">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1120,7 +1120,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r88452">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1171,7 +1171,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r64299">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1222,7 +1222,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r3823">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1273,7 +1273,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r3524">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1324,7 +1324,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r81183">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1375,7 +1375,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r35148">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1426,7 +1426,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r76983">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1477,7 +1477,7 @@
                 <box size="0 0 0" />
             </geometry>
             <material name="r45524">
-                <color rgba="0 0 0 0" />
+                <color rgba="0 0 0 0.0"/>
             </material>
         </visual>
         <inertial>
@@ -1723,7 +1723,7 @@
         <axis xyz="0.9935814462116063 -0.05230730452290644 -0.10029883168612273" />
         <child link="_index_link_l0" />
     </joint>
-    <joint name="_index_link_j01" type="fixed">
+    <joint name="_index_link_j01" type="revolute">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_index_link_l0" />
         <child link="_index_link_l1" />
@@ -1818,7 +1818,7 @@
         <axis xyz="0.991068591048481 -2.638530424585682e-09 -0.13335309459168482" />
         <child link="_middle_link_l0" />
     </joint>
-    <joint name="_middle_link_j01" type="fixed">
+    <joint name="_middle_link_j01" type="revolute">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_middle_link_l0" />
         <child link="_middle_link_l1" />
@@ -1913,7 +1913,7 @@
         <axis xyz="0.9904648586488499 0.03489949747682052 -0.1332718607117766" />
         <child link="_ring_link_l0" />
     </joint>
-    <joint name="_ring_link_j01" type="fixed">
+    <joint name="_ring_link_j01" type="revolute">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_ring_link_l0" />
         <child link="_ring_link_l1" />
@@ -2008,7 +2008,7 @@
         <axis xyz="0.9786112669174357 0.10442180910601918 -0.17724580120634031" />
         <child link="_little_link_l0" />
     </joint>
-    <joint name="_little_link_j01" type="fixed">
+    <joint name="_little_link_j01" type="revolute">
         <origin xyz="0 0 0.00000000000000000000" rpy="0 0 0" />
         <parent link="_little_link_l0" />
         <child link="_little_link_l1" />
