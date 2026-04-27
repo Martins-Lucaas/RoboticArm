@@ -15,4 +15,6 @@
 
   <node pkg="controller_manager" exec="spawner" args="joint_state_broadcaster" output="screen"/>
   <node pkg="controller_manager" exec="spawner" args="hand_position_controller" output="screen"/>
+
+  <node pkg="hand_pack" exec="hand_gui" name="hand_custom_gui" output="screen"/>
 </launch>

@@ -1,15 +1,14 @@
+/home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/hand_gui.py
 /home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/hand_node.py
 /home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/__init__.py
+/home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/__pycache__/hand_gui.cpython-310.pyc
 /home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/__pycache__/hand_node.cpython-310.pyc
 /home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack/__pycache__/__init__.cpython-310.pyc
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/ament_index/resource_index/packages/hand_pack
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/package.xml
-/home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/spawn_hand.launch.py
-/home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/hand_control_gui.launch.py
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/display.launch.py
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/hand_gazebo.launch.py
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/launch/spawn_hand.launch.xml
-/home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/invisible_mech_covvi_hand.urdf
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/linear_covvi_hand_right.urdf
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/linear_covvi_hand_gazebo.urdf
 /home/lucas-lpc/RoboticArm/install/hand_pack/share/hand_pack/urdf/linear_meshes/right_thumb_link.STL
@@ -48,3 +47,4 @@
 /home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.1-py3.10.egg-info/SOURCES.txt
 /home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.1-py3.10.egg-info/zip-safe
 /home/lucas-lpc/RoboticArm/install/hand_pack/lib/python3.10/site-packages/hand_pack-0.0.1-py3.10.egg-info/PKG-INFO
+/home/lucas-lpc/RoboticArm/install/hand_pack/lib/hand_pack/hand_gui
