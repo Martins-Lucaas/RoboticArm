@@ -1,0 +1,25 @@
+object_detector:
+  ros__parameters:
+    use_yolo: false              # true para robô físico com GPU
+    yolo_model: "yolov8n.pt"
+    confidence_threshold: 0.45
+    publish_debug: true
+
+pose_estimator:
+  ros__parameters:
+    camera_frame: "camera_link"
+    depth_scale: 1.0             # Gazebo depth já em metros
+
+grasp_planner:
+  ros__parameters:
+    n_candidates: 5
+    score_threshold: 0.45
+
+grasp_executor:
+  ros__parameters:
+    simulation_mode: true
+
+grasp_pipeline:
+  ros__parameters:
+    loop_rate_hz: 10.0
+    max_attempts: 3

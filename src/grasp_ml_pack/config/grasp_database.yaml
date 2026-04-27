@@ -1,0 +1,121 @@
+# Banco de candidatos de grasp por classe de objeto.
+#
+# obj_diameter_m:   diâmetro do objeto (m) — usado pelo hand_ik()
+# grasp_offset:     deslocamento do TCP relativo ao centróide (m)
+# approach_vector:  direção de abordagem (normalizado internamente)
+# hand_config:
+#   aperture_norm:  0=aberto, 1=totalmente fechado
+# grasp_type:       chave para hand_ik() em kinematics.py
+
+objects:
+
+  pencil:
+    description: "Lápis — cilindro fino (~7 mm × 155 mm)"
+    obj_diameter_m: 0.007
+    candidates:
+
+      - id: pencil_pinch_top
+        grasp_type: pinch
+        approach_vector: [0.0,  0.0, -1.0]       # de cima para baixo
+        grasp_offset:    [0.0,  0.0,  0.010]      # 1 cm acima do centróide
+        hand_config:
+          aperture_norm: 0.48
+        notes: "Abordagem vertical — lápis horizontal sobre bancada"
+
+      - id: pencil_pinch_side_left
+        grasp_type: pinch
+        approach_vector: [0.0, -1.0, -0.25]       # lateral esquerda + leve topo
+        grasp_offset:    [0.0,  0.040, 0.005]
+        hand_config:
+          aperture_norm: 0.44
+        notes: "Abordagem lateral esquerda — lápis inclinado"
+
+      - id: pencil_pinch_side_right
+        grasp_type: pinch
+        approach_vector: [0.0,  1.0, -0.25]       # lateral direita + leve topo
+        grasp_offset:    [0.0, -0.040, 0.005]
+        hand_config:
+          aperture_norm: 0.44
+        notes: "Abordagem lateral direita"
+
+      - id: pencil_pinch_front
+        grasp_type: pinch
+        approach_vector: [-1.0, 0.0, -0.30]       # frontal + leve topo
+        grasp_offset:    [ 0.030, 0.0, 0.008]
+        hand_config:
+          aperture_norm: 0.46
+        notes: "Abordagem frontal — evita colisão com outros objetos"
+
+  cup:
+    description: "Copo — cilindro ~70 mm diam × 100 mm alt"
+    obj_diameter_m: 0.070
+    candidates:
+
+      - id: cup_cylindrical_top
+        grasp_type: cylindrical
+        approach_vector: [0.0, 0.0, -1.0]
+        grasp_offset:    [0.0, 0.0,  0.030]       # meia altura do copo
+        hand_config:
+          aperture_norm: 0.78
+        notes: "Abordagem vertical — todos os dedos envolvem o copo"
+
+      - id: cup_cylindrical_front
+        grasp_type: cylindrical
+        approach_vector: [-1.0, 0.0, -0.20]
+        grasp_offset:    [ 0.045, 0.0, 0.025]
+        hand_config:
+          aperture_norm: 0.75
+        notes: "Abordagem frontal — útil quando há obstáculo acima"
+
+      - id: cup_cylindrical_angled_left
+        grasp_type: cylindrical
+        approach_vector: [-0.5, -0.7, -0.30]
+        grasp_offset:    [ 0.025, 0.025, 0.020]
+        hand_config:
+          aperture_norm: 0.76
+        notes: "Abordagem oblíqua esquerda"
+
+      - id: cup_cylindrical_angled_right
+        grasp_type: cylindrical
+        approach_vector: [-0.5,  0.7, -0.30]
+        grasp_offset:    [ 0.025, -0.025, 0.020]
+        hand_config:
+          aperture_norm: 0.76
+        notes: "Abordagem oblíqua direita"
+
+  ball:
+    description: "Bola — esfera ~64 mm diam"
+    obj_diameter_m: 0.064
+    candidates:
+
+      - id: ball_spherical_top
+        grasp_type: spherical
+        approach_vector: [0.0, 0.0, -1.0]
+        grasp_offset:    [0.0, 0.0,  0.020]
+        hand_config:
+          aperture_norm: 0.62
+        notes: "Abordagem vertical — todos os dedos abraçam a esfera"
+
+      - id: ball_spherical_angled_front
+        grasp_type: spherical
+        approach_vector: [-0.70, 0.0, -0.70]
+        grasp_offset:    [ 0.022, 0.0, 0.022]
+        hand_config:
+          aperture_norm: 0.65
+        notes: "Abordagem 45° frontal — evita colisão com copo ao lado"
+
+      - id: ball_spherical_angled_left
+        grasp_type: spherical
+        approach_vector: [-0.50, -0.65, -0.57]
+        grasp_offset:    [ 0.018, 0.020, 0.018]
+        hand_config:
+          aperture_norm: 0.63
+        notes: "Abordagem oblíqua esquerda"
+
+      - id: ball_spherical_angled_right
+        grasp_type: spherical
+        approach_vector: [-0.50,  0.65, -0.57]
+        grasp_offset:    [ 0.018, -0.020, 0.018]
+        hand_config:
+          aperture_norm: 0.63
+        notes: "Abordagem oblíqua direita"

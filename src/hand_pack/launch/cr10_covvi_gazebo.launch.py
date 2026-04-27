@@ -33,6 +33,11 @@ def _build_gazebo_urdf():
     with open(hand_urdf_path) as f:
         hand_urdf = f.read()
 
+    # Gazebo Classic does not resolve package:// URIs when spawning from file.
+    # Convert all hand mesh paths to absolute file:// URIs so meshes are visible.
+    hand_urdf = hand_urdf.replace(
+        'package://hand_pack', f'file://{hand_pack_share}')
+
     hand_body = re.search(
         r'<robot[^>]*>(.*)</robot>', hand_urdf, re.DOTALL).group(1)
 
@@ -59,25 +64,55 @@ def _build_gazebo_urdf():
         '<ros2_control name="GazeboSystem"',
         '<ros2_control name="HandGazeboSystem"')
 
+    # Disable gravity and self-collision for every hand link so the physics
+    # solver never accumulates forces between control cycles.
+    hand_link_names = re.findall(r'<link\s+name="([^"]+)"', hand_body)
+    for lname in hand_link_names:
+        hand_body += (
+            f'\n  <gazebo reference="{lname}">'
+            f'<gravity>false</gravity>'
+            f'<self_collide>false</self_collide>'
+            f'</gazebo>'
+        )
+
     coupling_joint = """
   <joint name="hand_coupling" type="fixed">
     <parent link="Link6"/>
     <child link="hand_base_link"/>
-    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+    <origin xyz="0 0 0.01" rpy="1.5708 0 0"/>
   </joint>
 """
     combined = cr10_urdf.replace(
         '</robot>', hand_body + coupling_joint + '</robot>')
-    # RCL's YAML parser rejects multi-line plain scalars, so the combined URDF
-    # must be a single line when gazebo_ros2_control passes it via --param.
-    combined = combined.replace('\n', ' ').replace('\r', ' ')
-    return combined
+
+    # === Build minimal URDF for robot_state_publisher ===
+    # gazebo_ros2_control fetches robot_description from the RSP parameter service.
+    # RSP only declares robot_description explicitly, so any other parameter name
+    # fails the GET_PARAMETERS service call and crashes the plugin (SIGSEGV).
+    # Fix: RSP publishes the minimal URDF as robot_description (kinematic structure
+    # is identical — only meshes/inertials are stripped); the full URDF is written
+    # to a file so Gazebo spawn still loads the correct visuals and collisions.
+    minimal = combined
+    minimal = re.sub(r'<visual\b[^>]*>.*?</visual>', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<collision\b[^>]*>.*?</collision>', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<inertial\b[^>]*>.*?</inertial>', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(
+        r'<gazebo\s+reference\s*=\s*"[^"]*"\s*>.*?</gazebo>', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<!--.*?-->', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<\?xml[^?]*\?>', '', minimal)
+    minimal = ' '.join(minimal.split())
+
+    return combined, minimal
 
 
 def generate_launch_description():
     hand_pack_share = get_package_share_directory('hand_pack')
-    combined_urdf = _build_gazebo_urdf()
+    combined_urdf, minimal_urdf = _build_gazebo_urdf()
     world_file = os.path.join(hand_pack_share, 'worlds', 'factory.world')
+
+    urdf_spawn_path = '/tmp/cr10_covvi_spawn.urdf'
+    with open(urdf_spawn_path, 'w') as _f:
+        _f.write(combined_urdf)
 
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
@@ -91,14 +126,16 @@ def generate_launch_description():
         package='robot_state_publisher',
         executable='robot_state_publisher',
         output='screen',
-        parameters=[{'robot_description': combined_urdf, 'use_sim_time': True}],
+        parameters=[{
+            'robot_description': minimal_urdf,
+            'use_sim_time': True,
+        }],
     )
 
-    # Spawn on top of the robot table (z = 0.85 m)
     spawn_entity = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
-        arguments=['-topic', 'robot_description',
+        arguments=['-file', urdf_spawn_path,
                    '-entity', 'cr10_covvi',
                    '-z', '0.85'],
         output='screen',

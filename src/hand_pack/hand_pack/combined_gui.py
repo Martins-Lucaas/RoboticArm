@@ -6,6 +6,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 import tkinter as tk
 from tkinter import ttk
+from tkinter import font as tkfont
 
 # ---------- Hand constants (mimic joint multipliers from URDF) ----------
 MIMIC_JOINTS = [
@@ -43,9 +44,7 @@ MAX_RAD = {
 }
 
 HAND_JOINTS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
-
-# ---------- Arm constants ----------
-ARM_JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+ARM_JOINTS   = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
 
 ARM_LIMITS_DEG = {
     'joint1': (-360, 360),
@@ -56,104 +55,197 @@ ARM_LIMITS_DEG = {
     'joint6': (-360, 360),
 }
 
+# Arm preset poses  {label: {joint: degrees}}
+ARM_PRESETS = {
+    'Home':     {j: 0   for j in ARM_JOINTS},
+    'Vertical': {'joint1': 0, 'joint2': -90, 'joint3': 0,
+                 'joint4': 0, 'joint5': 90, 'joint6': 0},
+    'Estendido': {'joint1': 0, 'joint2': 0, 'joint3': -90,
+                  'joint4': 0, 'joint5': 0, 'joint6': 0},
+}
+
+# Colour palette
+BG         = '#1a1a2e'
+PANEL_BG   = '#16213e'
+HEADER_BG  = '#0f3460'
+ACCENT_ARM = '#4fc3f7'
+ACCENT_HND = '#69f0ae'
+TEXT_MAIN  = '#e0e0e0'
+TEXT_DIM   = '#9e9e9e'
+TEXT_VAL   = '#ffd54f'
+BTN_ARM    = '#1565c0'
+BTN_HND_O  = '#2e7d32'
+BTN_HND_C  = '#c62828'
+BTN_PRESET = '#37474f'
+TROUGH     = '#2a2a4a'
+SLIDER_ARM = ACCENT_ARM
+SLIDER_HND = ACCENT_HND
+
 
 class CombinedControlGUI(Node):
     def __init__(self):
         super().__init__('combined_control_gui')
+        self._ready = False  # blocks publishing until UI is fully initialised
         self.arm_pub = self.create_publisher(
             JointTrajectory, '/cr10_group_controller/joint_trajectory', 10)
         self.hand_pub = self.create_publisher(
             JointTrajectory, '/hand_position_controller/joint_trajectory', 10)
         self._build_ui()
+        self._ready = True  # UI ready — user interactions may now publish
 
+    # ------------------------------------------------------------------ UI --
     def _build_ui(self):
         self.root = tk.Tk()
-        self.root.title('CR10 + COVVI Hand — Gazebo Control')
-        self.root.configure(bg='#2b2b2b')
+        self.root.title('CR10 + COVVI  —  Controle de Simulação')
+        self.root.configure(bg=BG)
         self.root.resizable(True, True)
+        self.root.minsize(820, 540)
 
-        style = ttk.Style()
-        style.theme_use('clam')
+        self._setup_styles()
+        self._build_header()
+        self._build_duration_bar()
 
-        # Title bar
-        title = tk.Label(self.root,
-                         text='CR10 + COVVI Hand  —  Simulation Control',
-                         font=('Arial', 14, 'bold'),
-                         bg='#1e1e1e', fg='#e0e0e0')
-        title.pack(fill='x', pady=0, ipady=8)
-
-        # Duration row
-        dur_frame = tk.Frame(self.root, bg='#2b2b2b')
-        dur_frame.pack(fill='x', padx=20, pady=(8, 2))
-        tk.Label(dur_frame, text='Duração mov. (s):', width=20, anchor='w',
-                 bg='#2b2b2b', fg='#cccccc').pack(side=tk.LEFT)
-        self.time_sl = tk.Scale(
-            dur_frame, from_=0.1, to=10.0, resolution=0.1,
-            orient=tk.HORIZONTAL, bg='#2b2b2b', fg='#cccccc',
-            troughcolor='#444', highlightthickness=0)
-        self.time_sl.set(2.0)
-        self.time_sl.pack(side=tk.LEFT, fill='x', expand=True)
-
-        ttk.Separator(self.root, orient='horizontal').pack(fill='x', pady=6)
-
-        # Two-column layout
-        cols = tk.Frame(self.root, bg='#2b2b2b')
-        cols.pack(fill='both', expand=True, padx=8, pady=4)
+        cols = tk.Frame(self.root, bg=BG)
+        cols.pack(fill='both', expand=True, padx=10, pady=(0, 6))
+        cols.columnconfigure(0, weight=1)
+        cols.columnconfigure(1, weight=1)
+        cols.rowconfigure(0, weight=1)
 
         self._build_arm_panel(cols)
         self._build_hand_panel(cols)
+        self._build_statusbar()
+
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('Separator.TSeparator', background=HEADER_BG)
+
+    def _build_header(self):
+        hdr = tk.Frame(self.root, bg=HEADER_BG)
+        hdr.pack(fill='x')
+        tk.Label(
+            hdr,
+            text='CR10 + COVVI Hand  —  Simulação Gazebo',
+            font=('Arial', 15, 'bold'),
+            bg=HEADER_BG, fg=TEXT_MAIN,
+            pady=10,
+        ).pack(side='left', padx=18)
+        tk.Label(
+            hdr,
+            text='● Controle Manual',
+            font=('Arial', 9),
+            bg=HEADER_BG, fg=ACCENT_HND,
+        ).pack(side='right', padx=16)
+
+    def _build_duration_bar(self):
+        bar = tk.Frame(self.root, bg=BG)
+        bar.pack(fill='x', padx=12, pady=(8, 2))
+
+        tk.Label(
+            bar, text='Duração do Movimento:',
+            font=('Arial', 10), bg=BG, fg=TEXT_DIM,
+            width=22, anchor='w',
+        ).pack(side='left')
+
+        self.dur_val_lbl = tk.Label(
+            bar, text='2.0 s',
+            font=('Courier', 10, 'bold'), bg=BG, fg=TEXT_VAL, width=6,
+        )
+        self.dur_val_lbl.pack(side='right')
+
+        self.time_sl = tk.Scale(
+            bar, from_=0.1, to=10.0, resolution=0.1,
+            orient='horizontal', showvalue=False,
+            bg=BG, fg=TEXT_DIM,
+            troughcolor=TROUGH, activebackground=ACCENT_ARM,
+            highlightthickness=0,
+            command=self._dur_changed,
+        )
+        self.time_sl.set(2.0)
+        self.time_sl.pack(side='left', fill='x', expand=True, padx=(4, 6))
+
+        ttk.Separator(self.root, orient='horizontal').pack(fill='x', padx=8, pady=4)
+
+    def _dur_changed(self, val):
+        self.dur_val_lbl.config(text=f'{float(val):.1f} s')
 
     # ----------------------------------------------------------------- ARM --
     def _build_arm_panel(self, parent):
-        frame = tk.LabelFrame(
-            parent, text='  Braço CR10 (graus)  ',
-            font=('Arial', 11, 'bold'),
-            bg='#333', fg='#80c8ff',
-            padx=10, pady=8, bd=2, relief='groove')
-        frame.pack(side=tk.LEFT, fill='both', expand=True, padx=6, pady=4)
+        outer = tk.Frame(parent, bg=BG)
+        outer.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
+
+        header = tk.Frame(outer, bg=HEADER_BG)
+        header.pack(fill='x')
+        tk.Label(
+            header, text='⚙  Braço CR10',
+            font=('Arial', 12, 'bold'), bg=HEADER_BG, fg=ACCENT_ARM,
+            pady=7, padx=10,
+        ).pack(side='left')
+        tk.Label(
+            header, text='graus por junta',
+            font=('Arial', 9), bg=HEADER_BG, fg=TEXT_DIM,
+        ).pack(side='right', padx=10)
+
+        body = tk.Frame(outer, bg=PANEL_BG, padx=10, pady=8)
+        body.pack(fill='both', expand=True)
 
         self.arm_sliders = {}
-        self.arm_labels = {}
+        self.arm_labels  = {}
 
-        for j in ARM_JOINTS:
+        for i, j in enumerate(ARM_JOINTS):
             lo, hi = ARM_LIMITS_DEG[j]
-            row = tk.Frame(frame, bg='#333')
-            row.pack(fill='x', pady=2)
-            tk.Label(row, text=f'{j}:', width=9, anchor='w',
-                     bg='#333', fg='#cccccc').pack(side=tk.LEFT)
-            val_lbl = tk.Label(row, text='   0°', width=7, anchor='e',
-                               bg='#333', fg='#ffcc55',
-                               font=('Courier', 9))
-            val_lbl.pack(side=tk.RIGHT)
+            row = tk.Frame(body, bg=PANEL_BG)
+            row.pack(fill='x', pady=3)
+
+            tk.Label(
+                row, text=j, font=('Arial', 10, 'bold'),
+                bg=PANEL_BG, fg=TEXT_MAIN, width=9, anchor='w',
+            ).pack(side='left')
+
+            val_lbl = tk.Label(
+                row, text='    0°',
+                font=('Courier', 10, 'bold'),
+                bg=PANEL_BG, fg=TEXT_VAL, width=8, anchor='e',
+            )
+            val_lbl.pack(side='right')
+
             sl = tk.Scale(
                 row, from_=lo, to=hi, resolution=1,
-                orient=tk.HORIZONTAL, showvalue=False,
-                bg='#333', fg='#cccccc',
-                troughcolor='#555', activebackground='#80c8ff',
+                orient='horizontal', showvalue=False,
+                bg=PANEL_BG, fg=TEXT_DIM,
+                troughcolor=TROUGH, activebackground=SLIDER_ARM,
                 highlightthickness=0,
-                command=lambda v, lbl=val_lbl, jn=j: self._arm_changed(v, lbl, jn))
+                command=lambda v, lbl=val_lbl, jn=j: self._arm_changed(v, lbl, jn),
+            )
             sl.set(0)
-            sl.pack(side=tk.LEFT, fill='x', expand=True)
+            sl.pack(side='left', fill='x', expand=True)
             self.arm_sliders[j] = sl
-            self.arm_labels[j] = val_lbl
+            self.arm_labels[j]  = val_lbl
 
-        btn_row = tk.Frame(frame, bg='#333')
-        btn_row.pack(pady=8)
-        tk.Button(
-            btn_row, text='Home (0°)',
-            bg='#1565C0', fg='white', relief='flat',
-            padx=10, pady=4,
-            command=self._arm_home).pack(side=tk.LEFT, padx=4)
+        # Buttons
+        btn_row = tk.Frame(body, bg=PANEL_BG)
+        btn_row.pack(fill='x', pady=(10, 2))
+        for label, preset in ARM_PRESETS.items():
+            tk.Button(
+                btn_row, text=label,
+                bg=BTN_PRESET, fg=TEXT_MAIN,
+                activebackground='#546e7a', activeforeground=TEXT_MAIN,
+                relief='flat', padx=10, pady=5,
+                font=('Arial', 9),
+                command=lambda p=preset: self._arm_apply_preset(p),
+            ).pack(side='left', padx=3)
 
     def _arm_changed(self, val, lbl, _joint):
         lbl.config(text=f'{int(float(val)):5d}°')
         self._publish_arm()
 
-    def _arm_home(self):
-        for sl in self.arm_sliders.values():
-            sl.set(0)
+    def _arm_apply_preset(self, preset):
+        for j, deg in preset.items():
+            self.arm_sliders[j].set(deg)
 
     def _publish_arm(self):
+        if not self._ready:
+            return
         msg = JointTrajectory()
         msg.joint_names = list(ARM_JOINTS)
         pt = JointTrajectoryPoint()
@@ -167,47 +259,79 @@ class CombinedControlGUI(Node):
 
     # ---------------------------------------------------------------- HAND --
     def _build_hand_panel(self, parent):
-        frame = tk.LabelFrame(
-            parent, text='  Mão COVVI  (0 = aberto · 200 = fechado)  ',
-            font=('Arial', 11, 'bold'),
-            bg='#333', fg='#80ffaa',
-            padx=10, pady=8, bd=2, relief='groove')
-        frame.pack(side=tk.LEFT, fill='both', expand=True, padx=6, pady=4)
+        outer = tk.Frame(parent, bg=BG)
+        outer.grid(row=0, column=1, sticky='nsew', padx=(5, 0))
+
+        header = tk.Frame(outer, bg=HEADER_BG)
+        header.pack(fill='x')
+        tk.Label(
+            header, text='✋  Mão COVVI',
+            font=('Arial', 12, 'bold'), bg=HEADER_BG, fg=ACCENT_HND,
+            pady=7, padx=10,
+        ).pack(side='left')
+        tk.Label(
+            header, text='0 = aberta  ·  200 = fechada',
+            font=('Arial', 9), bg=HEADER_BG, fg=TEXT_DIM,
+        ).pack(side='right', padx=10)
+
+        body = tk.Frame(outer, bg=PANEL_BG, padx=10, pady=8)
+        body.pack(fill='both', expand=True)
 
         self.hand_sliders = {}
+        self.hand_labels  = {}
 
         for j in HAND_JOINTS:
-            row = tk.Frame(frame, bg='#333')
-            row.pack(fill='x', pady=2)
-            tk.Label(row, text=f'{j}:', width=8, anchor='w',
-                     bg='#333', fg='#cccccc').pack(side=tk.LEFT)
-            val_lbl = tk.Label(row, text='  0', width=5, anchor='e',
-                               bg='#333', fg='#ffcc55',
-                               font=('Courier', 9))
-            val_lbl.pack(side=tk.RIGHT)
+            row = tk.Frame(body, bg=PANEL_BG)
+            row.pack(fill='x', pady=3)
+
+            tk.Label(
+                row, text=j, font=('Arial', 10, 'bold'),
+                bg=PANEL_BG, fg=TEXT_MAIN, width=8, anchor='w',
+            ).pack(side='left')
+
+            val_lbl = tk.Label(
+                row, text='   0',
+                font=('Courier', 10, 'bold'),
+                bg=PANEL_BG, fg=TEXT_VAL, width=6, anchor='e',
+            )
+            val_lbl.pack(side='right')
+
             sl = tk.Scale(
                 row, from_=0, to=200, resolution=1,
-                orient=tk.HORIZONTAL, showvalue=False,
-                bg='#333', fg='#cccccc',
-                troughcolor='#555', activebackground='#80ffaa',
+                orient='horizontal', showvalue=False,
+                bg=PANEL_BG, fg=TEXT_DIM,
+                troughcolor=TROUGH, activebackground=SLIDER_HND,
                 highlightthickness=0,
-                command=lambda v, lbl=val_lbl, jn=j: self._hand_changed(v, lbl, jn))
+                command=lambda v, lbl=val_lbl, jn=j: self._hand_changed(v, lbl, jn),
+            )
             sl.set(0)
-            sl.pack(side=tk.LEFT, fill='x', expand=True)
+            sl.pack(side='left', fill='x', expand=True)
             self.hand_sliders[j] = sl
+            self.hand_labels[j]  = val_lbl
 
-        btn_row = tk.Frame(frame, bg='#333')
-        btn_row.pack(pady=8)
+        btn_row = tk.Frame(body, bg=PANEL_BG)
+        btn_row.pack(fill='x', pady=(10, 2))
         tk.Button(
             btn_row, text='Abrir Tudo',
-            bg='#2E7D32', fg='white', relief='flat',
-            padx=10, pady=4,
-            command=lambda: self._hand_preset(0)).pack(side=tk.LEFT, padx=4)
+            bg=BTN_HND_O, fg='white',
+            activebackground='#388e3c', activeforeground='white',
+            relief='flat', padx=12, pady=5, font=('Arial', 9),
+            command=lambda: self._hand_preset(0),
+        ).pack(side='left', padx=3)
         tk.Button(
             btn_row, text='Fechar Tudo',
-            bg='#C62828', fg='white', relief='flat',
-            padx=10, pady=4,
-            command=lambda: self._hand_preset(200)).pack(side=tk.LEFT, padx=4)
+            bg=BTN_HND_C, fg='white',
+            activebackground='#d32f2f', activeforeground='white',
+            relief='flat', padx=12, pady=5, font=('Arial', 9),
+            command=lambda: self._hand_preset(200),
+        ).pack(side='left', padx=3)
+        tk.Button(
+            btn_row, text='Pinça (50%)',
+            bg=BTN_PRESET, fg=TEXT_MAIN,
+            activebackground='#546e7a', activeforeground=TEXT_MAIN,
+            relief='flat', padx=12, pady=5, font=('Arial', 9),
+            command=lambda: self._hand_preset(100),
+        ).pack(side='left', padx=3)
 
     def _hand_changed(self, val, lbl, _joint):
         lbl.config(text=f'{int(float(val)):4d}')
@@ -218,7 +342,9 @@ class CombinedControlGUI(Node):
             sl.set(value)
 
     def _publish_hand(self):
-        vals = {j: self.hand_sliders[j].get() for j in HAND_JOINTS}
+        if not self._ready:
+            return
+        vals  = {j: self.hand_sliders[j].get() for j in HAND_JOINTS}
         names = list(HAND_JOINTS)
         positions = [vals[j] / 200.0 * MAX_RAD[j] for j in HAND_JOINTS]
         for mimic, driver, mult in MIMIC_JOINTS:
@@ -233,6 +359,22 @@ class CombinedControlGUI(Node):
                                       nanosec=int((dur % 1) * 1e9))
         msg.points.append(pt)
         self.hand_pub.publish(msg)
+
+    def _build_statusbar(self):
+        bar = tk.Frame(self.root, bg=HEADER_BG, height=24)
+        bar.pack(fill='x', side='bottom')
+        tk.Label(
+            bar,
+            text='● Conectado ao Simulador  |  Movimento apenas via GUI',
+            font=('Arial', 8), bg=HEADER_BG, fg=TEXT_DIM,
+            pady=4, padx=10,
+        ).pack(side='left')
+        tk.Label(
+            bar,
+            text='CR10 (6 juntas)  +  COVVI (6 dedos)',
+            font=('Arial', 8), bg=HEADER_BG, fg=TEXT_DIM,
+            pady=4, padx=10,
+        ).pack(side='right')
 
 
 def main(args=None):

@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>grasp_ml_pack</name>
+  <version>0.1.0</version>
+  <description>
+    ML-based autonomous grasp system for CR10 + COVVI Hand.
+    Detects pencil, cup and ball via computer vision and selects
+    the optimal grasp pose using a learned quality model.
+  </description>
+  <maintainer email="lucaspmartins14@gmail.com">Lucas Martins</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>control_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_pep8</test_depend>
+  <test_depend>ament_xmllint</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
