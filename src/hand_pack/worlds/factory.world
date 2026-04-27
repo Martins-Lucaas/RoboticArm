@@ -1,0 +1,547 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="factory">
+
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <scene>
+      <ambient>0.35 0.35 0.35 1</ambient>
+      <background>0.10 0.10 0.10 1</background>
+      <shadows>false</shadows>
+    </scene>
+
+    <!-- Directional fill -->
+    <light name="sun" type="directional">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.55 0.55 0.55 1</diffuse>
+      <specular>0.05 0.05 0.05 1</specular>
+      <direction>-0.3 0.2 -0.9</direction>
+    </light>
+
+    <!-- Overhead point lights (no fixtures - no ceiling) -->
+    <light name="lamp_1" type="point">
+      <pose>-4 -4 6.0 0 0 0</pose>
+      <diffuse>1 0.97 0.90 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>14</range><constant>0.15</constant><linear>0.02</linear><quadratic>0.002</quadratic></attenuation>
+      <cast_shadows>false</cast_shadows>
+    </light>
+    <light name="lamp_2" type="point">
+      <pose>4 -4 6.0 0 0 0</pose>
+      <diffuse>1 0.97 0.90 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>14</range><constant>0.15</constant><linear>0.02</linear><quadratic>0.002</quadratic></attenuation>
+      <cast_shadows>false</cast_shadows>
+    </light>
+    <light name="lamp_3" type="point">
+      <pose>-4 4 6.0 0 0 0</pose>
+      <diffuse>1 0.97 0.90 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>14</range><constant>0.15</constant><linear>0.02</linear><quadratic>0.002</quadratic></attenuation>
+      <cast_shadows>false</cast_shadows>
+    </light>
+    <light name="lamp_4" type="point">
+      <pose>4 4 6.0 0 0 0</pose>
+      <diffuse>1 0.97 0.90 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>14</range><constant>0.15</constant><linear>0.02</linear><quadratic>0.002</quadratic></attenuation>
+      <cast_shadows>false</cast_shadows>
+    </light>
+    <light name="lamp_work" type="point">
+      <pose>0 0 5.5 0 0 0</pose>
+      <diffuse>1 0.98 0.92 1</diffuse>
+      <specular>0.15 0.15 0.15 1</specular>
+      <attenuation><range>8</range><constant>0.2</constant><linear>0.03</linear><quadratic>0.003</quadratic></attenuation>
+      <cast_shadows>false</cast_shadows>
+    </light>
+
+    <!-- ===== RED PAINTED CONCRETE FLOOR ===== -->
+    <model name="floor">
+      <static>true</static>
+      <pose>0 0 -0.05 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>16 14 0.1</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>16 14 0.1</size></box></geometry>
+          <material>
+            <ambient>0.35 0.05 0.05 1</ambient>
+            <diffuse>0.50 0.07 0.07 1</diffuse>
+            <specular>0.08 0.02 0.02 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== WALLS — dark grey concrete ===== -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 7 3.5 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>16 0.25 7</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>16 0.25 7</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/DarkGrey</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -7 3.5 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>16 0.25 7</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>16 0.25 7</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/DarkGrey</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="wall_east">
+      <static>true</static>
+      <pose>8 0 3.5 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.25 14 7</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.25 14 7</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/DarkGrey</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-8 0 3.5 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.25 14 7</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.25 14 7</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/DarkGrey</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== INDUSTRIAL PIPE along north wall (copper/brown) ===== -->
+    <model name="pipe_main">
+      <static>true</static>
+      <pose>0 6.5 2.2 0 1.5708 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><cylinder><radius>0.05</radius><length>15.5</length></cylinder></geometry></collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.05</radius><length>15.5</length></cylinder></geometry>
+          <material>
+            <ambient>0.35 0.18 0.05 1</ambient>
+            <diffuse>0.55 0.28 0.08 1</diffuse>
+            <specular>0.40 0.25 0.10 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- Pipe support brackets -->
+    <model name="pipe_bracket_1">
+      <static>true</static>
+      <pose>-4 6.62 2.2 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.06 0.12 0.25</size></box></geometry>
+          <material><ambient>0.18 0.18 0.18 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="pipe_bracket_2">
+      <static>true</static>
+      <pose>0 6.62 2.2 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.06 0.12 0.25</size></box></geometry>
+          <material><ambient>0.18 0.18 0.18 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="pipe_bracket_3">
+      <static>true</static>
+      <pose>4 6.62 2.2 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.06 0.12 0.25</size></box></geometry>
+          <material><ambient>0.18 0.18 0.18 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== YELLOW SAFETY STRIPES at base of walls ===== -->
+    <model name="stripe_north">
+      <static>true</static>
+      <pose>0 6.88 0.075 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>16 0.025 0.15</size></box></geometry>
+          <material><ambient>1 0.80 0 1</ambient><diffuse>1 0.80 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="stripe_south">
+      <static>true</static>
+      <pose>0 -6.88 0.075 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>16 0.025 0.15</size></box></geometry>
+          <material><ambient>1 0.80 0 1</ambient><diffuse>1 0.80 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="stripe_east">
+      <static>true</static>
+      <pose>7.88 0 0.075 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.025 14 0.15</size></box></geometry>
+          <material><ambient>1 0.80 0 1</ambient><diffuse>1 0.80 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="stripe_west">
+      <static>true</static>
+      <pose>-7.88 0 0.075 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.025 14 0.15</size></box></geometry>
+          <material><ambient>1 0.80 0 1</ambient><diffuse>1 0.80 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== ROBOT PEDESTAL — black metal, top at z=0.85 ===== -->
+    <model name="robot_pedestal">
+      <static>true</static>
+      <pose>0 0 0.425 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.9 0.9 0.85</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.9 0.9 0.85</size></box></geometry>
+          <material>
+            <ambient>0.06 0.06 0.07 1</ambient>
+            <diffuse>0.09 0.09 0.10 1</diffuse>
+            <specular>0.35 0.35 0.35 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- Pedestal top plate (slightly lighter) -->
+    <model name="robot_pedestal_top">
+      <static>true</static>
+      <pose>0 0 0.854 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.92 0.92 0.008</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.92 0.92 0.008</size></box></geometry>
+          <material>
+            <ambient>0.18 0.18 0.20 1</ambient>
+            <diffuse>0.22 0.22 0.25 1</diffuse>
+            <specular>0.60 0.60 0.60 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== WOOD PALLETS + CARDBOARD BOXES (left-center) ===== -->
+    <!-- Pallet base -->
+    <model name="pallet_1">
+      <static>true</static>
+      <pose>-3.0 3.0 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>1.2 0.8 0.15</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.2 0.8 0.15</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/Wood</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- Box stack layer 1 -->
+    <model name="box_l1a">
+      <static>true</static>
+      <pose>-3.0 3.0 0.37 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.55 0.38 0.40</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.55 0.38 0.40</size></box></geometry>
+          <material><ambient>0.55 0.38 0.20 1</ambient><diffuse>0.65 0.45 0.22 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="box_l1b">
+      <static>true</static>
+      <pose>-3.0 3.42 0.37 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.55 0.35 0.40</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.55 0.35 0.40</size></box></geometry>
+          <material><ambient>0.50 0.34 0.18 1</ambient><diffuse>0.60 0.42 0.20 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Box stack layer 2 -->
+    <model name="box_l2a">
+      <static>true</static>
+      <pose>-3.0 3.0 0.82 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.55 0.75 0.38</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.55 0.75 0.38</size></box></geometry>
+          <material><ambient>0.52 0.36 0.18 1</ambient><diffuse>0.62 0.44 0.21 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Second pallet -->
+    <model name="pallet_2">
+      <static>true</static>
+      <pose>-3.0 1.6 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>1.2 0.8 0.15</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.2 0.8 0.15</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/Wood</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="box_p2a">
+      <static>true</static>
+      <pose>-3.0 1.6 0.42 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>1.1 0.70 0.45</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.1 0.70 0.45</size></box></geometry>
+          <material><ambient>0.52 0.36 0.18 1</ambient><diffuse>0.62 0.44 0.21 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== FIRE EXTINGUISHER (red cylinder) ===== -->
+    <model name="fire_extinguisher">
+      <static>true</static>
+      <pose>-2.1 2.3 0.30 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><cylinder><radius>0.075</radius><length>0.60</length></cylinder></geometry></collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.075</radius><length>0.60</length></cylinder></geometry>
+          <material>
+            <ambient>0.70 0.04 0.04 1</ambient>
+            <diffuse>0.85 0.05 0.05 1</diffuse>
+            <specular>0.40 0.10 0.10 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- Extinguisher nozzle (dark grey box on top) -->
+    <model name="fire_extinguisher_top">
+      <static>true</static>
+      <pose>-2.1 2.3 0.63 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.06 0.06 0.08</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.20 0.20 0.20 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== RADIATOR / HVAC UNIT (left wall) ===== -->
+    <model name="radiator_body">
+      <static>true</static>
+      <pose>-7.4 -1.5 0.55 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.18 1.20 1.10</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.18 1.20 1.10</size></box></geometry>
+          <material>
+            <ambient>0.75 0.75 0.78 1</ambient>
+            <diffuse>0.82 0.82 0.85 1</diffuse>
+            <specular>0.25 0.25 0.25 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- Radiator fins (darker stripes) -->
+    <model name="rad_fin_1">
+      <static>true</static>
+      <pose>-7.31 -1.5 0.55 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.02 1.18 1.08</size></box></geometry>
+          <material><ambient>0.55 0.55 0.58 1</ambient><diffuse>0.60 0.60 0.62 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== WORKDESK + MONITOR (right side) ===== -->
+    <model name="desk_body">
+      <static>true</static>
+      <pose>5.5 2.0 0.38 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>1.4 0.7 0.76</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.4 0.7 0.76</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/DarkGrey</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="desk_top">
+      <static>true</static>
+      <pose>5.5 2.0 0.77 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>1.42 0.72 0.04</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.42 0.72 0.04</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <uri>file://media/materials/textures/</uri>
+              <name>Gazebo/Wood</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- Monitor stand -->
+    <model name="monitor_stand">
+      <static>true</static>
+      <pose>5.5 1.75 0.87 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.08 0.08 0.18</size></box></geometry>
+          <material><ambient>0.12 0.12 0.12 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Monitor screen -->
+    <model name="monitor_screen">
+      <static>true</static>
+      <pose>5.5 1.72 1.06 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.55 0.04 0.35</size></box></geometry>
+          <material><ambient>0.08 0.08 0.10 1</ambient><diffuse>0.10 0.10 0.12 1</diffuse><specular>0.50 0.50 0.50 1</specular></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== STACK OF GREY TRAYS / BINS (right-back) ===== -->
+    <model name="bin_stack_1">
+      <static>true</static>
+      <pose>5.5 -3.5 0.10 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.8 0.5 0.20</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.8 0.5 0.20</size></box></geometry>
+          <material><ambient>0.40 0.40 0.42 1</ambient><diffuse>0.48 0.48 0.50 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="bin_stack_2">
+      <static>true</static>
+      <pose>5.5 -3.5 0.32 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.8 0.5 0.20</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.8 0.5 0.20</size></box></geometry>
+          <material><ambient>0.35 0.35 0.38 1</ambient><diffuse>0.42 0.42 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="bin_stack_3">
+      <static>true</static>
+      <pose>5.5 -3.5 0.54 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.8 0.5 0.20</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.8 0.5 0.20</size></box></geometry>
+          <material><ambient>0.40 0.40 0.42 1</ambient><diffuse>0.48 0.48 0.50 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="bin_stack_4">
+      <static>true</static>
+      <pose>5.5 -3.5 0.76 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.8 0.5 0.20</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.8 0.5 0.20</size></box></geometry>
+          <material><ambient>0.35 0.35 0.38 1</ambient><diffuse>0.42 0.42 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="bin_stack_5">
+      <static>true</static>
+      <pose>5.5 -3.5 0.98 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.8 0.5 0.20</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.8 0.5 0.20</size></box></geometry>
+          <material><ambient>0.40 0.40 0.42 1</ambient><diffuse>0.48 0.48 0.50 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===== ORANGE PLASTIC CRATE (foreground) ===== -->
+    <model name="orange_crate">
+      <static>true</static>
+      <pose>2.5 -4.5 0.18 0 0 0</pose>
+      <link name="link">
+        <collision name="col"><geometry><box><size>0.60 0.40 0.35</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>0.60 0.40 0.35</size></box></geometry>
+          <material>
+            <ambient>0.70 0.28 0.02 1</ambient>
+            <diffuse>0.85 0.35 0.03 1</diffuse>
+            <specular>0.15 0.08 0.02 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -1,0 +1,75 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    cr10_group_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    hand_position_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+cr10_group_controller:
+  ros__parameters:
+    joints:
+      - joint1
+      - joint2
+      - joint3
+      - joint4
+      - joint5
+      - joint6
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    open_loop_control: true
+
+hand_position_controller:
+  ros__parameters:
+    joints:
+      - Thumb
+      - Index
+      - Middle
+      - Ring
+      - Little
+      - Rotate
+      - _lisa_j01
+      - _thumb_chassis_j01
+      - _thumb_proximal_j01
+      - _thumb_distal_j01
+      - _thumb_link_j01
+      - _thumb_follower_j01
+      - _index_proximal_j01
+      - _index_distal_j01
+      - _index_knuckle_j01
+      - _index_follower_j01
+      - _index_link_j01
+      - _middle_proximal_j01
+      - _middle_distal_j01
+      - _middle_knuckle_j01
+      - _middle_follower_j01
+      - _middle_link_j01
+      - _ring_proximal_j01
+      - _ring_distal_j01
+      - _ring_knuckle_j01
+      - _ring_follower_j01
+      - _ring_link_j01
+      - _little_proximal_j01
+      - _little_distal_j01
+      - _little_knuckle_j01
+      - _little_follower_j01
+      - _little_link_j01
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    open_loop_control: true
+    allow_partial_joints_goal: true
+    interpolation_method: splines
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 0.0

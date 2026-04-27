@@ -17,6 +17,7 @@ setup(
         (os.path.join('share', package_name, 'urdf', 'linear_meshes'), glob('urdf/linear_meshes/*.STL')),
         (os.path.join('share', package_name, 'worlds'), glob('worlds/*.world')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -28,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'hand_gui = hand_pack.hand_gui:main',
+            'combined_gui = hand_pack.combined_gui:main',
         ],
     },
 )
