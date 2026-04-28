@@ -29,21 +29,52 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-def _add_mimic_damping(urdf_body: str,
-                       damping: float = 50.0,
-                       friction: float = 10.0) -> str:
+def _fix_virtual_link_inertia(urdf_body: str) -> str:
     """
-    Adiciona alto amortecimento/atrito a todos os mimic joints do URDF da mão.
+    Substitui inércia irreal nos links virtuais da mão (driver_link e _l1).
 
-    Gazebo Classic ignora a tag <mimic> — sem amortecimento, os mimic joints
-    ficam livres durante os ~3 s de inicialização e explodem fisicamente.
-    Com damping=50 N·m·s/rad eles ficam estáticos até o controller ativar.
+    O URDF exportado pelo SolidWorks atribui mass=1 kg e ixx=iyy=izz=1 kg·m² a 32
+    links sem geometria (links de constraint da cadeia de 4 barras que simula o
+    mecanismo mimic). Com esses valores:
+      - 32 kg de massa invisível recebe forças de gravidade / aceleração
+      - O ODE precisa resolver constraints entre inércias de 1 kg·m² e links reais
+        de 0.01 kg → razão de inércia 100× → instabilidade numérica garantida
+    Solução: reduzir para mass=0.001 kg e ixx=iyy=izz=1e-9 (praticamente massless).
+    """
+    phantom_inertial = (
+        r'<inertial>\s*'
+        r'<mass value="1"\s*/>\s*'
+        r'<inertia ixx="1\.0" ixy="0\.0" ixz="0\.0" iyy="1\.0" iyz="0\.0" izz="1\.0"\s*/>\s*'
+        r'</inertial>'
+    )
+    minimal_inertial = (
+        '<inertial>'
+        '<mass value="0.001"/>'
+        '<inertia ixx="1e-9" ixy="0.0" ixz="0.0" iyy="1e-9" iyz="0.0" izz="1e-9"/>'
+        '</inertial>'
+    )
+    return re.sub(phantom_inertial, minimal_inertial, urdf_body, flags=re.DOTALL)
+
+
+def _stabilize_hand_joints(urdf_body: str) -> str:
+    """
+    Adiciona amortecimento a todos os joints revolute da mão com valores distintos:
+      - Joints mimic: damping alto (120) — Gazebo ignora <mimic>, precisam resistir
+        às forças de constraint para permanecerem na posição correta.
+      - Joints primários (Thumb, Index...): damping baixo (10) — são controlados
+        via SetPosition() a cada step de física (1 kHz), mas sem nenhum damping
+        o ODE não consegue resolver bem as forças de constraint transmitidas pelo
+        hand_attach_joint quando o braço se move, causando instabilidade numérica.
     """
     def _patch(m: re.Match) -> str:
         jxml = m.group(0)
-        if '<mimic' not in jxml:
+        if 'type="revolute"' not in jxml:
             return jxml
-        dyn_tag = f'<dynamics damping="{damping}" friction="{friction}"/>'
+        if '<mimic' in jxml:
+            damp, fric = 120.0, 20.0
+        else:
+            damp, fric = 10.0, 2.0
+        dyn_tag = f'<dynamics damping="{damp}" friction="{fric}"/>'
         if '<dynamics' in jxml:
             jxml = re.sub(r'<dynamics[^/]*/>', dyn_tag, jxml)
         else:
@@ -102,17 +133,21 @@ def _build_robot_urdf():
         '<ros2_control name="GazeboSystem"',
         '<ros2_control name="HandGazeboSystem"')
 
-    # Estabiliza mimic joints: alto amortecimento evita explosão física no startup
-    hand_body = _add_mimic_damping(hand_body)
+    # Corrige inércia dos 32 links virtuais (mass=1→0.001, ixx=1→1e-9).
+    # Sem isso, 32 kg de massa invisível recebe forças do ODE e destrói a simulação.
+    hand_body = _fix_virtual_link_inertia(hand_body)
 
-    # Desativa gravidade em todos os links da mão para evitar desmontagem
-    # quando os controllers ainda não carregaram
+    # Estabiliza joints da mão: mimic (damping=120) e primários (damping=10).
+    hand_body = _stabilize_hand_joints(hand_body)
+
+    # Desativa gravidade e self_collide em todos os links da mão
     hand_link_names = re.findall(r'<link\s+name="([^"]+)"', hand_body)
     for lname in hand_link_names:
         hand_body += (
             f'\n  <gazebo reference="{lname}">'
             f'<gravity>false</gravity>'
             f'<self_collide>false</self_collide>'
+            f'<kp>1e6</kp><kd>1.0</kd>'
             f'</gazebo>'
         )
 
@@ -124,6 +159,17 @@ def _build_robot_urdf():
     </joint>"""
 
     full_urdf = cr10_urdf.replace('</robot>', hand_body + attach_joint + '</robot>')
+
+    # Desativa self_collide nos links do braço CR10 (evita links adjacentes se penetrarem)
+    arm_link_names = re.findall(r'<link\s+name="([^"]+)"', cr10_urdf)
+    arm_gazebo_tags = ''
+    for lname in arm_link_names:
+        arm_gazebo_tags += (
+            f'\n  <gazebo reference="{lname}">'
+            f'<self_collide>false</self_collide>'
+            f'</gazebo>'
+        )
+    full_urdf = full_urdf.replace('</robot>', arm_gazebo_tags + '\n</robot>')
 
     # URDF mínimo para o robot_state_publisher:
     # O plugin gazebo_ros2_control lê robot_description do RSP via serviço.

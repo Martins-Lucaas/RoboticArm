@@ -26,43 +26,60 @@ from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithP
 # Faixas HSV para cada objeto na simulação Gazebo
 #
 # Análise das cores Gazebo (diffuse → HSV OpenCV 0-180):
-#   ball   (0.9, 0.05, 0.05)  → H≈0,  S≈241, V≈230  — vermelho puro saturado
-#   cup    (0.95,0.95,0.95)   → H=*, S≈0,   V≈242  — branco quase neutro
+#   ball   (0.9, 0.05, 0.05)  → H≈0,  S≈241, V≈230  — vermelho; reflexos especulares
+#                                                        reduzem S para ~150 localmente
+#   cup    (0.95,0.95,0.95)   → H=*, S≈0-50, V≈242  — branco/cinza quase neutro
 #   pencil (1.0, 0.95, 0.0)   → H≈29, S≈255, V≈255  — amarelo puro
-#   table  (0.72,0.55,0.38)   → H≈15, S≈120, V≈184  — marrom-laranja → falso positivo
-#   palanque(0.55,0.35,0.15)  → H≈15, S≈186, V≈140  — marrom escuro  → falso positivo
+#   table  (0.72,0.55,0.38)   → H≈15, S≈120, V≈184  — marrom → S>85 exclui do copo
 #
-# S_min=210 para bola: madeira S≈120-186 < 210; bola S≈241 passa.
-# H_max=10 (bola): exclui laranja/marrom que começa em H≈15.
-# Copo: S_max=55 e V_min=150 para capturar branco com sombras de iluminação Gazebo.
+# Câmera a 60° de pitch: objetos na metade superior/central da imagem.
 _HSV_RANGES = {
-    'pencil': {'lower': np.array([20,  80,  80]),  'upper': np.array([35, 255, 255])},
-    'cup':    {'lower': np.array([0,    0, 150]),  'upper': np.array([180, 90, 255])},
-    'ball':   {'lower': np.array([0,  210,  60]),  'upper': np.array([10, 255, 255])},
+    'pencil': {'lower': np.array([18,  60,  80]),  'upper': np.array([40, 255, 255])},
+    'cup':    {'lower': np.array([0,    0, 155]),  'upper': np.array([180, 85, 255])},
+    'ball':   {'lower': np.array([0,  140,  60]),  'upper': np.array([12, 255, 255])},
 }
-# Vermelho tem wrapping no HSV: H=170-180 também é vermelho
-_BALL_UPPER2 = {'lower': np.array([170, 210, 60]), 'upper': np.array([180, 255, 255])}
+# Vermelho tem wrapping no HSV: H=165-180 também é vermelho
+_BALL_UPPER2 = {'lower': np.array([165, 140, 60]), 'upper': np.array([180, 255, 255])}
 
-_MIN_AREA = 300   # px² — ignora ruído e reflexos pontuais
+_MIN_AREA = 250   # px² — ignora ruído e reflexos pontuais
+
+# Área máxima por objeto — evita detectar a mesa inteira como copo
+_MAX_AREA = {'pencil': 8000, 'cup': 14000, 'ball': 9000}
 
 # Filtros de forma para a bola (elimina falsos positivos retangulares/irregulares)
-_BALL_MIN_CIRCULARITY = 0.40   # 0=linha, 1=círculo perfeito
-_BALL_ASPECT_MIN = 0.35        # w/h mínimo (bola quase quadrada)
-_BALL_ASPECT_MAX = 2.8         # w/h máximo
+_BALL_MIN_CIRCULARITY = 0.35
+_BALL_ASPECT_MIN = 0.30
+_BALL_ASPECT_MAX = 3.0
+
+# Filtros de forma para o copo (visão de cima ≈ elipse; exclui mesa grande/plana)
+# Com câmera a 60° de pitch, o topo circular do copo (∅70mm) aparece como
+# elipse com aspect ≈ w/h ≈ 1/cos(60°) = 2.0
+_CUP_MIN_CIRCULARITY = 0.20
+_CUP_ASPECT_MIN = 0.30
+_CUP_ASPECT_MAX = 3.5
+
+
+def _contour_shape_ok(cnt: np.ndarray,
+                      min_circ: float,
+                      asp_min: float,
+                      asp_max: float) -> bool:
+    area = cv2.contourArea(cnt)
+    perim = cv2.arcLength(cnt, True)
+    if perim < 1.0:
+        return False
+    if 4 * np.pi * area / (perim ** 2) < min_circ:
+        return False
+    _, _, w, h = cv2.boundingRect(cnt)
+    asp = w / max(h, 1)
+    return asp_min <= asp <= asp_max
 
 
 def _is_ball_shaped(cnt: np.ndarray) -> bool:
-    """Verifica se o contorno tem forma aproximadamente circular (bola real)."""
-    area = cv2.contourArea(cnt)
-    perimeter = cv2.arcLength(cnt, True)
-    if perimeter < 1.0:
-        return False
-    circularity = 4 * np.pi * area / (perimeter ** 2)
-    if circularity < _BALL_MIN_CIRCULARITY:
-        return False
-    _, _, w, h = cv2.boundingRect(cnt)
-    aspect = w / max(h, 1)
-    return _BALL_ASPECT_MIN <= aspect <= _BALL_ASPECT_MAX
+    return _contour_shape_ok(cnt, _BALL_MIN_CIRCULARITY, _BALL_ASPECT_MIN, _BALL_ASPECT_MAX)
+
+
+def _is_cup_shaped(cnt: np.ndarray) -> bool:
+    return _contour_shape_ok(cnt, _CUP_MIN_CIRCULARITY, _CUP_ASPECT_MIN, _CUP_ASPECT_MAX)
 
 
 class ObjectDetectorNode(Node):
@@ -170,9 +187,12 @@ class ObjectDetectorNode(Node):
                 area = cv2.contourArea(cnt)
                 if area < _MIN_AREA:
                     continue
+                if area > _MAX_AREA[label]:
+                    continue
 
-                # Bola precisa ter forma aproximadamente circular
                 if label == 'ball' and not _is_ball_shaped(cnt):
+                    continue
+                if label == 'cup' and not _is_cup_shaped(cnt):
                     continue
 
                 x, y, w, h = cv2.boundingRect(cnt)

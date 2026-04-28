@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 import numpy as np
 
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.executors import MultiThreadedExecutor
 
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
@@ -84,7 +86,7 @@ _HOME_Q           = np.array([0.0, -math.pi/4, math.pi/2,
 _OBJ_DIAMETERS    = {'pencil': 0.007, 'cup': 0.070, 'ball': 0.064}
 _APPROACH_CLEAR   = 0.15    # m — altura de pré-abordagem
 _LIFT_HEIGHT      = 0.20    # m — altura de levantamento
-_CLOSE_EXTRA      = 0.15    # fração extra de fechamento para compliance
+_CLOSE_EXTRA      = 0.05    # fração extra de fechamento — conservador para não explodir
 _MAX_JOINT_VEL    = 0.15    # rad/s — velocidade lenta para visualização
 _N_TRAJ_STEPS     = 12      # waypoints por segmento
 _WRIST_ROTATION   = math.pi * 0.75   # 135° de giro de pulso
@@ -177,8 +179,11 @@ class GraspExecutorNode(Node):
         self._sub_js = self.create_subscription(
             JointState, '/joint_states', self._cb_joint_state, 10)
 
-        self._busy   = False
+        self._busy    = False
         self._pending: dict | None = None
+
+        # Timer único criado uma vez — verifica se há grasp pendente
+        self._exec_timer = self.create_timer(0.1, self._check_and_run)
 
         self.get_logger().info('GraspExecutor — aguardando action servers...')
         self._arm_ac.wait_for_server(timeout_sec=20.0)
@@ -197,11 +202,26 @@ class GraspExecutorNode(Node):
             return
         self._pending = json.loads(msg.data)
         self._busy    = True
-        self.create_timer(0.05, self._run_pipeline)
 
     # ──────────────────────────────────────────────────────────────────
-    def _run_pipeline(self):
-        grasp    = self._pending
+    def _check_and_run(self):
+        """Disparado a cada 100 ms pelo timer único — inicia execução se houver grasp pendente.
+
+        _run_pipeline é executado em thread separada para que o executor ROS 2
+        continue spinando e consiga processar os callbacks do ActionClient.
+        send_goal() bloqueia via event.wait() — se chamado direto do callback do
+        timer, trava o executor e o callback de resposta nunca executa (deadlock).
+        """
+        if self._pending is None:
+            return
+        grasp = self._pending
+        self._pending = None   # consome imediatamente — evita re-execução
+        threading.Thread(
+            target=self._run_pipeline, args=(grasp,), daemon=True).start()
+
+    # ──────────────────────────────────────────────────────────────────
+    def _run_pipeline(self, grasp: dict):
+        """Executa o pipeline completo de grasp de forma síncrona."""
         label    = grasp['object_label']
         gtype    = grasp['grasp_type']
         obj_pos  = np.array(grasp['object_position'], dtype=float)
@@ -302,6 +322,10 @@ class GraspExecutorNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = GraspExecutorNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    try:
+        executor.spin()
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()

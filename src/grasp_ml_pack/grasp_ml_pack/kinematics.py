@@ -191,27 +191,31 @@ def _rot_error(R_curr: np.ndarray, R_des: np.ndarray) -> np.ndarray:
 
 
 def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
-                     elbow_up: bool = True) -> np.ndarray:
+                     elbow_up: bool = True,
+                     q1_force: float | None = None) -> np.ndarray:
     """
     Estimativa inicial analítica geométrica (pulso esférico aproximado).
 
     Passos:
       1. WC = p_tcp − d_eff·ẑ_tcp
-      2. θ₁ = atan2(WCy, WCx)
+      2. θ₁ = atan2(WCy, WCx)  [ou q1_force se fornecido]
       3. θ₂, θ₃ via lei dos cossenos
-      4. θ₄, θ₅, θ₆ via R₃₆ = R₀₃ᵀ·R_tcp
+      4. θ₄, θ₅, θ₆ via R₃₆ = R₀₃ᵀ·R_tcp  [com q1 correto!]
+
+    q1_force: forçar q1 a um valor específico (para multi-start varredura).
+      Sem isso, substituir g[0] após o cálculo deixa q4-q6 inconsistentes,
+      pois R03 (que depende de q1) foi calculada com o q1 original.
     """
     a2 = DH_CR10[1, 0]   # 0.607
     a3 = DH_CR10[2, 0]   # 0.568
     d1 = DH_CR10[0, 2]   # 0.1765
 
-    # Centro do pulso aproximado
     p_wc = p_tcp - _D_WC_TCP * R_tcp[:, 2]
 
-    # θ₁
-    q1 = math.atan2(p_wc[1], p_wc[0])
+    # θ₁ — usa q1_force se fornecido, caso contrário cálculo analítico
+    q1 = float(q1_force) if q1_force is not None else math.atan2(p_wc[1], p_wc[0])
 
-    # θ₃ — cotovelo (lei dos cossenos)
+    # θ₃ — lei dos cossenos sobre a projeção do WC
     r = math.sqrt(p_wc[0] ** 2 + p_wc[1] ** 2)
     s = p_wc[2] - d1
     D = (r * r + s * s - a2 * a2 - a3 * a3) / (2.0 * a2 * a3)
@@ -223,7 +227,7 @@ def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
     q2 = math.atan2(s, r) - math.atan2(a3 * math.sin(q3),
                                          a2 + a3 * math.cos(q3))
 
-    # θ₄, θ₅, θ₆ a partir de R₃₆
+    # θ₄, θ₅, θ₆ via R₃₆ = R₀₃ᵀ · R_tcp  (R03 usa o q1 correto)
     q_tmp = np.array([q1, q2, q3, 0.0, 0.0, 0.0])
     R03 = fk_partial(q_tmp, 3)[:3, :3]
     R36 = R03.T @ R_tcp
@@ -236,7 +240,6 @@ def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
         q4 = math.atan2(r12 / s5, r02 / s5)
         q6 = math.atan2(-R36[2, 1] / s5, R36[2, 0] / s5)
     else:
-        # Singularidade de pulso — distribui entre q4 e q6
         q4 = 0.0
         q6 = math.atan2(-R36[0, 1], R36[0, 0])
 
@@ -245,19 +248,25 @@ def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
 
 def _ik_refine(p_target: np.ndarray, R_target: np.ndarray,
                q0: np.ndarray,
-               n_iter: int = 100,
+               n_iter: int = 150,
                tol: float = 5e-4,
                lr: float = 0.45,
-               lam: float = 0.005) -> tuple[np.ndarray, bool]:
+               lam: float = 0.08) -> tuple[np.ndarray, bool]:
     """
-    Refinamento numérico via pseudo-inverso amortecido (DLS).
+    Refinamento numérico via pseudo-inverso amortecido (DLS) com lambda adaptativo.
+
+    Lambda decai exponencialmente de lam (0.08) até lam_min (0.003) ao longo
+    das iterações: começo estável (previne oscilações em poses de alta extensão)
+    e final preciso (permite convergência fina).
 
     Returns (q, converged).
     """
     q = q0.copy().astype(float)
     I6 = np.eye(6)
+    lam_min = 0.003
 
-    for _ in range(n_iter):
+    for i in range(n_iter):
+        lam_i = lam * (lam_min / lam) ** (i / n_iter)
         T = forward_kinematics(q)
         dp = p_target - T[:3, 3]
         dw = _rot_error(T[:3, :3], R_target)
@@ -266,12 +275,11 @@ def _ik_refine(p_target: np.ndarray, R_target: np.ndarray,
             return q, True
         J = jacobian(q)
         JJt = J @ J.T
-        dq = J.T @ np.linalg.solve(JJt + lam * lam * I6, err)
+        dq = J.T @ np.linalg.solve(JJt + lam_i * lam_i * I6, err)
         q = np.clip(q + lr * dq, JOINT_MIN, JOINT_MAX)
 
-    # Verificação final com tolerância mais generosa
     T_f = forward_kinematics(q)
-    return q, float(np.linalg.norm(p_target - T_f[:3, 3])) < 8e-3
+    return q, float(np.linalg.norm(p_target - T_f[:3, 3])) < 10e-3
 
 
 def _ik_candidates(p_tcp: np.ndarray, R_tcp: np.ndarray,
@@ -348,7 +356,7 @@ def inverse_kinematics(
         if best_ok and best_err < 2e-3:
             break   # solução boa o suficiente — não procurar mais
 
-    return best_q, best_ok and best_err < 8e-3
+    return best_q, best_ok and best_err < 10e-3
 
 
 # ──────────────────────────────────────────────────────────────────────
