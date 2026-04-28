@@ -244,7 +244,7 @@ RoboticArm/
 
 ## RViz2 — Visualizações
 
-| Dedos abertos | Dedos fechados |
+| Punho esquerda | Punho direita |
 |---|---|
 | ![Aberta](images/covvi_hand_rviz_joints_open.png) | ![Fechada](images/covvi_hand_rviz_joints_closed.png) |
 
