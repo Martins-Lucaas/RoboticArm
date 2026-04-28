@@ -20,11 +20,6 @@ https://github.com/Martins-Lucaas/RoboticArm/raw/main/images/grasp_pipeline_demo
 
 > À esquerda: a janela da câmera com o detector HSV ativo — bola vermelha e lápis amarelo marcados em tempo real com bounding boxes, crosshairs e score de confiança. À direita: o CR10 com a mão COVVI já posicionado sobre a bancada, pronto pra executar o grasp.
 
----
-
-### Braço alcançando o copo
-
-![Arm reaching](images/2026-04-28-131648_1911x1075_scrot.png)
 
 ---
 
