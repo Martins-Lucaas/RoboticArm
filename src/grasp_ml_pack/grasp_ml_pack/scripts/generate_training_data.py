@@ -44,11 +44,12 @@ _OBJ_GRASP = {
 }
 _OBJ_DIAMETERS = {'pencil': 0.007, 'cup': 0.070, 'ball': 0.064}
 
-# Posições no espaço da bancada de trabalho (metros, frame base do robô)
-# Bancada: face frontal x=0.25 m, objetos reais em x=0.48-0.68 m
-_X_RANGE = (0.45, 0.72)
+# Posições no frame do BASE_LINK do robô (robô spawnado em world Z=0.375 m).
+# Bancada: face frontal x=0.38 m, objetos reais em x=0.61-0.81 m
+# Z dos objetos: world Z ≈ 0.800 m  →  base-frame Z = 0.800 - 0.375 = 0.425 m
+_X_RANGE = (0.55, 0.85)
 _Y_RANGE = (-0.18, 0.18)
-_Z_OBJ   = 0.800   # altura da bancada + altura do centro do objeto
+_Z_OBJ   = 0.425   # base-frame: world Z (0.800) - pedestal (0.375)
 
 # Variações de parâmetros
 _APERTURE_RANGE   = (0.30, 0.95)

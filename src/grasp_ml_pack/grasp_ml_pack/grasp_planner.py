@@ -67,8 +67,12 @@ class GraspPlannerNode(Node):
         self.get_logger().info(
             f'GraspPlanner pronto | DB: {len(self._db)} objetos | modelo: {mode}')
 
+        self._target: str | None = None
+
         self._sub = self.create_subscription(
             PoseArray, '/object_poses', self._cb_poses, 10)
+        self._sub_target = self.create_subscription(
+            String, '/pipeline/target', self._cb_target, 10)
         self._pub = self.create_publisher(String, '/selected_grasp', 10)
 
     # ──────────────────────────────────────────────────────────────────
@@ -77,6 +81,10 @@ class GraspPlannerNode(Node):
         with open(path) as f:
             raw = yaml.safe_load(f)
         return raw.get('objects', {})
+
+    # ──────────────────────────────────────────────────────────────────
+    def _cb_target(self, msg: String):
+        self._target = msg.data
 
     # ──────────────────────────────────────────────────────────────────
     def _cb_poses(self, msg: PoseArray):
@@ -89,6 +97,9 @@ class GraspPlannerNode(Node):
         best_grasp = None
 
         for pose, label in zip(msg.poses, labels):
+            # Só planeja para o objeto alvo atual
+            if self._target and label != self._target:
+                continue
             if label not in self._db:
                 self.get_logger().warn(f'Label desconhecido: {label}')
                 continue

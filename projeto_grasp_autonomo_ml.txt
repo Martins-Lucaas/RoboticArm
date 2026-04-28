@@ -1,0 +1,497 @@
+================================================================================
+  PROJETO: GRASP AUTÔNOMO COM ML — CR10 + COVVI HAND (ROS 2 Humble / Gazebo)
+================================================================================
+
+VISÃO GERAL
+-----------
+Gemêo digital do braço Dobot CR10 acoplado à mão protética COVVI que executa
+preensão autônoma de objetos em simulação usando aprendizado de máquina.
+
+A câmera RGB detecta objetos por segmentação HSV, estima suas posições 3D via
+back-projection geométrica e um classificador RandomForest (26 features) decide
+o melhor candidato de grasp. O robô então executa a sequência completa:
+abordagem → preensão → levantamento → liberação → retorno.
+
+Ordem de preensão: bola (ball) → copo (cup) → lápis (pencil)
+
+
+HARDWARE / SOFTWARE
+-------------------
+  Robô braço   : Dobot CR10 (6 DOF, DH analítico)
+  Mão          : COVVI Hand (31 juntas: 6 primárias + 25 mimic)
+  Simulador    : Gazebo Classic 11
+  Framework    : ROS 2 Humble
+  ML           : scikit-learn RandomForestClassifier (n_estimators=300)
+  Visão        : OpenCV HSV + back-projection geométrica (sem câmera de profundidade)
+
+
+================================================================================
+  ESTRUTURA DO REPOSITÓRIO
+================================================================================
+
+  src/
+  ├── hand_pack/                    ← Gemêo digital COVVI Hand (digital twin)
+  │   ├── hand_pack/
+  │   │   ├── hand_gui.py           ← GUI Tkinter para controle da mão
+  │   │   ├── combined_gui.py       ← GUI combinada CR10 + mão
+  │   │   └── hand_node.py          ← Nó ROS para a mão
+  │   ├── launch/
+  │   │   ├── cr10_covvi_gazebo.launch.py  ← Launch principal (CR10 + mão no Gazebo)
+  │   │   ├── cr10_covvi_rviz.launch.py    ← Visualização no RViz
+  │   │   ├── display.launch.py            ← Display simples URDF
+  │   │   └── hand_gazebo.launch.py        ← Apenas a mão no Gazebo
+  │   ├── urdf/                     ← URDF da mão + meshes STL
+  │   └── config/
+  │       └── cr10_covvi_controllers.yaml  ← Configuração dos controllers
+  │
+  └── grasp_ml_pack/                ← Pipeline autônomo de preensão com ML
+      ├── grasp_ml_pack/
+      │   ├── object_detector.py    ← Câmera → bboxes (HSV / YOLOv8)
+      │   ├── pose_estimator.py     ← Bboxes → posição 3D em base_link
+      │   ├── grasp_planner.py      ← Posição 3D → candidato de grasp
+      │   ├── grasp_executor.py     ← Candidato → trajetória → execução
+      │   ├── pipeline.py           ← Orquestrador (máquina de estados)
+      │   ├── grasp_quality_net.py  ← Classificador ML (26 features)
+      │   └── kinematics.py         ← FK/IK analítica + parâmetros DH
+      ├── scripts/
+      │   ├── generate_training_data.py  ← Coleta dataset no Gazebo
+      │   └── train_grasp_model.py       ← Treina o RandomForest
+      ├── config/
+      │   ├── pipeline_params.yaml  ← Parâmetros de todos os nós
+      │   └── grasp_database.yaml   ← Candidatos de grasp por objeto
+      ├── worlds/
+      │   └── grasp_experiment.world  ← Cena Gazebo completa
+      ├── models/                   ← Arquivos ML (gerados, não versionados)
+      │   ├── training_data.npz     ← Dataset de treino (X, y)
+      │   └── grasp_quality.pkl     ← Modelo treinado
+      └── launch/
+          └── grasp_pipeline.launch.py  ← Launch do pipeline autônomo
+
+
+================================================================================
+  PRÉ-REQUISITOS E INSTALAÇÃO
+================================================================================
+
+  # ROS 2 Humble + Gazebo Classic 11
+  sudo apt install -y \
+      ros-humble-gazebo-ros-pkgs \
+      ros-humble-ros2-control \
+      ros-humble-ros2-controllers \
+      ros-humble-gazebo-ros2-control \
+      ros-humble-vision-msgs \
+      ros-humble-cv-bridge \
+      ros-humble-joint-state-publisher-gui
+
+  # Python
+  pip install "numpy<2" scikit-learn opencv-python
+
+  # Compilar workspace
+  cd ~/RoboticArm
+  colcon build --symlink-install
+  source install/setup.bash
+
+
+================================================================================
+  TODOS OS COMANDOS DE LAUNCH E RUN
+================================================================================
+
+  ── hand_pack ────────────────────────────────────────────────────────────────
+
+  Launch — CR10 + Mão COVVI completo no Gazebo (com GUI):
+    ros2 launch hand_pack cr10_covvi_gazebo.launch.py
+
+  Launch — Apenas a mão COVVI no Gazebo:
+    ros2 launch hand_pack hand_gazebo.launch.py
+
+  Launch — CR10 + Mão no RViz (sem física, só visualização):
+    ros2 launch hand_pack cr10_covvi_rviz.launch.py
+
+  Launch — Display simples do URDF:
+    ros2 launch hand_pack display.launch.py
+
+  Run — GUI da mão (Tkinter, controla os 6 dedos):
+    ros2 run hand_pack hand_gui
+
+  Run — GUI combinada (CR10 + mão, sliders joint-por-joint):
+    ros2 run hand_pack combined_gui
+
+  ── grasp_ml_pack ────────────────────────────────────────────────────────────
+
+  Launch — Pipeline autônomo completo (Gazebo + ML + câmera):
+    ros2 launch grasp_ml_pack grasp_pipeline.launch.py
+
+  Run — Só o detector de objetos (requer câmera ativa):
+    ros2 run grasp_ml_pack object_detector
+
+  Run — Só o estimador de pose:
+    ros2 run grasp_ml_pack pose_estimator
+
+  Run — Só o planejador de grasp:
+    ros2 run grasp_ml_pack grasp_planner
+
+  Run — Só o executor de grasp (requer controllers ativos):
+    ros2 run grasp_ml_pack grasp_executor
+
+  Run — Só o pipeline orquestrador:
+    ros2 run grasp_ml_pack pipeline
+
+  Run — Coletar dados de treinamento (Gazebo deve estar rodando):
+    ros2 run grasp_ml_pack generate_data
+    ros2 run grasp_ml_pack generate_data --ros-args -p n_samples:=500
+    ros2 run grasp_ml_pack generate_data --ros-args \
+        -p n_samples:=1000 \
+        -p output_path:=/caminho/para/training_data.npz \
+        -p ik_only:=true
+
+  Run — Treinar o modelo:
+    ros2 run grasp_ml_pack train_model
+
+  Run — Testar cinemática (FK/IK unitário):
+    ros2 run grasp_ml_pack test_kin
+
+
+================================================================================
+  PIPELINE AUTÔNOMO — COMO FUNCIONA
+================================================================================
+
+  MÁQUINA DE ESTADOS:
+    IDLE → DETECTING → ESTIMATING → PLANNING → EXECUTING → IDLE (próximo objeto)
+
+  ORDEM DE PREENSÃO (hardcoded em pipeline.py):
+    1º bola (ball)  →  2º copo (cup)  →  3º lápis (pencil)
+
+  FLUXO DETALHADO:
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ [object_detector]                                                       │
+  │   Câmera /camera/color/image_raw (30 Hz, 848×480)                       │
+  │   Segmentação HSV por cor:                                               │
+  │     ball   → H=0-12 e H=168-180, S>=200, V>=80  (vermelho saturado)     │
+  │     cup    → H=*, S=0-35, V>=190                (branco/cinza claro)    │
+  │     pencil → H=22-38, S>=90, V>=90              (amarelo)               │
+  │   Publica → /detected_objects (Detection2DArray com bboxes)              │
+  │   Janela OpenCV: "Camera — O que o robo ve" (abre automaticamente)       │
+  └─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ [pipeline] IDLE → DETECTING                                             │
+  │   Determina próximo alvo (ball → cup → pencil, pulando já concluídos)   │
+  │   Publica alvo em /pipeline/target                                       │
+  │   Monitora /detected_objects                                             │
+  │   Só avança quando o OBJETO ALVO é detectado (ignora outros objetos)     │
+  │   Timeout: 8 s → reinicia DETECTING                                      │
+  └─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ [pose_estimator] DETECTING → ESTIMATING                                 │
+  │   Recebe /detected_objects + /camera/color/camera_info                   │
+  │   Back-projection geométrica (sem câmera de profundidade):               │
+  │     pixel (u,v) → raio no frame óptico → interseção com z_world=0.75m   │
+  │     resultado: posição 3D no frame base_link                             │
+  │   Matemática: d_world = R_world_opt @ [x_n, y_n, 1]                     │
+  │               t = (0.75 - z_cam) / d_world[2]                           │
+  │               base_pos = cam_pos + t*d_world - [0, 0, 0.375]            │
+  │   Publica → /object_poses (PoseArray com label codificado no frame_id)  │
+  └─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ [grasp_planner] ESTIMATING → PLANNING                                   │
+  │   Recebe /object_poses + /pipeline/target                                │
+  │   Filtra só as poses do objeto alvo                                      │
+  │   Para cada candidato no grasp_database.yaml:                            │
+  │     1. Verifica IK (inverse_kinematics) → descarta se inalcançável       │
+  │     2. Monta vetor de 26 features cinemáticas                            │
+  │     3. GraspQualityNet.predict(features) → score [0, 1]                 │
+  │     4. Bônus de manipulabilidade (+0.08 máx)                            │
+  │   Seleciona candidato com maior score                                    │
+  │   Publica → /selected_grasp (JSON: posição, tipo, vetor abordagem, q)   │
+  └─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ [grasp_executor] PLANNING → EXECUTING                                   │
+  │   Recebe /selected_grasp                                                 │
+  │   Executa 11 passos via action client FollowJointTrajectory:             │
+  │     1. Abrir mão completamente                                           │
+  │     2. Mover braço para pré-abordagem (15 cm acima do objeto)            │
+  │     3. Pré-configurar dedos (pinch / cylindrical / spherical)            │
+  │     4. Descida etapa 1: 8 cm abaixo da pré-abordagem                    │
+  │     5. Descida etapa 2: até a posição de grasp                           │
+  │     6. Fechar mão (torque nos dedos primários)                           │
+  │     7. Levantar 20 cm                                                    │
+  │     8. Girar pulso joint6 ±135° (verificação funcional)                  │
+  │     9. Voltar à posição de grasp                                         │
+  │    10. Abrir mão (soltar objeto)                                         │
+  │    11. Retornar ao home (pose neutra)                                    │
+  │   Trajetória: ease-in/out sinusoidal, 10 waypoints por segmento          │
+  │   Publica resultado → /grasp_result (JSON: success, label, score)        │
+  └─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ [pipeline] EXECUTING → IDLE                                             │
+  │   Sucesso: adiciona objeto aos concluídos, avança para próximo alvo      │
+  │   Falha:   tenta novamente (máx. 3 tentativas), depois ERROR             │
+  │   Todos concluídos: loga "Sequência completa" e encerra                  │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+  MODELO ML — GRASPQUALITYNET (26 FEATURES)
+================================================================================
+
+  Feature vector de 26 dimensões:
+
+  [0:3]   obj_onehot       — one-hot do tipo de objeto (pencil/cup/ball)
+  [3:6]   grasp_pos_rel    — offset do TCP relativo ao centróide (m)
+  [6:9]   grasp_euler      — orientação do objeto (roll/pitch/yaw rad)
+  [9]     aperture_norm    — abertura normalizada da mão [0,1]
+  [10:13] cfg_onehot       — one-hot config de dedos (pinch/cylindrical/spherical)
+  [13:16] approach_vec     — vetor de abordagem unitário (direção do TCP)
+  [16:22] q_arm            — 6 ângulos das juntas do braço (IK), rad
+  [22]    manipulability   — índice de Yoshikawa (qualidade cinemática)
+  [23]    reach_margin     — margem de alcance normalizada [0,1]
+  [24]    elbow_up         — 1=cotovelo acima, 0=cotovelo abaixo
+  [25]    ik_converged     — 1=IK convergiu, 0=falhou
+
+  Classificador: RandomForestClassifier
+    n_estimators=300, max_depth=14, class_weight='balanced', n_jobs=-1
+    Entrada: X (N×26)   Saída: probabilidade de sucesso [0,1]
+    Validação: CV 5-fold, métrica AUC-ROC
+
+  Antes do treinamento: modo heurístico analítico
+    ball + spherical   → base 0.82
+    cup + cylindrical  → base 0.85
+    pencil + pinch     → base 0.80
+    (+ bônus de manipulabilidade e margem de alcance)
+
+
+================================================================================
+  TREINAMENTO — PASSO A PASSO
+================================================================================
+
+  ETAPA 1 — COLETA DE DADOS NO GAZEBO
+  ─────────────────────────────────────
+
+  O coletor (generate_training_data.py) funciona assim para CADA amostra:
+    1. Sorteia aleatoriamente: objeto, tipo de grasp, posição na bancada,
+       abertura da mão, vetor de abordagem, orientação do objeto
+    2. Resolve a IK (inverse kinematics) para a posição do grasp
+    3. Se IK falhar → registra como falha (label=0) ou descarta (ik_only=True)
+    4. Verifica singularidade de pulso (wrist_dist < 0.20 → descarta)
+    5. Calcula o vetor de 26 features cinemáticas
+    6. Envia o comando de grasp ao Gazebo via /selected_grasp
+    7. Aguarda resultado em /grasp_result (label=1 sucesso / 0 falha)
+    8. Salva o par (features, label) na memória
+    9. Ao atingir n_samples, salva training_data.npz e encerra
+
+  Parâmetros de amostragem:
+    _X_RANGE      = (0.45, 0.72) m    — posição X dos objetos (frame base)
+    _Y_RANGE      = (-0.18, 0.18) m   — posição Y
+    _Z_OBJ        = 0.425 m           — height dos objetos (world 0.80 - pedestal 0.375)
+    _APERTURE     = (0.30, 0.95)      — abertura normalizada da mão
+    _APPROACH_PERTURB = 0.18 rad      — perturbação no vetor de abordagem
+    _WRIST_SING_MIN = 0.20            — limiar mínimo de não-singularidade
+
+  Comando para coletar 500 amostras:
+    ros2 run grasp_ml_pack generate_data --ros-args -p n_samples:=500
+
+  Acompanhamento (a cada 50 amostras):
+    [INFO] Amostras: 50/500 | sucesso: 68.0% | IK skip: 12
+    [INFO] Amostras: 100/500 | sucesso: 71.0% | IK skip: 24
+
+  Tempo estimado: ~2 s/amostra
+    200 amostras ≈  7 min
+    500 amostras ≈ 17 min
+   1000 amostras ≈ 33 min
+   2000 amostras ≈ 67 min
+
+  Saída: install/grasp_ml_pack/share/grasp_ml_pack/models/training_data.npz
+
+
+  ETAPA 2 — TREINAMENTO (segundos, sem Gazebo necessário)
+  ─────────────────────────────────────────────────────────
+
+  Comando:
+    ros2 run grasp_ml_pack train_model
+
+  Ou diretamente com Python (mais rápido):
+    cd ~/RoboticArm && source install/setup.bash
+    python -m grasp_ml_pack.scripts.train_grasp_model \
+        --data install/grasp_ml_pack/share/grasp_ml_pack/models/training_data.npz \
+        --out  install/grasp_ml_pack/share/grasp_ml_pack/models/grasp_quality.pkl
+
+  Saída esperada:
+    === DADOS CARREGADOS ===
+      Amostras: 500 × 26 features
+      Sucessos: 342 (68.4%)
+
+    === FEATURES CINEMÁTICAS ===
+      IK convergido: 476/500 (95.2%)
+      Manipulabilidade: μ=0.0821 σ=0.0234
+
+    === TREINAMENTO ===
+      RandomForest CV AUC-ROC: 0.891 ± 0.023
+      Modelo salvo em: models/grasp_quality.pkl
+
+    === IMPORTÂNCIA ===
+      Features originais  [0:16]:  38.2%
+      Features cinemáticas [16:]:  61.8%    ← IK domina!
+
+  Qualidade esperada por quantidade de amostras:
+    200  amostras → AUC ~0.75  (funcional, grasps imperfeitos)
+    500  amostras → AUC ~0.85  (bom para simulação)
+   1000  amostras → AUC ~0.90  (robusto)
+   2000+ amostras → AUC ~0.93+ (produção)
+
+  Saída: install/grasp_ml_pack/share/grasp_ml_pack/models/grasp_quality.pkl
+
+
+  ETAPA 3 — USAR O MODELO TREINADO
+  ──────────────────────────────────
+
+  Simplesmente relançar o pipeline — o planner carrega o .pkl automaticamente:
+    ros2 launch grasp_ml_pack grasp_pipeline.launch.py
+
+  Confirmar que carregou:
+    [INFO] [grasp_planner]: GraspPlanner pronto | modelo: treinado (ML)
+    (antes do treino aparece: modelo: heurístico)
+
+
+  CICLO COMPLETO DE TREINAMENTO ITERATIVO
+  ────────────────────────────────────────
+
+  1. Lançar Gazebo:
+       ros2 launch grasp_ml_pack grasp_pipeline.launch.py
+
+  2. Em outro terminal, coletar dados:
+       ros2 run grasp_ml_pack generate_data --ros-args -p n_samples:=500
+
+  3. Após coleta, treinar (sem fechar Gazebo):
+       ros2 run grasp_ml_pack train_model
+
+  4. Relançar pipeline para usar o modelo:
+       (Ctrl+C no terminal 1, depois relançar)
+       ros2 launch grasp_ml_pack grasp_pipeline.launch.py
+
+  5. Observar performance → coletar mais se necessário
+       (repetir a partir do passo 2 com n_samples maior)
+
+  IMPORTANTE: Nunca rodar dois generate_data simultâneos.
+  O Gazebo executa uma ação por vez. O treino já paralela com n_jobs=-1.
+
+
+================================================================================
+  TÓPICOS ROS 2 PRINCIPAIS
+================================================================================
+
+  Câmera:
+    /camera/color/image_raw          ← imagens RGB 848×480 @ 30 Hz
+    /camera/color/camera_info        ← parâmetros intrínsecos (K matrix)
+
+  Detecção:
+    /detected_objects                ← Detection2DArray com bboxes + labels
+    /detector/debug_image            ← imagem anotada com bboxes
+    /detector/status                 ← texto: "DETECTADO: ball [HSV]"
+
+  Estimativa de pose:
+    /object_poses                    ← PoseArray em frame base_link
+
+  Pipeline:
+    /pipeline/status                 ← {"state": "DETECTING", "attempt": 0}
+    /pipeline/target                 ← objeto alvo atual ("ball"/"cup"/"pencil")
+
+  Planejamento:
+    /selected_grasp                  ← JSON com candidato de grasp selecionado
+
+  Resultado:
+    /grasp_result                    ← {"success": true, "object_label": "ball"}
+
+  Estado do robô:
+    /joint_states                    ← posições de todas as 37 juntas
+
+
+================================================================================
+  DIAGNÓSTICO RÁPIDO
+================================================================================
+
+  Câmera publicando?
+    ros2 topic hz /camera/color/image_raw       → deve ser ~30 Hz
+
+  Pipeline travado em DETECTING?
+    → Objeto alvo não detectado. Ver janela "Camera — O que o robo ve"
+    → Ajustar faixas HSV em object_detector.py se necessário
+
+  Pipeline travado em ESTIMATING?
+    → pose_estimator não recebe K matrix
+    ros2 topic hz /camera/color/camera_info     → deve ter mensagens
+
+  Mão desmontada?
+    → Controllers não carregaram. Ver log do gzserver pelos spawners
+
+  Falsos positivos na detecção (madeira detectada como bola)?
+    → Ball S_min deve ser ≥ 200 para eliminar cor da mesa (S≈120)
+
+  Verificar estado atual:
+    ros2 topic echo /pipeline/status --once
+
+  Matar processos Gazebo travados:
+    pkill -f gzserver; pkill -f gzclient
+
+
+================================================================================
+  ARQUIVOS DE CONFIGURAÇÃO IMPORTANTES
+================================================================================
+
+  config/pipeline_params.yaml
+    → Ajustar parâmetros dos nós sem recompilar
+    → camera_pos_x/y/z e camera_pitch_rad devem bater com o world file
+
+  config/grasp_database.yaml
+    → Adicionar / editar candidatos de grasp por objeto
+    → grasp_offset: deslocamento em metros do TCP em relação ao centróide
+    → approach_vector: direção de abordagem (normalizado internamente)
+
+  worlds/grasp_experiment.world
+    → Posição e cor dos objetos
+    → Posição, FoV e ângulo da câmera
+    → Câmera atual: x=0.10, z=1.70, pitch=1.05 rad, FoV=70°
+
+  models/training_data.npz
+    → Dataset: arrays X (N×26) e y (N,)
+    → Não versionado no git (gerado localmente)
+
+  models/grasp_quality.pkl
+    → Modelo RandomForest treinado
+    → Não versionado no git (gerado localmente)
+
+
+================================================================================
+  ARQUITETURA DH (PARÂMETROS DENAVIT-HARTENBERG DO CR10)
+================================================================================
+
+  Frame base_link do robô: world z=0.375 m (topo do pedestal)
+
+  Parâmetros (alpha, a, d, theta_offset):
+    Joint 1: α=0,      a=0,       d=0.189,  θ=0
+    Joint 2: α=π/2,    a=0,       d=0,      θ=π/2 (elbow offset)
+    Joint 3: α=0,      a=0.408,   d=0,      θ=0
+    Joint 4: α=0,      a=0.376,   d=0,      θ=0
+    Joint 5: α=π/2,    a=0,       d=0.100,  θ=0
+    Joint 6: α=-π/2,   a=0,       d=0.100,  θ=0
+
+  Mão: attach_joint xyz=[0, 0, 0.01] rpy=[π/2, 0, 0] (Rx(90°))
+  T_HAND_ATTACH: Rx(π/2) com translação 0.01m em z
+
+
+================================================================================
+  NOTAS TÉCNICAS
+================================================================================
+
+  - numpy < 2.0 é obrigatório (compatibilidade com opencv-python)
+  - libgazebo_ros_depth_camera.so NÃO existe no Humble deste sistema;
+    usar libgazebo_ros_camera.so (só RGB, sem profundidade)
+  - Back-projection usa a pose FIXA da câmera (parâmetros no yaml);
+    se mover a câmera no world file, atualizar os parâmetros correspondentes
+  - O parâmetro "hold_joints" já declarado (ERROR no log) é inofensivo;
+    é um conflito benigno de dois plugins de controle que compartilham o param
+  - Trajetória do executor: ease-in/out sinusoidal para movimentos suaves
+  - Score de área HSV: min(area_px / 5000.0, 1.0) — score=1.00 = área ≥ 5000 px²

@@ -78,11 +78,8 @@ def main(args=None):
 
     # ── 4. Avaliação no conjunto completo ──────────────────────────────
     from sklearn.metrics import classification_report, roc_auc_score
-    import pickle
-    with open(parsed.out, 'rb') as f:
-        model = pickle.load(f)
 
-    probs = model.predict_proba(X)[:, 1]
+    probs = net.predict_batch(X)
     preds = (probs > 0.5).astype(int)
 
     print(f'\n=== AVALIAÇÃO (conjunto de treino) ===')
@@ -90,20 +87,22 @@ def main(args=None):
                                 target_names=['falha', 'sucesso']))
     print(f'  AUC-ROC (treino): {roc_auc_score(y, probs):.3f}')
 
-    # ── 5. Comparação: features cinemáticas vs. features originais ─────
-    print(f'\n=== IMPORTÂNCIA: cinemáticas vs. originais ===')
-    imp = model.feature_importances_
-    original_imp  = imp[:16].sum()
-    kinematic_imp = imp[16:].sum()
-    print(f'  Features originais  [0:16]: {100*original_imp:.1f}%')
-    print(f'  Features cinemáticas [16:]: {100*kinematic_imp:.1f}%')
+    # ── 5. Importância de features (apenas RandomForest) ───────────────
+    if net._backend == 'rf' and net._model is not None:
+        print(f'\n=== IMPORTÂNCIA: cinemáticas vs. originais ===')
+        imp = net._model.feature_importances_
+        original_imp  = imp[:16].sum()
+        kinematic_imp = imp[16:].sum()
+        print(f'  Features originais  [0:16]: {100*original_imp:.1f}%')
+        print(f'  Features cinemáticas [16:]: {100*kinematic_imp:.1f}%')
+        print(f'\n  Importância por feature:')
+        for i, (name, val) in enumerate(zip(_FEATURE_NAMES, imp)):
+            bar = '█' * int(val * 200)
+            print(f'  [{i:2d}] {name:22s} {val:.4f}  {bar}')
 
-    print(f'\n  Importância por feature:')
-    for i, (name, val) in enumerate(zip(_FEATURE_NAMES, imp)):
-        bar = '█' * int(val * 200)
-        print(f'  [{i:2d}] {name:22s} {val:.4f}  {bar}')
-
-    print(f'\n[OK] Modelo salvo em: {parsed.out}')
+    pt_path = os.path.splitext(parsed.out)[0] + '.pt'
+    saved = pt_path if os.path.exists(pt_path) else parsed.out
+    print(f'\n[OK] Modelo salvo em: {saved}')
 
 
 if __name__ == '__main__':

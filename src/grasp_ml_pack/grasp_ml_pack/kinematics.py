@@ -46,12 +46,12 @@ DH_CR10 = np.array([
 ], dtype=float)
 
 # Transformação fixa flange → base da mão COVVI (hand_attach_joint)
-#   xyz = [0, 0, 0.02],  rpy = [0, 0, π/2]
+#   xyz = [0, 0, 0.01],  rpy = [π/2, 0, 0]  →  Rx(π/2)
 T_HAND_ATTACH = np.array([
-    [0.0, -1.0, 0.0, 0.00],
-    [1.0,  0.0, 0.0, 0.00],
-    [0.0,  0.0, 1.0, 0.02],
-    [0.0,  0.0, 0.0, 1.00],
+    [1.0,  0.0,  0.0, 0.00],
+    [0.0,  0.0, -1.0, 0.00],
+    [0.0,  1.0,  0.0, 0.01],
+    [0.0,  0.0,  0.0, 1.00],
 ], dtype=float)
 
 # Limites articulares do CR10 (rad)

@@ -66,17 +66,44 @@ class PoseEstimatorNode(Node):
         super().__init__('pose_estimator')
 
         self.declare_parameter('camera_frame', 'camera_link')
-        self.declare_parameter('depth_scale', 0.001)   # mm → m para RealSense
+        self.declare_parameter('depth_scale', 1.0)
+        # Pose da câmera no frame world (mesmos valores do world file)
+        self.declare_parameter('camera_pos_x', 0.10)
+        self.declare_parameter('camera_pos_y', 0.0)
+        self.declare_parameter('camera_pos_z', 1.70)
+        self.declare_parameter('camera_pitch_rad', 1.05)
+        self.declare_parameter('table_z_world', 0.75)
+        self.declare_parameter('robot_base_z_world', 0.375)
+
         self._camera_frame = self.get_parameter('camera_frame').value
-        self._depth_scale = self.get_parameter('depth_scale').value
+        self._depth_scale  = self.get_parameter('depth_scale').value
+        self._cam_pos   = np.array([
+            self.get_parameter('camera_pos_x').value,
+            self.get_parameter('camera_pos_y').value,
+            self.get_parameter('camera_pos_z').value,
+        ])
+        self._cam_pitch = self.get_parameter('camera_pitch_rad').value
+        self._table_z   = self.get_parameter('table_z_world').value
+        self._base_z    = self.get_parameter('robot_base_z_world').value
+
+        # R_world_opt: transforma vetor do frame óptico para world frame
+        # Câmera Gazebo: corpo aponta em +X; frame óptico ROS: z=frente, x=direita, y=baixo
+        # R_body_opt = [[0,0,1],[-1,0,0],[0,-1,0]]
+        # R_world_body = Ry(pitch) = [[c,0,s],[0,1,0],[-s,0,c]]
+        # R_world_opt = R_world_body @ R_body_opt
+        c, s = np.cos(self._cam_pitch), np.sin(self._cam_pitch)
+        self._R_world_opt = np.array([
+            [0., -s,  c],
+            [-1.,  0.,  0.],
+            [0., -c, -s],
+        ])
 
         self._bridge = CvBridge()
-        self._K = None        # matriz intrínseca 3×3
+        self._K = None
         self._depth_img = None
         self._latest_detections: Detection2DArray | None = None
 
-        qos = QoSProfile(depth=5,
-                         reliability=ReliabilityPolicy.BEST_EFFORT)
+        qos = QoSProfile(depth=5, reliability=ReliabilityPolicy.BEST_EFFORT)
 
         self._sub_info = self.create_subscription(
             CameraInfo, '/camera/color/camera_info', self._info_cb, 10)
@@ -104,17 +131,45 @@ class PoseEstimatorNode(Node):
         self._process()
 
     # ------------------------------------------------------------------
+    def _backproject_to_base(self, u: int, v: int) -> np.ndarray | None:
+        """
+        Back-projeta pixel (u,v) para o frame base_link do robô assumindo
+        que o objeto está sobre a bancada (z_world = table_z).
+
+        Matemática:
+          d_opt = [(u-cx)/fx, (v-cy)/fy, 1]
+          d_world = R_world_opt @ d_opt
+          t = (table_z - cam_z) / d_world[2]
+          world_pos = cam_pos + t * d_world
+          base_pos = world_pos - [0, 0, robot_base_z]
+        """
+        if self._K is None:
+            return None
+        x_n = (u - self._K[0, 2]) / self._K[0, 0]
+        y_n = (v - self._K[1, 2]) / self._K[1, 1]
+        d_opt = np.array([x_n, y_n, 1.0])
+        d_world = self._R_world_opt @ d_opt
+        if abs(d_world[2]) < 1e-6:
+            return None
+        t = (self._table_z - self._cam_pos[2]) / d_world[2]
+        if t < 0:
+            return None
+        world_pos = self._cam_pos + t * d_world
+        base_pos = world_pos - np.array([0.0, 0.0, self._base_z])
+        return base_pos
+
+    # ------------------------------------------------------------------
     def _process(self):
-        if (self._K is None or self._depth_img is None
-                or self._latest_detections is None):
+        if self._K is None or self._latest_detections is None:
             return
 
         pose_array = PoseArray()
         pose_array.header.stamp = self.get_clock().now().to_msg()
-        pose_array.header.frame_id = self._camera_frame
+        pose_array.header.frame_id = 'base_link'
 
         markers = MarkerArray()
         marker_id = 0
+        labels_out = []
 
         for det in self._latest_detections.detections:
             label = det.results[0].hypothesis.class_id
@@ -123,48 +178,49 @@ class PoseEstimatorNode(Node):
             bw = int(det.bbox.size_x)
             bh = int(det.bbox.size_y)
 
-            # Extrair ROI de profundidade
-            x0 = max(cx - bw // 2, 0)
-            y0 = max(cy - bh // 2, 0)
-            x1 = min(cx + bw // 2, self._depth_img.shape[1])
-            y1 = min(cy + bh // 2, self._depth_img.shape[0])
-            depth_roi = self._depth_img[y0:y1, x0:x1].astype(float) * self._depth_scale
-
-            valid = depth_roi[depth_roi > 0.05]
-            if valid.size < 20:
-                continue
-            z_med = float(np.median(valid))
-
-            # Back-project centro da bbox para 3D
-            px = (cx - self._K[0, 2]) * z_med / self._K[0, 0]
-            py = (cy - self._K[1, 2]) * z_med / self._K[1, 1]
-
-            position = np.array([px, py, z_med])
-            orientation, dims = self._fit_primitive(
-                label, depth_roi, x0, y0, x1, y1, z_med)
+            if self._depth_img is not None:
+                # Estimativa com profundidade (robô físico / câmera RGB-D)
+                x0 = max(cx - bw // 2, 0)
+                y0 = max(cy - bh // 2, 0)
+                x1 = min(cx + bw // 2, self._depth_img.shape[1])
+                y1 = min(cy + bh // 2, self._depth_img.shape[0])
+                depth_roi = (self._depth_img[y0:y1, x0:x1].astype(float)
+                             * self._depth_scale)
+                valid = depth_roi[depth_roi > 0.05]
+                if valid.size < 20:
+                    continue
+                z_med = float(np.median(valid))
+                px_c = (cx - self._K[0, 2]) * z_med / self._K[0, 0]
+                py_c = (cy - self._K[1, 2]) * z_med / self._K[1, 1]
+                pos_cam = np.array([px_c, py_c, z_med])
+                position = self._R_world_opt @ pos_cam + self._cam_pos
+                position -= np.array([0.0, 0.0, self._base_z])
+                orientation, dims = self._fit_primitive(
+                    label, depth_roi, x0, y0, x1, y1, z_med)
+            else:
+                # Estimativa geométrica sem profundidade (simulação RGB)
+                position = self._backproject_to_base(cx, cy)
+                if position is None:
+                    continue
+                dims = {}
+                orientation = np.array([0.0, 0.0, 0.0, 1.0])
 
             pose = Pose()
-            pose.position = Point(x=position[0], y=position[1], z=position[2])
+            pose.position = Point(x=float(position[0]),
+                                  y=float(position[1]),
+                                  z=float(position[2]))
             pose.orientation = Quaternion(
                 x=orientation[0], y=orientation[1],
                 z=orientation[2], w=orientation[3])
-
-            # Codifica label no frame_id do pose array via comentário indexado
             pose_array.poses.append(pose)
-            pose_array.header.frame_id = self._camera_frame  # restaura
+            labels_out.append(label)
 
             markers.markers.append(
                 self._make_marker(marker_id, label, position, dims,
                                   pose_array.header))
             marker_id += 1
 
-        # Transporta rótulos como JSON no frame_id (workaround sem msg custom)
-        labels = [d.results[0].hypothesis.class_id
-                  for d in self._latest_detections.detections
-                  if any(True for _ in [None])]
-        pose_array.header.frame_id = (
-            self._camera_frame + '|' + json.dumps(labels))
-
+        pose_array.header.frame_id = 'base_link|' + json.dumps(labels_out)
         self._pub_poses.publish(pose_array)
         self._pub_markers.publish(markers)
 

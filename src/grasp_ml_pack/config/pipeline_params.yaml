@@ -8,7 +8,13 @@ object_detector:
 pose_estimator:
   ros__parameters:
     camera_frame: "camera_link"
-    depth_scale: 1.0             # Gazebo depth já em metros
+    depth_scale: 1.0
+    camera_pos_x: 0.10
+    camera_pos_y: 0.0
+    camera_pos_z: 1.70
+    camera_pitch_rad: 1.05
+    table_z_world: 0.75
+    robot_base_z_world: 0.375
 
 grasp_planner:
   ros__parameters:

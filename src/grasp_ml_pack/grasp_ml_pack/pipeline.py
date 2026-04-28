@@ -29,11 +29,14 @@ class State(Enum):
 
 
 _TIMEOUT = {
-    State.DETECTING:  5.0,
-    State.ESTIMATING: 3.0,
-    State.PLANNING:   3.0,
-    State.EXECUTING:  30.0,
+    State.DETECTING:  60.0,   # 1 min para encontrar o objeto
+    State.ESTIMATING: 20.0,
+    State.PLANNING:   20.0,
+    State.EXECUTING:  240.0,  # pick+rotate+place com robot lento ~120-180 s
 }
+
+# Ordem de prioridade de preensão
+_GRASP_ORDER = ['ball', 'cup', 'pencil']
 
 
 class PipelineNode(Node):
@@ -54,6 +57,9 @@ class PipelineNode(Node):
         self._last_grasp: dict | None = None
         self._metrics: list[dict] = []
 
+        self._completed: set[str] = set()
+        self._current_target: str = _GRASP_ORDER[0]
+
         # Subscriptions (passivas — apenas cache)
         self.create_subscription(
             Detection2DArray, '/detected_objects', self._on_detection, 10)
@@ -64,8 +70,9 @@ class PipelineNode(Node):
         self.create_subscription(
             String, '/grasp_result', self._on_result, 10)
 
-        # Publisher de status
+        # Publishers
         self._pub_status = self.create_publisher(String, '/pipeline/status', 10)
+        self._pub_target = self.create_publisher(String, '/pipeline/target', 10)
 
         # Loop principal
         self.create_timer(1.0 / rate, self._step)
@@ -85,9 +92,12 @@ class PipelineNode(Node):
             **result,
         })
         if result['success']:
+            label = result['object_label']
+            self._completed.add(label)
             self.get_logger().info(
-                f'[SUCESSO] {result["object_label"]} '
-                f'({result["grasp_type"]}) score={result["score"]:.2f}')
+                f'[SUCESSO] {label} ({result["grasp_type"]}) '
+                f'score={result["score"]:.2f} | '
+                f'concluídos: {sorted(self._completed)}')
             self._transition(State.IDLE)
         else:
             self.get_logger().warn(
@@ -115,12 +125,23 @@ class PipelineNode(Node):
 
         match self._state:
             case State.IDLE:
+                # Próximo objeto na ordem de prioridade não concluído
+                for obj in _GRASP_ORDER:
+                    if obj not in self._completed:
+                        self._current_target = obj
+                        break
+                else:
+                    self.get_logger().info(
+                        'Sequência completa: bola → copo → lápis. Pipeline encerrado.')
+                    rclpy.shutdown()
+                    return
                 self._attempt = 0
+                self.get_logger().info(f'Próximo alvo: {self._current_target}')
                 self._transition(State.DETECTING)
 
             case State.DETECTING:
                 if (self._last_detection is not None
-                        and len(self._last_detection.detections) > 0):
+                        and self._target_detected()):
                     self._transition(State.ESTIMATING)
 
             case State.ESTIMATING:
@@ -144,11 +165,20 @@ class PipelineNode(Node):
                 # Aguarda intervenção — não re-inicia automaticamente
 
     # ------------------------------------------------------------------
+    def _target_detected(self) -> bool:
+        labels = {d.results[0].hypothesis.class_id
+                  for d in self._last_detection.detections}
+        return self._current_target in labels
+
+    # ------------------------------------------------------------------
     def _transition(self, new_state: State):
         self.get_logger().info(
             f'{self._state.name} → {new_state.name}')
         self._state = new_state
         self._state_entry_time = time.time()
+
+        # Publica alvo atual para planner e pose estimator
+        self._pub_target.publish(String(data=self._current_target))
 
         # Limpa cache ao reiniciar detecção
         if new_state == State.DETECTING:

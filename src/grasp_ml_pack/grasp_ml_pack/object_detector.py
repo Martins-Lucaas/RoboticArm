@@ -19,19 +19,50 @@ import numpy as np
 from cv_bridge import CvBridge
 
 from sensor_msgs.msg import Image
+from std_msgs.msg import String as DetStatus
 from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
 
 
 # Faixas HSV para cada objeto na simulação Gazebo
+#
+# Análise das cores Gazebo (diffuse → HSV OpenCV 0-180):
+#   ball   (0.9, 0.05, 0.05)  → H≈0,  S≈241, V≈230  — vermelho puro saturado
+#   cup    (0.95,0.95,0.95)   → H=*, S≈0,   V≈242  — branco quase neutro
+#   pencil (1.0, 0.95, 0.0)   → H≈29, S≈255, V≈255  — amarelo puro
+#   table  (0.72,0.55,0.38)   → H≈15, S≈120, V≈184  — marrom-laranja → falso positivo
+#   palanque(0.55,0.35,0.15)  → H≈15, S≈186, V≈140  — marrom escuro  → falso positivo
+#
+# S_min=210 para bola: madeira S≈120-186 < 210; bola S≈241 passa.
+# H_max=10 (bola): exclui laranja/marrom que começa em H≈15.
+# Copo: S_max=55 e V_min=150 para capturar branco com sombras de iluminação Gazebo.
 _HSV_RANGES = {
-    'pencil': {'lower': np.array([20, 100, 100]),   'upper': np.array([35, 255, 255])},
-    'cup':    {'lower': np.array([0,   0,   200]),   'upper': np.array([180, 30,  255])},
-    'ball':   {'lower': np.array([0,  120, 70]),     'upper': np.array([10, 255, 255])},
+    'pencil': {'lower': np.array([20,  80,  80]),  'upper': np.array([35, 255, 255])},
+    'cup':    {'lower': np.array([0,    0, 150]),  'upper': np.array([180, 90, 255])},
+    'ball':   {'lower': np.array([0,  210,  60]),  'upper': np.array([10, 255, 255])},
 }
-# A bola pode ter matiz "wrapping" (vermelho vai de 170-180 também)
-_BALL_UPPER2 = {'lower': np.array([170, 120, 70]), 'upper': np.array([180, 255, 255])}
+# Vermelho tem wrapping no HSV: H=170-180 também é vermelho
+_BALL_UPPER2 = {'lower': np.array([170, 210, 60]), 'upper': np.array([180, 255, 255])}
 
-_MIN_AREA = 300   # px² — ignora ruído
+_MIN_AREA = 300   # px² — ignora ruído e reflexos pontuais
+
+# Filtros de forma para a bola (elimina falsos positivos retangulares/irregulares)
+_BALL_MIN_CIRCULARITY = 0.40   # 0=linha, 1=círculo perfeito
+_BALL_ASPECT_MIN = 0.35        # w/h mínimo (bola quase quadrada)
+_BALL_ASPECT_MAX = 2.8         # w/h máximo
+
+
+def _is_ball_shaped(cnt: np.ndarray) -> bool:
+    """Verifica se o contorno tem forma aproximadamente circular (bola real)."""
+    area = cv2.contourArea(cnt)
+    perimeter = cv2.arcLength(cnt, True)
+    if perimeter < 1.0:
+        return False
+    circularity = 4 * np.pi * area / (perimeter ** 2)
+    if circularity < _BALL_MIN_CIRCULARITY:
+        return False
+    _, _, w, h = cv2.boundingRect(cnt)
+    aspect = w / max(h, 1)
+    return _BALL_ASPECT_MIN <= aspect <= _BALL_ASPECT_MAX
 
 
 class ObjectDetectorNode(Node):
@@ -64,6 +95,14 @@ class ObjectDetectorNode(Node):
             self._pub_img = self.create_publisher(
                 Image, '/detector/debug_image', 10)
 
+        self._pub_status = self.create_publisher(DetStatus, '/detector/status', 10)
+
+        # Cria a janela antes de receber a primeira imagem para garantir que
+        # ela apareça mesmo em ambientes onde a janela pode ser lazy-initialized
+        cv2.namedWindow('Camera — O que o robo ve', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Camera — O que o robo ve', 800, 600)
+        cv2.waitKey(1)
+
         self.get_logger().info(
             f'ObjectDetector pronto — modo: {"YOLOv8" if self._use_yolo else "HSV-simulação"}')
 
@@ -92,22 +131,38 @@ class ObjectDetectorNode(Node):
         det_array.detections = detections
         self._pub_det.publish(det_array)
 
+        # Feedback de status textual
+        mode_str = 'YOLO' if self._use_yolo else 'HSV'
+        labels = [d.results[0].hypothesis.class_id for d in detections]
+        if labels:
+            status_txt = f'DETECTADO: {", ".join(sorted(set(labels)))} [{mode_str}]'
+        else:
+            status_txt = f'SEM_DETECCAO [{mode_str}]'
+        self._pub_status.publish(DetStatus(data=status_txt))
+
         if self._pub_debug:
             debug = self._draw_detections(frame.copy(), detections)
             self._pub_img.publish(self._bridge.cv2_to_imgmsg(debug, 'bgr8'))
 
     # ------------------------------------------------------------------
     def _detect_hsv(self, frame: np.ndarray) -> list:
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        # Leve desfoque gaussiano reduz ruído de textura antes da segmentação HSV
+        blurred = cv2.GaussianBlur(frame, (5, 5), 0)
+        hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
         detections = []
+
+        kernel_open  = np.ones((7, 7), np.uint8)   # remove ruído pequeno
+        kernel_close = np.ones((9, 9), np.uint8)   # preenche buracos internos
 
         for label, rng in _HSV_RANGES.items():
             mask = cv2.inRange(hsv, rng['lower'], rng['upper'])
             if label == 'ball':
                 mask |= cv2.inRange(hsv, _BALL_UPPER2['lower'], _BALL_UPPER2['upper'])
 
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
-                                    np.ones((5, 5), np.uint8))
+            # Open: elimina manchas pequenas; Close: une fragmentos do mesmo objeto
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  kernel_open)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close)
+
             contours, _ = cv2.findContours(
                 mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -115,9 +170,14 @@ class ObjectDetectorNode(Node):
                 area = cv2.contourArea(cnt)
                 if area < _MIN_AREA:
                     continue
+
+                # Bola precisa ter forma aproximadamente circular
+                if label == 'ball' and not _is_ball_shaped(cnt):
+                    continue
+
                 x, y, w, h = cv2.boundingRect(cnt)
                 det = self._make_detection(label, x, y, w, h,
-                                           score=min(area / 5000.0, 1.0))
+                                           score=min(area / 3000.0, 1.0))
                 detections.append(det)
 
         return detections
@@ -160,22 +220,96 @@ class ObjectDetectorNode(Node):
         return det
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _draw_detections(frame: np.ndarray, detections: list) -> np.ndarray:
+    def _draw_detections(self, frame: np.ndarray, detections: list) -> np.ndarray:
         colors = {'pencil': (0, 220, 220), 'cup': (220, 220, 0), 'ball': (0, 60, 220)}
+        h_img, w_img = frame.shape[:2]
+        img_cx, img_cy = w_img // 2, h_img // 2   # boresight da câmera
+
+        # ── Barra de status no topo ─────────────────────────────────
+        n_det     = len(detections)
+        bar_color = (20, 160, 60) if n_det > 0 else (160, 60, 20)
+        cv2.rectangle(frame, (0, 0), (w_img, 34), (20, 20, 20), -1)
+        mode_label = 'YOLO' if self._use_yolo else 'HSV'
+        status_txt = (f'DETECCAO  {n_det} obj  [{mode_label}]'
+                      if n_det > 0 else f'AGUARDANDO  [{mode_label}]')
+        cv2.putText(frame, status_txt, (8, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.60, bar_color, 2)
+        cv2.circle(frame, (w_img - 20, 17), 9, bar_color, -1)
+        cv2.circle(frame, (w_img - 20, 17), 9, (255, 255, 255), 1)
+
+        # ── Mira central da câmera (boresight) ──────────────────────
+        cross_c = (180, 180, 180)
+        cv2.line(frame, (img_cx - 15, img_cy), (img_cx + 15, img_cy), cross_c, 1)
+        cv2.line(frame, (img_cx, img_cy - 15), (img_cx, img_cy + 15), cross_c, 1)
+        cv2.circle(frame, (img_cx, img_cy), 5, cross_c, 1)
+
+        # ── Contagem por classe ──────────────────────────────────────
+        counts: dict = {}
+        for det in detections:
+            lbl = det.results[0].hypothesis.class_id
+            counts[lbl] = counts.get(lbl, 0) + 1
+        y_cnt = 58
+        for lbl, cnt in counts.items():
+            cv2.putText(frame, f'{lbl}: {cnt}', (8, y_cnt),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48,
+                        colors.get(lbl, (180, 180, 180)), 2)
+            y_cnt += 20
+
+        # ── Por detecção: linhas + bbox + label ─────────────────────
         for det in detections:
             label = det.results[0].hypothesis.class_id
             score = det.results[0].hypothesis.score
             cx = int(det.bbox.center.position.x)
             cy = int(det.bbox.center.position.y)
-            w = int(det.bbox.size_x)
-            h = int(det.bbox.size_y)
-            color = colors.get(label, (180, 180, 180))
-            cv2.rectangle(frame, (cx - w//2, cy - h//2),
-                          (cx + w//2, cy + h//2), color, 2)
-            cv2.putText(frame, f'{label} {score:.2f}',
-                        (cx - w//2, cy - h//2 - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+            bw = int(det.bbox.size_x)
+            bh = int(det.bbox.size_y)
+            color  = colors.get(label, (180, 180, 180))
+            dim_c  = tuple(max(v - 80, 0) for v in color)   # versão mais escura
+
+            x1, y1 = cx - bw // 2, cy - bh // 2
+            x2, y2 = cx + bw // 2, cy + bh // 2
+
+            # -- Linha de detecção: boresight → centro do objeto ------
+            cv2.line(frame, (img_cx, img_cy), (cx, cy), dim_c, 1,
+                     cv2.LINE_AA)
+            # Pequeno ponto onde a linha toca o objeto
+            cv2.circle(frame, (cx, cy), 5, color, -1)
+
+            # -- Crosshair completo passando pelo centro do objeto ----
+            cv2.line(frame, (0, cy), (w_img, cy), dim_c, 1)
+            cv2.line(frame, (cx, 34), (cx, h_img), dim_c, 1)
+
+            # -- Bounding box ----------------------------------------
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+            # Cantos destacados (estilo HUD)
+            cl = max(min(bw, bh) // 5, 8)
+            for px, py, dx, dy in [(x1, y1, 1, 1), (x2, y1, -1, 1),
+                                    (x1, y2, 1, -1), (x2, y2, -1, -1)]:
+                cv2.line(frame, (px, py), (px + dx * cl, py), color, 3)
+                cv2.line(frame, (px, py), (px, py + dy * cl), color, 3)
+
+            # -- Label com fundo sólido -------------------------------
+            label_txt = f'{label}  {score:.2f}'
+            (tw, th), _ = cv2.getTextSize(
+                label_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.60, 2)
+            lx = max(x1, 4)
+            ly = max(y1 - th - 10, 36)
+            cv2.rectangle(frame, (lx, ly), (lx + tw + 8, ly + th + 8),
+                          color, -1)
+            cv2.putText(frame, label_txt, (lx + 4, ly + th + 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.60, (0, 0, 0), 2)
+
+            # -- Barra de confiança ----------------------------------
+            bar_w = int((x2 - x1) * score)
+            cv2.rectangle(frame, (x1, y2 + 3), (x1 + bar_w, y2 + 9),
+                          color, -1)
+            cv2.rectangle(frame, (x1, y2 + 3), (x2, y2 + 9), color, 1)
+
+        # Mostra em janela local para "ver o que o robô vê"
+        cv2.imshow('Camera — O que o robo ve', frame)
+        cv2.waitKey(1)
+
         return frame
 
 
