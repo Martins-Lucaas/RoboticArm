@@ -462,6 +462,25 @@ HAND_CONFIGS: dict[str, dict[str, float]] = {
         'Thumb': 1.00, 'Index': 1.00, 'Middle': 1.00,
         'Ring':  1.00, 'Little': 0.90, 'Rotate': 0.60,
     },
+    # ── Novos grips para célula de manufatura ─────────────────────────
+    'palm_grip': {
+        # Preensão palmar — todos os dedos profundamente curvados sobre objeto
+        # volumoso/pesado; palma como base de sustentação (ex.: bola)
+        'Thumb': 1.10, 'Index': 1.25, 'Middle': 1.25,
+        'Ring':  1.20, 'Little': 1.10, 'Rotate': 0.25,
+    },
+    'claw_grip': {
+        # Preensão em garra — ponta dos dedos curvada para objetos médios
+        # (ex.: copo); força distribuída entre as falanges distais
+        'Thumb': 0.90, 'Index': 1.10, 'Middle': 1.10,
+        'Ring':  1.05, 'Little': 0.95, 'Rotate': 0.45,
+    },
+    'fingertip_grip': {
+        # Preensão de precisão — polegar + indicador + médio na ponta dos dedos
+        # para objetos pequenos/delicados (ex.: lápis)
+        'Thumb': 0.75, 'Index': 0.70, 'Middle': 0.65,
+        'Ring':  0.05, 'Little': 0.05, 'Rotate': 0.82,
+    },
 }
 
 # Limites máximos dos driver joints (rad) — clamp de segurança
@@ -494,7 +513,10 @@ def hand_ik(grasp_type: str, obj_diameter: float = 0.0) -> dict[str, float]:
         return cfg
 
     # Diâmetros de calibração (m): objeto para qual a config nominal é ideal
-    _NOMINAL_DIAM = {'pinch': 0.010, 'cylindrical': 0.070, 'spherical': 0.060}
+    _NOMINAL_DIAM = {
+        'pinch': 0.010, 'cylindrical': 0.070, 'spherical': 0.060,
+        'palm_grip': 0.064, 'claw_grip': 0.050, 'fingertip_grip': 0.010,
+    }
     d_nom = _NOMINAL_DIAM.get(grasp_type, obj_diameter)
 
     if abs(d_nom) < 1e-9 or abs(obj_diameter - d_nom) < 5e-3:

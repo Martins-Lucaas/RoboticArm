@@ -1,14 +1,183 @@
 ================================================================================
-PROJETO: SISTEMA AUTÔNOMO DE GRASP COM VISÃO COMPUTACIONAL E MACHINE LEARNING
-         PARA O ROBÔ DOBOT CR10 + MÃO PROTÉTICA COVVI
-         Desenvolvimento e Validação Integral via Gêmeo Digital (Gazebo/ROS 2)
+PROJETO: SISTEMA AUTÔNOMO DE GRASP COM VISÃO COMPUTACIONAL PARA TREINAMENTO
+         VIRTUAL DE USUÁRIOS DE PRÓTESES DE MÃO DE MÚLTIPLOS GRAUS DE LIBERDADE
+         Gêmeo Digital CR10 + COVVI Hand — Célula de Manufatura Biomédica
+         Desenvolvimento e Validação Integral via Simulação (Gazebo/ROS 2)
 ================================================================================
 
 Autor      : Lucas Martins
-Área       : Engenharia Biomédica — Robótica, Visão Computacional e ML
+Área       : Engenharia Biomédica — Robótica, Visão Computacional
+Tipo       : Trabalho de Conclusão de Curso (TCC)
 Data       : Abril de 2026
-Hardware   : DOBOT CR10 (6 DoF, 1327 mm alcance) + COVVI Hand (11 juntas)
-Software   : ROS 2 Humble, Gazebo 11, Python 3.10, scikit-learn, OpenCV, YOLOv8
+Hardware   : DOBOT CR10 (6 DoF, 1375 mm alcance) + COVVI Hand (31 juntas)
+Software   : ROS 2 Humble, Gazebo Classic 11, Python 3.10, OpenCV
+
+================================================================================
+CONTEXTO ACADÊMICO E MOTIVAÇÃO CIENTÍFICA (TCC)
+================================================================================
+
+ENQUADRAMENTO COMO TRABALHO DE CONCLUSÃO DE CURSO
+──────────────────────────────────────────────────
+
+Este repositório constitui o produto técnico central do Trabalho de Conclusão
+de Curso (TCC) em Engenharia Biomédica de Lucas Martins. O TCC tem como tema:
+
+  "Desenvolvimento de um sistema virtual de auxílio ao treinamento de usuários
+   de próteses de mão com múltiplos graus de liberdade através de gêmeo digital
+   com sistema de grasp diferenciado por visão computacional."
+
+A entrega desta fase do TCC compreende exclusivamente o componente de gêmeo
+digital — a célula de manufatura biomédica simulada no Gazebo, com o pipeline
+completo de detecção, planejamento e execução de grasp. A integração com
+hardware físico e o protocolo de testes com usuários reais constituirão etapas
+posteriores do projeto.
+
+
+PROBLEMA CENTRAL — BARREIRA DE APRENDIZADO EM PRÓTESES MGL
+────────────────────────────────────────────────────────────
+
+Próteses de mão com Múltiplos Graus de Liberdade (MGL) representam o estado da
+arte em reabilitação de membros superiores. Dispositivos como a COVVI Hand,
+i-Limb Ultra e BeBionic oferecem cinco dedos controláveis independentemente,
+permitindo dezenas de configurações de preensão diferentes.
+
+No entanto, este avanço tecnológico impõe ao usuário um desafio considerável:
+
+  • Curva de aprendizado prolongada — semanas a meses de terapia ocupacional
+    intensiva para dominar o controle mioelétrico e alternar entre tipos de
+    preensão de forma fluida;
+
+  • Custo elevado de treinamento — requer presença de terapeuta especializado,
+    hardware físico disponível e ambiente clínico controlado;
+
+  • Risco de desmotivação precoce — dificuldades iniciais frequentemente levam
+    ao abandono do dispositivo, fenômeno documentado em taxas de abandono de
+    próteses MGL que atingem 20-30% nos primeiros seis meses (Biddiss & Chau,
+    2007; Chadwell et al., 2016);
+
+  • Indisponibilidade geográfica — regiões com baixa densidade de centros de
+    reabilitação especializados não permitem frequência regular de sessões.
+
+
+SOLUÇÃO PROPOSTA — GÊMEO DIGITAL COMO PLATAFORMA DE TREINAMENTO
+─────────────────────────────────────────────────────────────────
+
+Este TCC propõe o desenvolvimento de um ambiente de treinamento virtual baseado
+em gêmeo digital que permite ao paciente/usuário:
+
+  1. Praticar operações de preensão em cenários realistas sem necessidade de
+     hardware físico ou presença de terapeuta;
+
+  2. Observar, de forma imediata e visual, o resultado correto de cada tipo de
+     preensão — palm grip, claw grip, fingertip grip — aplicado ao objeto
+     adequado, estabelecendo correlação sensório-motora progressiva;
+
+  3. Repetir ciclos ilimitados de treinamento em qualquer ambiente, a qualquer
+     hora, sem custo marginal por sessão;
+
+  4. Evoluir gradualmente de objetos maiores e mais tolerantes a erros (frasco,
+     palm grip) para objetos que exigem precisão elevada (ampola, fingertip
+     grip), seguindo uma progressão pedagógica embasada em evidências de
+     reabilitação motora.
+
+O diferencial central deste sistema em relação a outras plataformas de
+simulação robótica é o pipeline de grasp diferenciado por visão computacional:
+o sistema identifica automaticamente o objeto presente na cena e seleciona
+a configuração de preensão correta, demonstrando ao usuário a associação
+objeto↔grip sem intervenção manual — reproduzindo o comportamento desejado
+de um sistema de controle preditivo embarcado na prótese.
+
+
+CENÁRIO DE APLICAÇÃO — CÉLULA DE MANUFATURA BIOMÉDICA
+──────────────────────────────────────────────────────
+
+A cena de simulação foi deliberadamente projetada como uma célula de manufatura
+farmacêutica/biomédica por três razões:
+
+  a) Representatividade ocupacional — ambientes de laboratório e farmácias
+     hospitalares são contextos reais onde usuários de próteses MGL atuam ou
+     aspiram atuar, conferindo relevância ecológica ao treinamento;
+
+  b) Diversidade de preensões funcionais — frascos (objetos volumosos, palm
+     grip), tubos de ensaio (objetos cilíndricos de médio porte, claw grip) e
+     ampolas farmacêuticas (objetos finos e delicados, fingertip grip) cobrem
+     os três grandes arquétipos de preensão funcional da mão COVVI;
+
+  c) Motivação intrínseca — o contexto biomédico ressoa com a identidade do
+     usuário como trabalhador da área da saúde, aumentando engajamento e
+     percepção de utilidade do treinamento.
+
+
+CONTRIBUIÇÕES CIENTÍFICAS ESPERADAS
+─────────────────────────────────────
+
+  1. Arquitetura de gêmeo digital para treinamento de próteses MGL
+     Metodologia para construção de ambientes de simulação ROS 2/Gazebo
+     focados em reabilitação, com validação dos parâmetros físicos contra
+     a prótese real (COVVI Hand).
+
+  2. Pipeline de grasp diferenciado via segmentação de cor (HSV)
+     Solução de visão computacional leve, sem dependência de GPU ou câmera
+     de profundidade, viável em hardware embarcado de baixo custo — relevante
+     para implementação futura no dispositivo físico.
+
+  3. Cinemática inversa analítica com correção de frame base_link→world
+     Implementação documentada da IK do CR10 com compensação de offset de
+     pedestal, contribuindo ao repositório de modelos DH para robôs DOBOT
+     na plataforma ROS 2.
+
+  4. Integração COVVI Hand + ros2_control (31 juntas com mimic joints)
+     Primeiro modelo público de digital twin da COVVI Hand em Gazebo Classic
+     com controlador de trajetória completo para juntas primárias e mimic.
+
+
+ENTREGÁVEIS DESTA FASE DO TCC
+───────────────────────────────
+
+  [✓]  Gêmeo digital completo CR10 + COVVI Hand no Gazebo (31 juntas
+       controladas via joint_trajectory_controller)
+
+  [✓]  Célula de manufatura biomédica (cena Gazebo: esteira, objetos,
+       caixas de classificação, câmera, iluminação industrial)
+
+  [✓]  Pipeline de detecção HSV com back-projection geométrica 2D→3D
+       (sem câmera de profundidade, estimativa de posição world frame)
+
+  [✓]  Executor de grasp com 7 fases e 3 tipos de preensão diferenciados
+       (palm grip / claw grip / fingertip grip) para frasco / tubo / ampola
+
+  [✓]  Controlador de esteira (spawn/delete de objetos, serviços ROS 2)
+
+  [✓]  GUI de controle da célula (Tkinter, dois painéis operacionais)
+
+  [✓]  Cinemática inversa analítica validada (erro < 0.5 mm em todos
+       os pontos do espaço de trabalho da célula)
+
+  [ ]  Protocolo de testes com usuários reais (etapa futura)
+
+  [ ]  Integração com hardware físico / Sim-to-Real (etapa futura)
+
+  [ ]  Módulo de gamificação e métricas de progressão do usuário (futuro)
+
+
+REFERÊNCIAS RELEVANTES
+───────────────────────
+
+  Biddiss, E. & Chau, T. (2007). Upper limb prosthesis use and abandonment:
+    a survey of the last 25 years. Prosthetics and Orthotics International.
+
+  Chadwell, A. et al. (2016). The reality of myoelectric prostheses:
+    understanding what makes these devices difficult for some users.
+    PLOS ONE.
+
+  Feix, T. et al. (2016). The GRASP Taxonomy of Human Grasp Types.
+    IEEE Transactions on Human-Machine Systems.
+
+  Quigley, M. et al. (2009). ROS: an open-source Robot Operating System.
+    ICRA Workshop on Open Source Software.
+
+  Koenig, N. & Howard, A. (2004). Design and use paradigms for Gazebo,
+    an open-source multi-robot simulator. IEEE IROS.
 
 ================================================================================
 RESUMO EXECUTIVO

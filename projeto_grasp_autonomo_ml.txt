@@ -1,28 +1,56 @@
 ================================================================================
-  PROJETO: GRASP AUTÔNOMO COM ML — CR10 + COVVI HAND (ROS 2 Humble / Gazebo)
+  PROJETO: GRASP AUTÔNOMO VIA VISÃO COMPUTACIONAL — GÊMEO DIGITAL
+           CR10 + COVVI HAND — CÉLULA DE MANUFATURA BIOMÉDICA
+           TCC — Engenharia Biomédica (ROS 2 Humble / Gazebo)
 ================================================================================
 
-VISÃO GERAL
------------
-Gemêo digital do braço Dobot CR10 acoplado à mão protética COVVI que executa
-preensão autônoma de objetos em simulação usando aprendizado de máquina.
+CONTEXTO DO TCC
+---------------
+Este projeto é o componente de gêmeo digital de um Trabalho de Conclusão de
+Curso (TCC) em Engenharia Biomédica, cujo tema é:
 
-A câmera RGB detecta objetos por segmentação HSV, estima suas posições 3D via
-back-projection geométrica e um classificador RandomForest (26 features) decide
-o melhor candidato de grasp. O robô então executa a sequência completa:
-abordagem → preensão → levantamento → liberação → retorno.
+  "Desenvolvimento de um sistema virtual de auxílio ao treinamento de usuários
+   de próteses de mão com múltiplos graus de liberdade através de gêmeo digital
+   com sistema de grasp diferenciado por visão computacional."
 
-Ordem de preensão: bola (ball) → copo (cup) → lápis (pencil)
+A motivação central é reduzir a barreira de aprendizado de próteses MGL
+(múltiplos graus de liberdade) por meio de um ambiente de treinamento virtual
+acessível, repetível e sem custo de hardware. O gêmeo digital permite que o
+usuário aprenda a associação objeto↔preensão antes de usar a prótese física.
 
+ENTREGÁVEL DESTA FASE
+---------------------
+Está completo o componente de gêmeo digital com pipeline de grasp diferenciado:
+  - Célula de manufatura biomédica (Gazebo): esteira, objetos farmacêuticos,
+    caixas de classificação, câmera, iluminação industrial
+  - Detecção de objetos por visão computacional (segmentação HSV)
+  - Estimativa de posição 3D por back-projection geométrica
+  - Execução de grasp com 3 tipos de preensão (palm / claw / fingertip)
+  - GUI de controle da célula e controlador de esteira
+
+As etapas posteriores (protocolo com usuários reais, integração Sim-to-Real)
+não fazem parte desta entrega.
+
+VISÃO GERAL TÉCNICA
+-------------------
+Gêmeo digital do braço Dobot CR10 acoplado à mão protética COVVI que executa
+preensão autônoma de objetos farmacêuticos em uma célula de manufatura
+simulada. A câmera RGB detecta objetos por segmentação HSV, estima posições 3D
+via back-projection geométrica e o sistema seleciona deterministicamente o tipo
+de preensão adequado ao objeto. O robô executa o ciclo completo de 7 fases:
+abordagem → descida → grasp → levantamento → trânsito → deposição → home.
+
+Sequência de objetos: frasco (palm_grip → box1) → tubo (claw_grip → box2)
+                      → ampola (fingertip_grip → box3)
 
 HARDWARE / SOFTWARE
 -------------------
-  Robô braço   : Dobot CR10 (6 DOF, DH analítico)
+  Robô braço   : Dobot CR10 (6 DOF, DH analítico, alcance 1375 mm)
   Mão          : COVVI Hand (31 juntas: 6 primárias + 25 mimic)
   Simulador    : Gazebo Classic 11
   Framework    : ROS 2 Humble
-  ML           : scikit-learn RandomForestClassifier (n_estimators=300)
   Visão        : OpenCV HSV + back-projection geométrica (sem câmera de profundidade)
+  GUI          : Tkinter (painel de controle da célula)
 
 
 ================================================================================

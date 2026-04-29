@@ -1,11 +1,20 @@
 """
-Nó orquestrador do pipeline de grasp autônomo.
+Orquestrador da célula de manufatura (modo autônomo opcional).
 
-Máquina de estados:
-  IDLE → DETECTING → ESTIMATING → PLANNING → EXECUTING → VERIFYING → IDLE
+No modo GUI (padrão), este nó apenas agrega e republica o estado do sistema.
+No modo autônomo (--autonomous), executa o ciclo completo sem intervenção:
+  Advance → Detect → Grasp → Repeat
 
-Monitora o sistema inteiro, registra métricas e aplica watchdogs.
+Publica:
+  /pipeline/status  (std_msgs/String JSON) — estado consolidado
+
+Subscreve:
+  /conveyor/status  (String JSON)
+  /cell/status      (String JSON)
+  /detected_objects (Detection2DArray)
 """
+
+from __future__ import annotations
 
 import json
 import time
@@ -14,187 +23,146 @@ from enum import Enum, auto
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 from vision_msgs.msg import Detection2DArray
-from geometry_msgs.msg import PoseArray
 
 
-class State(Enum):
-    IDLE       = auto()
-    DETECTING  = auto()
-    ESTIMATING = auto()
-    PLANNING   = auto()
-    EXECUTING  = auto()
-    VERIFYING  = auto()
-    ERROR      = auto()
-
-
-_TIMEOUT = {
-    State.DETECTING:  60.0,   # 1 min para encontrar o objeto
-    State.ESTIMATING: 20.0,
-    State.PLANNING:   20.0,
-    State.EXECUTING:  240.0,  # pick+rotate+place com robot lento ~120-180 s
-}
-
-# Ordem de prioridade de preensão
-_GRASP_ORDER = ['ball', 'cup', 'pencil']
+class AutoState(Enum):
+    IDLE     = auto()
+    ADVANCE  = auto()
+    WAIT_OBJ = auto()
+    GRASP    = auto()
+    WAIT_END = auto()
+    DONE     = auto()
 
 
 class PipelineNode(Node):
 
     def __init__(self):
-        super().__init__('grasp_pipeline')
+        super().__init__('conveyor_pipeline')
 
-        self.declare_parameter('loop_rate_hz', 10.0)
-        self.declare_parameter('max_attempts', 3)
-        rate = self.get_parameter('loop_rate_hz').value
-        self._max_attempts = self.get_parameter('max_attempts').value
+        self.declare_parameter('autonomous', False)
+        self.declare_parameter('loop_rate_hz', 5.0)
+        self.declare_parameter('detect_timeout_s', 30.0)
+        self.declare_parameter('grasp_timeout_s', 300.0)
+        self.declare_parameter('total_cycles', 3)
 
-        self._state = State.IDLE
-        self._state_entry_time = time.time()
-        self._attempt = 0
-        self._last_detection: Detection2DArray | None = None
-        self._last_poses: PoseArray | None = None
-        self._last_grasp: dict | None = None
-        self._metrics: list[dict] = []
+        self._auto     = self.get_parameter('autonomous').value
+        rate           = self.get_parameter('loop_rate_hz').value
+        self._det_tmo  = self.get_parameter('detect_timeout_s').value
+        self._gsp_tmo  = self.get_parameter('grasp_timeout_s').value
+        self._max_cyc  = self.get_parameter('total_cycles').value
 
-        self._completed: set[str] = set()
-        self._current_target: str = _GRASP_ORDER[0]
+        self._conveyor: dict = {}
+        self._cell:     dict = {}
+        self._last_det: str | None = None
+        self._cycle:    int  = 0
 
-        # Subscriptions (passivas — apenas cache)
+        self._auto_state = AutoState.IDLE
+        self._state_t    = time.time()
+
         self.create_subscription(
-            Detection2DArray, '/detected_objects', self._on_detection, 10)
+            String, '/conveyor/status', self._cb_conv, 10)
         self.create_subscription(
-            PoseArray, '/object_poses', self._on_poses, 10)
+            String, '/cell/status', self._cb_cell, 10)
         self.create_subscription(
-            String, '/selected_grasp', self._on_grasp, 10)
-        self.create_subscription(
-            String, '/grasp_result', self._on_result, 10)
+            Detection2DArray, '/detected_objects', self._cb_det, 10)
 
-        # Publishers
-        self._pub_status = self.create_publisher(String, '/pipeline/status', 10)
-        self._pub_target = self.create_publisher(String, '/pipeline/target', 10)
-
-        # Loop principal
+        self._pub = self.create_publisher(String, '/pipeline/status', 10)
         self.create_timer(1.0 / rate, self._step)
-        self.get_logger().info('Pipeline autônomo iniciado.')
+
+        if self._auto:
+            self._adv_cli = self.create_client(Trigger, '/conveyor/advance')
+            self._gsp_cli = self.create_client(Trigger, '/cell/execute_grasp')
+
+        mode = 'autônomo' if self._auto else 'GUI'
+        self.get_logger().info(f'Pipeline iniciado — modo: {mode}')
 
     # ------------------------------------------------------------------
-    # Callbacks passivos
-    def _on_detection(self, msg):  self._last_detection = msg
-    def _on_poses(self,     msg):  self._last_poses = msg
-    def _on_grasp(self,     msg):  self._last_grasp = json.loads(msg.data)
+    def _cb_conv(self, msg: String):
+        try:
+            self._conveyor = json.loads(msg.data)
+        except json.JSONDecodeError:
+            pass
 
-    def _on_result(self, msg: String):
-        result = json.loads(msg.data)
-        self._metrics.append({
-            'attempt': self._attempt,
-            'timestamp': time.time(),
-            **result,
-        })
-        if result['success']:
-            label = result['object_label']
-            self._completed.add(label)
-            self.get_logger().info(
-                f'[SUCESSO] {label} ({result["grasp_type"]}) '
-                f'score={result["score"]:.2f} | '
-                f'concluídos: {sorted(self._completed)}')
-            self._transition(State.IDLE)
+    def _cb_cell(self, msg: String):
+        try:
+            self._cell = json.loads(msg.data)
+        except json.JSONDecodeError:
+            pass
+
+    def _cb_det(self, msg: Detection2DArray):
+        if msg.detections:
+            self._last_det = msg.detections[0].results[0].hypothesis.class_id
         else:
-            self.get_logger().warn(
-                f'[FALHA] tentativa {self._attempt}/{self._max_attempts}')
-            if self._attempt >= self._max_attempts:
-                self.get_logger().error('Máximo de tentativas atingido.')
-                self._transition(State.ERROR)
-            else:
-                self._transition(State.DETECTING)
+            self._last_det = None
 
     # ------------------------------------------------------------------
     def _step(self):
-        elapsed = time.time() - self._state_entry_time
-        timeout = _TIMEOUT.get(self._state)
+        status = {
+            'conveyor': self._conveyor,
+            'cell': self._cell,
+            'last_detected': self._last_det,
+            'cycle': self._cycle,
+        }
+        if self._auto:
+            status['auto_state'] = self._auto_state.name
+            self._step_auto()
+        self._pub.publish(String(data=json.dumps(status)))
 
-        if timeout and elapsed > timeout:
-            self.get_logger().warn(
-                f'Timeout no estado {self._state.name} ({elapsed:.1f}s)')
-            self._transition(State.ERROR if self._attempt >= self._max_attempts
-                             else State.DETECTING)
-            return
+    # ------------------------------------------------------------------
+    def _step_auto(self):
+        """FSM autônoma para processar a fila de objetos sem GUI."""
+        elapsed = time.time() - self._state_t
 
-        status = {'state': self._state.name, 'attempt': self._attempt}
-        self._pub_status.publish(String(data=json.dumps(status)))
-
-        match self._state:
-            case State.IDLE:
-                # Próximo objeto na ordem de prioridade não concluído
-                for obj in _GRASP_ORDER:
-                    if obj not in self._completed:
-                        self._current_target = obj
-                        break
-                else:
-                    self.get_logger().info(
-                        'Sequência completa: bola → copo → lápis. Pipeline encerrado.')
-                    rclpy.shutdown()
+        match self._auto_state:
+            case AutoState.IDLE:
+                if self._cycle >= self._max_cyc:
+                    self._auto_state = AutoState.DONE
+                    self.get_logger().info('Pipeline autônomo: todos os ciclos concluídos.')
                     return
-                self._attempt = 0
-                self.get_logger().info(f'Próximo alvo: {self._current_target}')
-                self._transition(State.DETECTING)
+                self._do_advance()
+                self._auto_state = AutoState.WAIT_OBJ
+                self._state_t = time.time()
 
-            case State.DETECTING:
-                if (self._last_detection is not None
-                        and self._target_detected()):
-                    self._transition(State.ESTIMATING)
+            case AutoState.WAIT_OBJ:
+                if self._conveyor.get('has_object') and self._last_det:
+                    self._auto_state = AutoState.GRASP
+                    self._state_t = time.time()
+                elif elapsed > self._det_tmo:
+                    self.get_logger().warn('Timeout aguardando objeto. Tentando novamente.')
+                    self._auto_state = AutoState.IDLE
 
-            case State.ESTIMATING:
-                if self._last_poses is not None and len(self._last_poses.poses) > 0:
-                    self._transition(State.PLANNING)
+            case AutoState.GRASP:
+                if not self._cell.get('busy'):
+                    self._do_grasp()
+                    self._auto_state = AutoState.WAIT_END
+                    self._state_t = time.time()
 
-            case State.PLANNING:
-                if self._last_grasp is not None:
-                    self._attempt += 1
-                    self._transition(State.EXECUTING)
+            case AutoState.WAIT_END:
+                if not self._cell.get('busy'):
+                    if self._cell.get('state') == 'CYCLE_DONE':
+                        self._cycle += 1
+                        self.get_logger().info(f'Ciclo {self._cycle}/{self._max_cyc} concluído.')
+                        self._auto_state = AutoState.IDLE
+                elif elapsed > self._gsp_tmo:
+                    self.get_logger().error('Timeout no grasp. Abortando ciclo.')
+                    self._cycle += 1
+                    self._auto_state = AutoState.IDLE
 
-            case State.EXECUTING:
-                pass   # aguarda callback _on_result
-
-            case State.VERIFYING:
-                self._transition(State.IDLE)
-
-            case State.ERROR:
-                self.get_logger().error(
-                    f'Pipeline em estado de erro. Métricas: {self._metrics}')
-                # Aguarda intervenção — não re-inicia automaticamente
-
-    # ------------------------------------------------------------------
-    def _target_detected(self) -> bool:
-        labels = {d.results[0].hypothesis.class_id
-                  for d in self._last_detection.detections}
-        return self._current_target in labels
+            case AutoState.DONE:
+                pass   # pipeline encerrado
 
     # ------------------------------------------------------------------
-    def _transition(self, new_state: State):
-        self.get_logger().info(
-            f'{self._state.name} → {new_state.name}')
-        self._state = new_state
-        self._state_entry_time = time.time()
-
-        # Publica alvo atual para planner e pose estimator
-        self._pub_target.publish(String(data=self._current_target))
-
-        # Limpa cache ao reiniciar detecção
-        if new_state == State.DETECTING:
-            self._last_detection = None
-            self._last_poses = None
-            self._last_grasp = None
-
-    # ------------------------------------------------------------------
-    def print_metrics(self):
-        if not self._metrics:
+    def _do_advance(self):
+        if not self._adv_cli.service_is_ready():
             return
-        successes = sum(1 for m in self._metrics if m['success'])
-        total = len(self._metrics)
-        self.get_logger().info(
-            f'Métricas: {successes}/{total} sucessos '
-            f'({100*successes/total:.1f}%)')
+        self._adv_cli.call_async(Trigger.Request())
+
+    def _do_grasp(self):
+        if not self._gsp_cli.service_is_ready():
+            return
+        self._gsp_cli.call_async(Trigger.Request())
 
 
 def main(args=None):
@@ -203,7 +171,7 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.print_metrics()
+        pass
     finally:
         node.destroy_node()
         rclpy.shutdown()

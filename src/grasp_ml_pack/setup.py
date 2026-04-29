@@ -6,7 +6,7 @@ package_name = 'grasp_ml_pack'
 
 setup(
     name=package_name,
-    version='0.1.0',
+    version='0.2.0',
     packages=['grasp_ml_pack', 'grasp_ml_pack.scripts'],
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -25,19 +25,24 @@ setup(
     zip_safe=True,
     maintainer='Lucas Martins',
     maintainer_email='lucaspmartins14@gmail.com',
-    description='ML-based autonomous grasp system for CR10 + COVVI Hand',
+    description='Conveyor cell pick-and-sort system — CR10 + COVVI Hand',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'object_detector    = grasp_ml_pack.object_detector:main',
-            'pose_estimator     = grasp_ml_pack.pose_estimator:main',
-            'grasp_planner      = grasp_ml_pack.grasp_planner:main',
-            'grasp_executor     = grasp_ml_pack.grasp_executor:main',
-            'pipeline           = grasp_ml_pack.pipeline:main',
-            'generate_data      = grasp_ml_pack.scripts.generate_training_data:main',
-            'train_model        = grasp_ml_pack.scripts.train_grasp_model:main',
-            'test_kin           = grasp_ml_pack.scripts.test_kinematics:main',
+            # ── Nós da célula de manufatura (novos / refatorados) ──
+            'object_detector      = grasp_ml_pack.object_detector:main',
+            'grasp_executor       = grasp_ml_pack.grasp_executor:main',
+            'conveyor_controller  = grasp_ml_pack.conveyor_controller:main',
+            'gui_control          = grasp_ml_pack.gui_control_node:main',
+            'pipeline             = grasp_ml_pack.pipeline:main',
+            # ── Módulos originais preservados (não usados no novo pipeline) ──
+            'pose_estimator       = grasp_ml_pack.pose_estimator:main',
+            'grasp_planner        = grasp_ml_pack.grasp_planner:main',
+            # ── Scripts utilitários ────────────────────────────────
+            'generate_data        = grasp_ml_pack.scripts.generate_training_data:main',
+            'train_model          = grasp_ml_pack.scripts.train_grasp_model:main',
+            'test_kin             = grasp_ml_pack.scripts.test_kinematics:main',
         ],
     },
 )

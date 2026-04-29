@@ -1,39 +1,167 @@
-# RoboticArm — Gêmeo Digital CR10 + COVVI com Pipeline de Grasp Autônomo
+# RoboticArm — Gêmeo Digital CR10 + COVVI · Célula de Manufatura Biomédica
 
-> Braço industrial + mão biônica + visão computacional + machine learning, tudo rodando em simulação antes de ir pro hardware físico.
+> Braço industrial + mão protética biônica + visão computacional + esteira, tudo em simulação — base de treinamento para usuários de próteses de mão de múltiplos graus de liberdade.
 
-Esse projeto integra o braço robótico **Dobot CR10** com a mão protética **COVVI Hand** em um gêmeo digital completo no **ROS 2 Humble / Gazebo Classic 11**. O objetivo é ensinar o robô a pegar objetos de forma autônoma — ele enxerga pela câmera, estima onde os objetos estão, planeja o grasp e executa o movimento. Com cada ciclo, coleta dados e retreina o modelo ML pra melhorar.
+Este projeto integra o braço robótico **Dobot CR10** com a mão protética **COVVI Hand** em um gêmeo digital completo no **ROS 2 Humble / Gazebo Classic 11**. O sistema simula uma célula industrial de manufatura biomédica onde o robô identifica objetos farmacêuticos em uma esteira transportadora, classifica-os pelo tipo de preensão necessário e os deposita nas caixas de destino corretas — tudo de forma autônoma, guiado por visão computacional.
+
+Este trabalho compõe o **Trabalho de Conclusão de Curso (TCC)** em Engenharia Biomédica cujo tema é o desenvolvimento de um sistema virtual de auxílio ao treinamento de usuários de próteses de mão com múltiplos graus de liberdade.
 
 ---
 
 ## Em ação
 
-### Demonstração completa — pipeline ML rodando
+### Célula completa no Gazebo — visão geral
 
-https://github.com/Martins-Lucaas/RoboticArm/raw/main/images/grasp_pipeline_demo.webm
+| Vista lateral da célula | Vista isométrica completa |
+|---|---|
+| ![Célula lateral](images/conveyor_cell_gazebo_full_scene.png) | ![Célula isométrica](images/conveyor_cell_gazebo_simulation_running.png) |
+
+> Esteira transportadora à direita, braço CR10 com mão COVVI ao centro, três caixas de classificação (vermelha/verde/azul) à esquerda. Coluna de câmera montada atrás da esteira.
+
+---
+
+### GUI de controle + visão da câmera
+
+| Estado ocioso — objeto na pick station | Braço estendido em fase de grasp |
+|---|---|
+| ![GUI Idle](images/conveyor_cell_gui_camera_idle.png) | ![GUI Picking](images/conveyor_cell_gui_arm_picking.png) |
+
+> À esquerda: janela da câmera com detector HSV ativo mostrando objeto na esteira e bounding box em tempo real. À direita: painel de controle da célula (Estação de Serviço + Estação Geral).
 
 ---
 
-### O que o robô vê e o que está acontecendo na simulação
+### Detalhe da célula — caixas de classificação
 
-![Pipeline rodando](images/2026-04-28-144432_1846x980_scrot.png)
-
-> À esquerda: a janela da câmera com o detector HSV ativo — bola vermelha e lápis amarelo marcados em tempo real com bounding boxes, crosshairs e score de confiança. À direita: o CR10 com a mão COVVI já posicionado sobre a bancada, pronto pra executar o grasp.
-
+| Closeup dos bins de destino | Visão de cima da célula |
+|---|---|
+| ![Bins](images/conveyor_cell_gazebo_closeup_bins.png) | ![Overview](images/conveyor_cell_gazebo_overview_early.png) |
 
 ---
+
+### Hardware
 
 | Braço Dobot CR10 | Mão COVVI |
 |---|---|
 | ![CR10](images/dobot_cr10_product_photo.jpeg) | ![COVVI](images/covvi_hand_product_photo.jpg) |
 
-| CR10 + COVVI no Gazebo | Closeup da mão |
+| RViz — dedos abertos | RViz — dedos fechados |
 |---|---|
-| ![Home](images/gazebo_cr10_arm_home_position.png) | ![Closeup](images/gazebo_covvi_hand_closeup.png) |
+| ![Aberta](images/covvi_hand_rviz_joints_open.png) | ![Fechada](images/covvi_hand_rviz_joints_closed.png) |
 
-| Objetos na bancada | Vista superior |
-|---|---|
-| ![Objetos](images/gazebo_scene_objects_on_table.png) | ![Birdseye](images/gazebo_birdseye_objects_table.png) |
+---
+
+## Contexto do TCC
+
+Este projeto é o componente de **gêmeo digital** de um TCC cuja motivação central é o **auxílio ao treinamento de usuários de próteses de mão** com múltiplos graus de liberdade (MGL).
+
+Usuários de próteses MGL enfrentam uma curva de aprendizado elevada: controlar individualmente cinco dedos para diferentes tipos de tarefa requer semanas de treino com terapeuta, hardware físico e objetos reais. O gêmeo digital proposto aqui permite que esse treinamento seja feito em simulação, antes do contato com o dispositivo físico, reduzindo custo, tempo e fadiga do usuário.
+
+O diferencial deste sistema é o **pipeline de grasp diferenciado por visão computacional**: o robô identifica automaticamente o objeto (forma, tamanho, categoria farmacêutica), seleciona o tipo de preensão adequado (palm grip, claw grip, fingertip grip) e executa a sequência de movimento — exatamente como um sistema de controle preditivo embarcado numa prótese faria.
+
+A célula de manufatura biomédica foi escolhida como cenário por ser representativa de ambientes de trabalho reais onde usuários de próteses atuam, e por exigir os três tipos principais de preensão funcional da mão COVVI.
+
+---
+
+## Objetos e tipos de preensão
+
+| Objeto | Descrição | Tipo de Grasp | Caixa de Destino |
+|---|---|---|---|
+| **Frasco** | Frasco de medicamento (âmbar, ∅84 mm, h=90 mm) | Palm Grip | Box 1 — vermelha |
+| **Tubo** | Tubo de ensaio (azul, ∅24 mm, h=120 mm) | Claw Grip | Box 2 — verde |
+| **Ampola** | Ampola farmacêutica (verde, ∅10 mm, h=75 mm) | Fingertip Grip | Box 3 — azul |
+
+Cada objeto tem cor específica na simulação Gazebo para a segmentação HSV:
+
+| Objeto | Cor Gazebo | Faixa HSV |
+|---|---|---|
+| Frasco | Âmbar/laranja | H=8-26, S>120, V>80 |
+| Tubo | Azul rico | H=100-135, S>80, V>50 |
+| Ampola | Verde brilhante | H=38-85, S>110, V>80 |
+
+---
+
+## Arquitetura do sistema
+
+O pipeline tem **5 nós ROS 2** comunicando em grafo:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Câmera RGB (Gazebo)                                                │
+│  x=1.15, z=1.70, pitch=60°, yaw=180°  —  montada atrás da esteira  │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │ /camera/color/image_raw
+                           ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  [object_detector]                                                   │
+│  Segmentação HSV por cor → bounding box → back-projection geométrica │
+│  Estima posição 3D do objeto: pixel (u,v) → world frame via R·d∩z    │
+└──────────────────┬───────────────────────────────────────────────────┘
+                   │ /detected_objects  (Detection2DArray + pose 3D)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  [grasp_executor]                                                    │
+│  Recebe classe do objeto → escolhe grip + caixa destino              │
+│  Calcula IK analítica para todas as poses do ciclo                   │
+│  Executa 7 fases de movimento                                        │
+└──────────────────┬───────────────────────────────────────────────────┘
+                   │ /conveyor/retreat  (remove objeto após grasp)
+                   │
+┌──────────────────▼───────────────────────────────────────────────────┐
+│  [conveyor_controller]                                               │
+│  Gerencia sequência de objetos na esteira                            │
+│  Spawn/delete no Gazebo via /spawn_entity e /delete_entity           │
+└──────────────────────────────────────────────────────────────────────┘
+           ▲                              ▲
+           │ /conveyor/advance            │ /cell/execute_grasp
+           │ /conveyor/retreat            │ /cell/go_home
+           │ /conveyor/reset              │
+┌──────────┴──────────────────────────────┴────────────────────────────┐
+│  [gui_control]   GUI Tkinter com dois painéis                        │
+│  "Estação de Serviço": controle da esteira                           │
+│  "Estação Geral": disparo do ciclo de grasp + status                 │
+└──────────────────────────────────────────────────────────────────────┘
+           │
+┌──────────▼───────────────────────────────────────────────────────────┐
+│  [conveyor_pipeline]   Orquestrador autônomo (opcional)              │
+│  Modo autônomo: advance → detect → execute → repeat                  │
+│  Modo GUI: aguarda comandos manuais                                  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Ciclo de grasp — 7 fases
+
+```
+[F1] Abrir mão + ir para abordagem pick  (15 cm acima do objeto)
+[F2] Pré-configurar dedos + descer ao objeto
+[F3] Fechar mão — grasp
+     → /conveyor/retreat (remove objeto da esteira)
+[F4] Levantar com objeto  (22 cm)
+[F5] Trânsito para a caixa de destino
+[F6] Descer na caixa + abrir mão (soltar)
+[F7] Recuar + retornar ao home
+```
+
+---
+
+## Cinemática
+
+A cinemática inversa usa **multi-start DLS com lambda adaptativo** — damping alto (λ=0.08) para estabilização e decay exponencial até λ=0.003 para precisão fina.
+
+O braço opera com **conversão de frames obrigatória**: o base_link do robô está em `world z = 0.375 m` (topo do pedestal), portanto todas as posições world frame têm esse offset subtraído antes do cálculo IK.
+
+```bash
+ros2 run grasp_ml_pack test_kin
+```
+```
+✓ pick station frasco  | err=  0.17 mm
+✓ pick station tubo    | err=  0.03 mm
+✓ pick station ampola  | err=  0.35 mm
+✓ box1 (palm)          | err=  0.00 mm
+✓ box2 (claw)          | err=  0.19 mm
+✓ box3 (fingertip)     | err=  0.02 mm
+
+Resultado geral: PASS ✓
+```
 
 ---
 
@@ -41,57 +169,9 @@ https://github.com/Martins-Lucaas/RoboticArm/raw/main/images/grasp_pipeline_demo
 
 | Componente | Modelo | Specs |
 |---|---|---|
-| Braço | **Dobot CR10** | 6-DOF, alcance 1.3 m, payload 10 kg |
-| Mão | **COVVI Hand** | 5 dedos + 11 juntas controladas (6 primárias + 25 mimic) |
-| Câmera | RGB (Gazebo) | 848×480, FoV 70°, montada a 1.70 m de altura, 60° de inclinação |
-
----
-
-## Como funciona
-
-O pipeline tem 5 nós ROS 2 que conversam entre si:
-
-```
-Câmera RGB
-    │
-    ▼
-[object_detector]   detecta objetos por cor (HSV) ou YOLOv8
-    │  /detected_objects
-    ▼
-[pose_estimator]    retroprojeção pixel→3D até a bancada (z=0.75 m)
-    │  /object_poses
-    ▼
-[grasp_planner]     calcula IK + score do grasp via ML (26 features)
-    │  /selected_grasp  (JSON)
-    ▼
-[grasp_executor]    executa a trajetória: abordagem → descida → fechar mão → levantar → girar → soltar
-    │  /grasp_result
-    ▼
-[pipeline]          orquestrador — máquina de estados que sequencia tudo
-```
-
-**Ordem de prioridade:** bola → copo → lápis
-
-A cada grasp executado, dados de sucesso/falha são coletados. Com ~200 amostras já dá pra treinar um `RandomForestClassifier` decente, e o modelo fica progressivamente melhor com mais ciclos.
-
----
-
-## Cinemática (IK)
-
-A cinemática inversa usa **multi-start DLS com lambda adaptativo** — começa com damping alto (λ=0.08) pra estabilizar em poses de alta extensão e vai decaindo exponencialmente até λ=0.003 pra precisão fina. Isso resolve o problema clássico de oscilação do DLS perto do limite do workspace.
-
-```
-ros2 run grasp_ml_pack test_kin
-```
-```
-✓ bancada centro  | err=  0.17 mm
-✓ bancada esq.    | err=  0.35 mm
-✓ bancada dir.    | err=  0.00 mm
-✓ 45° frontal     | err=  0.03 mm
-✓ alto lateral    | err=  0.19 mm
-
-Resultado geral: PASS ✓
-```
+| Braço | **Dobot CR10** | 6-DOF, alcance 1375 mm, payload 10 kg |
+| Mão | **COVVI Hand** | 5 dedos + 31 juntas (6 primárias + 25 mimic) |
+| Câmera | RGB Gazebo | 848×480, FoV 70°, x=1.15 m, z=1.70 m, pitch=60°, yaw=180° |
 
 ---
 
@@ -110,18 +190,17 @@ sudo apt install -y \
   ros-humble-gazebo-ros-pkgs \
   ros-humble-ros2-control \
   ros-humble-ros2-controllers \
+  ros-humble-gazebo-ros2-control \
   ros-humble-xacro \
   ros-humble-joint-state-publisher-gui \
   ros-humble-vision-msgs \
+  ros-humble-cv-bridge \
   python3-tk
 
-# Python — numpy<2 obrigatório (cv_bridge do Humble foi compilado com NumPy 1.x)
-pip install "numpy<2" scikit-learn opencv-python-headless
+# Python — numpy<2 obrigatório (cv_bridge do Humble compilado com NumPy 1.x)
+pip install "numpy<2" opencv-python
 
-# Opcional — MLP mais rápido que RF pra datasets grandes
-pip install torch
-
-# Opcional — YOLOv8 pro robô físico com GPU
+# Opcional — YOLOv8 para robô físico com GPU
 pip install ultralytics
 ```
 
@@ -140,64 +219,66 @@ source install/setup.bash
 
 ## Rodando
 
-### Pipeline completo (recomendado)
+### Célula completa — pipeline da esteira (recomendado)
 
 ```bash
-ros2 launch grasp_ml_pack grasp_pipeline.launch.py
+ros2 launch grasp_ml_pack conveyor_cell.launch.py
 ```
 
-O que acontece:
-1. Gazebo carrega a cena com bancada, lápis amarelo, copo branco e bola vermelha
-2. Robot State Publisher sobe com o URDF completo CR10 + COVVI
-3. Controllers carregam em cadeia: `joint_state_broadcaster` → `cr10_group_controller` → `hand_position_controller`
-4. Nós ML sobem depois que os controllers estão ativos
-5. Uma janela **"Camera — O que o robo ve"** abre automaticamente mostrando o feed com detecções em tempo real
+O que acontece ao lançar:
+1. **Gazebo** carrega a cena `conveyor_cell.world` com esteira, pedestal, caixas e câmera
+2. **Robot State Publisher** sobe com o URDF completo CR10 + COVVI
+3. **Controllers** carregam em cadeia: `joint_state_broadcaster` → `cr10_group_controller` → `hand_position_controller`
+4. **Nós do pipeline** sobem depois que os controllers estão ativos
+5. Uma janela **"Pick Station — Visão do Robô"** abre mostrando o feed da câmera com detecções em tempo real
 
-Quando o terminal mostrar isso, está pronto:
+O terminal estará pronto quando mostrar:
 ```
-[grasp_executor]  Action servers prontos.
-[pipeline]        Pipeline autônomo iniciado.
-[object_detector] ObjectDetector pronto — modo: HSV-simulação
+[conveyor_controller] ConveyorController pronto | sequência: ['frasco', 'tubo', 'ampola']
+[grasp_executor]      GraspExecutor pronto.
+[object_detector]     ObjectDetector pronto — modo: HSV-simulação | objetos: frasco / tubo / ampola
 ```
 
-Com YOLOv8 (robô físico com GPU):
+### Operação pela GUI
+
+Com o launch rodando, a **GUI de Controle** abre automaticamente com dois painéis:
+
+**Painel "Estação de Serviço" (esteira):**
+| Botão | Ação |
+|---|---|
+| `Avançar Esteira` | Traz o próximo objeto para a pick station |
+| `Recuar Esteira` | Remove o objeto atual da pick station |
+| `Resetar Esteira` | Reinicia a sequência de objetos |
+
+**Painel "Estação Geral" (braço):**
+| Botão | Ação |
+|---|---|
+| `AGARRAR` | Inicia ciclo completo pick→lift→place para o objeto detectado |
+| `Home` | Envia braço para posição home |
+
+**Fluxo típico de operação:**
+1. Clique `Avançar Esteira` — objeto spawna em x=0.65, y=0, z=2.0 e cai na esteira
+2. Aguarde o objeto aparecer na janela da câmera com bounding box
+3. Clique `AGARRAR` — o braço executa as 7 fases e deposita na caixa certa
+
+### Modo autônomo
+
+Para ciclos automáticos sem interação manual, edite `pipeline_params.yaml`:
+
+```yaml
+conveyor_pipeline:
+  ros__parameters:
+    autonomous: true      # ← muda para true
+    total_cycles: 9       # 3 ciclos × 3 objetos
+```
+
+### Controle manual da mão e braço (sem pipeline)
+
 ```bash
-ros2 launch grasp_ml_pack grasp_pipeline.launch.py use_yolo:=true
+ros2 launch hand_pack cr10_covvi_gazebo.launch.py
 ```
 
-### Testar IK isoladamente (sem ROS rodando)
-
-```bash
-ros2 run grasp_ml_pack test_kin
-```
-
----
-
-## Treinamento do modelo
-
-```bash
-# 1. Com a simulação rodando, coletar dados
-ros2 run grasp_ml_pack generate_data --ros-args -p n_samples:=200
-
-# 2. Treinar
-ros2 run grasp_ml_pack train_model
-
-# 3. Reiniciar o launch — o planner carrega o modelo automaticamente
-ros2 launch grasp_ml_pack grasp_pipeline.launch.py
-```
-
-Saída esperada do treino:
-```
-RandomForest  CV AUC-ROC: 0.873 ± 0.021
-Top-5 features: manipulability, reach_margin, q2, ik_converged, gp_z
-[OK] Modelo salvo em: models/grasp_quality.pkl
-```
-
-| Iteração | Amostras | AUC-ROC esperado |
-|---|---|---|
-| 1ª | 200 | 0.70 – 0.82 |
-| 2ª | 500 | 0.80 – 0.90 |
-| 3ª | 1000+ | 0.88 – 0.95 |
+Permite controlar a mão COVVI e as juntas do CR10 individualmente pela GUI combinada.
 
 ---
 
@@ -205,45 +286,49 @@ Top-5 features: manipulability, reach_margin, q2, ik_converged, gp_z
 
 ```
 RoboticArm/
-├── images/                         screenshots e mídia
+├── images/                              screenshots e mídia
+│   ├── conveyor_cell_gazebo_full_scene.png
+│   ├── conveyor_cell_gazebo_simulation_running.png
+│   ├── conveyor_cell_gui_camera_idle.png
+│   ├── conveyor_cell_gui_arm_picking.png
+│   ├── conveyor_cell_gazebo_closeup_bins.png
+│   └── ...
 ├── src/
-│   ├── grasp_ml_pack/              pacote principal — pipeline ML
+│   ├── grasp_ml_pack/                   pacote principal — célula de manufatura
 │   │   ├── config/
-│   │   │   ├── pipeline_params.yaml
-│   │   │   └── grasp_database.yaml
+│   │   │   └── pipeline_params.yaml     parâmetros de todos os nós
 │   │   ├── grasp_ml_pack/
-│   │   │   ├── kinematics.py           IK analítica CR10 (DH padrão, multi-start DLS)
-│   │   │   ├── object_detector.py      detecção HSV / YOLOv8 + janela imshow
-│   │   │   ├── pose_estimator.py       retroprojeção 2D→3D
-│   │   │   ├── grasp_planner.py        IK + scoring ML (26 features)
-│   │   │   ├── grasp_executor.py       trajetória pick→lift→rotate→place
-│   │   │   ├── pipeline.py             orquestrador (máquina de estados)
-│   │   │   ├── grasp_quality_net.py    RandomForest / MLP PyTorch
-│   │   │   └── scripts/
-│   │   │       ├── generate_training_data.py
-│   │   │       ├── train_grasp_model.py
-│   │   │       └── test_kinematics.py
+│   │   │   ├── kinematics.py            IK analítica CR10 (DH, multi-start DLS)
+│   │   │   ├── object_detector.py       detecção HSV + back-projection 2D→3D
+│   │   │   ├── grasp_executor.py        ciclo pick→lift→place (7 fases)
+│   │   │   ├── conveyor_controller.py   spawn/delete objetos + serviços de esteira
+│   │   │   ├── gui_control_node.py      GUI Tkinter (esteira + braço)
+│   │   │   └── pipeline.py              orquestrador (máquina de estados)
 │   │   ├── launch/
-│   │   │   └── grasp_pipeline.launch.py
+│   │   │   └── conveyor_cell.launch.py  launch principal da célula
 │   │   └── worlds/
-│   │       └── grasp_experiment.world
-│   ├── hand_pack/                  controle manual da mão + braço
-│   │   ├── config/cr10_covvi_controllers.yaml
+│   │       └── conveyor_cell.world      cena Gazebo completa
+│   ├── hand_pack/                       controle manual da mão
+│   │   ├── config/
+│   │   │   └── cr10_covvi_controllers.yaml
 │   │   ├── hand_pack/
 │   │   │   ├── hand_gui.py
 │   │   │   └── combined_gui.py
 │   │   ├── launch/
-│   │   │   ├── hand_gazebo.launch.py
 │   │   │   ├── cr10_covvi_gazebo.launch.py
 │   │   │   └── cr10_covvi_rviz.launch.py
-│   │   └── urdf/linear_covvi_hand_gazebo.urdf
-│   └── DOBOT_6Axis_ROS2_V4/        descrição do CR10 (submodule)
+│   │   └── urdf/
+│   │       └── linear_covvi_hand_gazebo.urdf
+│   └── DOBOT_6Axis_ROS2_V4/             descrição URDF do CR10 (submodule)
+└── TCC/
+    └── projeto_grasp_autonomo_ml.txt    documentação técnica e contexto acadêmico
 ```
 
 ---
 
-## RViz2 — Visualizações
+## Tópicos principais
 
+<<<<<<< HEAD
 | Punho esquerda | Punho direita |
 |---|---|
 | ![Aberta](images/covvi_hand_rviz_joints_open.png) | ![Fechada](images/covvi_hand_rviz_joints_closed.png) |
@@ -251,31 +336,59 @@ RoboticArm/
 | Malha de colisão | Vista lateral |
 |---|---|
 | ![Colisão](images/covvi_hand_rviz_collision_mesh.png) | ![Branca](images/covvi_hand_rviz_white_version.png) |
+=======
+| Tópico | Tipo | Descrição |
+|---|---|---|
+| `/camera/color/image_raw` | `sensor_msgs/Image` | Feed RGB bruto da câmera Gazebo |
+| `/detector/debug_image` | `sensor_msgs/Image` | Feed com bounding boxes desenhadas |
+| `/detected_objects` | `vision_msgs/Detection2DArray` | Detecções com classe + posição 3D world |
+| `/conveyor/status` | `std_msgs/String` (JSON) | Estado da esteira (has_object, current_obj) |
+| `/conveyor/advance` | `std_srvs/Trigger` | Serviço: avança próximo objeto |
+| `/conveyor/retreat` | `std_srvs/Trigger` | Serviço: remove objeto atual |
+| `/conveyor/reset` | `std_srvs/Trigger` | Serviço: reinicia sequência |
+| `/cell/execute_grasp` | `std_srvs/Trigger` | Serviço: inicia ciclo de grasp |
+| `/cell/go_home` | `std_srvs/Trigger` | Serviço: envia braço ao home |
+| `/cell/status` | `std_msgs/String` (JSON) | Estado do executor (APPROACH_PICK, GRASPING…) |
+| `/joint_states` | `sensor_msgs/JointState` | Posições das 37 juntas (6 braço + 31 mão) |
+>>>>>>> 43f20eb (finalização do código base)
 
 ---
 
 ## Comandos úteis
 
 ```bash
-# Ver o que o robô está vendo (alternativa ao imshow)
+# Rebuildar apenas o pacote principal
+colcon build --packages-select grasp_ml_pack --symlink-install
+source install/setup.bash
+
+# Ver o que a câmera enxerga (alternativa ao imshow)
 ros2 run rqt_image_view rqt_image_view /detector/debug_image
 
-# Monitorar estado do pipeline
-ros2 topic echo /pipeline/status
-ros2 topic echo /grasp_result
+# Monitorar estado da esteira
+ros2 topic echo /conveyor/status
 
-# Verificar controllers
+# Monitorar estado do executor
+ros2 topic echo /cell/status
+
+# Acionar esteira manualmente via terminal
+ros2 service call /conveyor/advance std_srvs/srv/Trigger {}
+ros2 service call /conveyor/retreat std_srvs/srv/Trigger {}
+ros2 service call /conveyor/reset   std_srvs/srv/Trigger {}
+
+# Disparar ciclo de grasp via terminal
+ros2 service call /cell/execute_grasp std_srvs/srv/Trigger {}
+
+# Verificar controllers ativos
 ros2 control list_controllers
 
-# Build parcial
-colcon build --packages-select grasp_ml_pack hand_pack --symlink-install
+# Matar processos Gazebo travados
+pkill -f gzserver; pkill -f gzclient
 
-# Controle manual da mão (sem pipeline)
-ros2 launch hand_pack cr10_covvi_gazebo.launch.py
-ros2 run hand_pack combined_gui
+# Testar IK isoladamente
+ros2 run grasp_ml_pack test_kin
 ```
 
-> **Build travado?** Se aparecer `symbolic link ... Is a directory`:
+> **Build com erro de symlink?** Se aparecer `symbolic link ... Is a directory`:
 > ```bash
 > rm -rf build/dobot_msgs_v4/ament_cmake_python/dobot_msgs_v4/dobot_msgs_v4
 > colcon build --symlink-install
@@ -283,17 +396,27 @@ ros2 run hand_pack combined_gui
 
 ---
 
-## Tópicos principais
+## Diagnóstico rápido
 
-| Tópico | Tipo | O que é |
+| Sintoma | Causa provável | Solução |
 |---|---|---|
-| `/camera/color/image_raw` | `sensor_msgs/Image` | Feed RGB cru do Gazebo |
-| `/detector/debug_image` | `sensor_msgs/Image` | Feed com detecções desenhadas |
-| `/detected_objects` | `vision_msgs/Detection2DArray` | Bboxes 2D por frame |
-| `/object_poses` | `geometry_msgs/PoseArray` | Poses 3D em `base_link` |
-| `/selected_grasp` | `std_msgs/String` (JSON) | Grasp escolhido + score |
-| `/grasp_result` | `std_msgs/String` (JSON) | Sucesso/falha do grasp |
-| `/pipeline/status` | `std_msgs/String` (JSON) | Estado atual da máquina de estados |
+| Objeto não aparece na câmera | Objeto ainda caindo / HSV errado | Aguardar 2-3 s após spawn; verificar janela da câmera |
+| `AGARRAR` retorna "Nenhum objeto válido" | Detector sem detecção ativa | Verificar janela "Pick Station" — readvance a esteira |
+| `Goal rejeitado` no terminal | Controller não ativo | `ros2 control list_controllers` — verificar estado |
+| Braço para no meio do ciclo | IK falhou em alguma pose | Verificar logs `[FALHA]` no terminal do grasp_executor |
+| Objeto cai fora da pick station | `spawn_z` muito baixo ou física | Confirmar `spawn_z: 2.0` no `pipeline_params.yaml` |
+
+---
+
+## RViz — Visualizações da mão COVVI
+
+| Malha visual completa | Malha de colisão |
+|---|---|
+| ![Interna](images/covvi_hand_3d_design_internal.png) | ![Colisão](images/covvi_hand_rviz_collision_mesh.png) |
+
+| Blender — constraints | CAD — dedos estendidos |
+|---|---|
+| ![Constraints](images/covvi_hand_blender_constraints.png) | ![CAD](images/covvi_hand_cad_fingers_extended.png) |
 
 ---
 
@@ -301,4 +424,5 @@ ros2 run hand_pack combined_gui
 
 Apache-2.0
 
-Desenvolvido por **Lucas Martins** — [lucaspmartins14@gmail.com](mailto:lucaspmartins14@gmail.com)
+Desenvolvido por **Lucas Martins** — [lucaspmartins14@gmail.com](mailto:lucaspmartins14@gmail.com)  
+TCC — Engenharia Biomédica

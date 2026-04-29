@@ -1,0 +1,697 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+<world name="conveyor_cell">
+
+  <!-- ================================================================
+       ILUMINAÇÃO — Célula industrial bem iluminada
+       ================================================================ -->
+
+  <!-- Luz direcional principal (simula LED overhead) -->
+  <light name="overhead_main" type="directional">
+    <cast_shadows>true</cast_shadows>
+    <pose>0 0 4 0 0.1 0</pose>
+    <diffuse>0.95 0.95 1.00 1</diffuse>
+    <specular>0.40 0.40 0.40 1</specular>
+    <direction>-0.1 0.1 -1.0</direction>
+  </light>
+
+  <!-- Luz de preenchimento (fill light) — elimina sombras duras -->
+  <light name="fill_left" type="point">
+    <pose>-0.5 0.8 2.2 0 0 0</pose>
+    <diffuse>0.55 0.60 0.65 1</diffuse>
+    <specular>0.10 0.10 0.12 1</specular>
+    <attenuation>
+      <range>4.5</range>
+      <constant>0.20</constant>
+      <linear>0.08</linear>
+      <quadratic>0.01</quadratic>
+    </attenuation>
+  </light>
+
+  <!-- Luz acima da área de classificação (bins) -->
+  <light name="sort_area_light" type="point">
+    <pose>0.25 0.65 2.0 0 0 0</pose>
+    <diffuse>0.70 0.70 0.75 1</diffuse>
+    <specular>0.20 0.20 0.20 1</specular>
+    <attenuation>
+      <range>2.5</range>
+      <constant>0.15</constant>
+      <linear>0.10</linear>
+      <quadratic>0.02</quadratic>
+    </attenuation>
+  </light>
+
+  <!-- Luz acima da pick station -->
+  <light name="pick_station_light" type="point">
+    <pose>0.65 0 2.1 0 0 0</pose>
+    <diffuse>0.80 0.80 0.80 1</diffuse>
+    <specular>0.30 0.30 0.30 1</specular>
+    <attenuation>
+      <range>2.0</range>
+      <constant>0.20</constant>
+      <linear>0.12</linear>
+      <quadratic>0.02</quadratic>
+    </attenuation>
+  </light>
+
+  <!-- ================================================================
+       CHÃO — Piso industrial escuro com marcações de segurança
+       ================================================================ -->
+  <model name="ground_plane">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        <material>
+          <ambient>0.22 0.22 0.24 1</ambient>
+          <diffuse>0.28 0.28 0.30 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Zona de segurança amarela — faixa frontal ao redor do robô -->
+  <model name="safety_stripe_front">
+    <static>true</static>
+    <pose>0 -0.45 0.003 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.80 0.06 0.002</size></box></geometry>
+        <material>
+          <ambient>0.85 0.75 0.0 1</ambient>
+          <diffuse>0.95 0.85 0.0 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Zona de segurança amarela — faixa lateral esquerda -->
+  <model name="safety_stripe_left">
+    <static>true</static>
+    <pose>-0.42 0 0.003 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.06 0.80 0.002</size></box></geometry>
+        <material>
+          <ambient>0.85 0.75 0.0 1</ambient>
+          <diffuse>0.95 0.85 0.0 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Zona de segurança amarela — faixa lateral direita -->
+  <model name="safety_stripe_right">
+    <static>true</static>
+    <pose>0.42 0 0.003 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.06 0.80 0.002</size></box></geometry>
+        <material>
+          <ambient>0.85 0.75 0.0 1</ambient>
+          <diffuse>0.95 0.85 0.0 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       PAREDES DA CÉLULA — Ambiente fechado / semi-fechado
+       ================================================================ -->
+
+  <!-- Parede de fundo (y negativo) -->
+  <model name="wall_back">
+    <static>true</static>
+    <pose>0.50 -0.90 1.25 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>3.0 0.08 2.50</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>3.0 0.08 2.50</size></box></geometry>
+        <material>
+          <ambient>0.78 0.78 0.80 1</ambient>
+          <diffuse>0.82 0.82 0.84 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Parede lateral esquerda (x negativo) -->
+  <model name="wall_left">
+    <static>true</static>
+    <pose>-0.90 0.30 1.25 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.08 2.8 2.50</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.08 2.8 2.50</size></box></geometry>
+        <material>
+          <ambient>0.75 0.75 0.78 1</ambient>
+          <diffuse>0.80 0.80 0.82 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Teto parcial (acima da área de trabalho) -->
+  <model name="ceiling_partial">
+    <static>true</static>
+    <pose>0.50 0.20 2.70 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>2.20 2.20 0.04</size></box></geometry>
+        <material>
+          <ambient>0.80 0.80 0.82 1</ambient>
+          <diffuse>0.85 0.85 0.86 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Painéis LED embutidos no teto (visual) -->
+  <model name="led_panel_1">
+    <static>true</static>
+    <pose>0.40 0.10 2.67 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.50 0.12 0.02</size></box></geometry>
+        <material>
+          <ambient>0.95 0.98 1.00 1</ambient>
+          <diffuse>0.98 0.99 1.00 1</diffuse>
+          <emissive>0.60 0.65 0.70 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <model name="led_panel_2">
+    <static>true</static>
+    <pose>0.40 0.65 2.67 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.50 0.12 0.02</size></box></geometry>
+        <material>
+          <ambient>0.95 0.98 1.00 1</ambient>
+          <diffuse>0.98 0.99 1.00 1</diffuse>
+          <emissive>0.60 0.65 0.70 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       PEDESTAL DO ROBÔ
+       ================================================================ -->
+  <model name="robot_pedestal">
+    <static>true</static>
+    <pose>0 0 0.1875 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.18 0.18 0.375</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.18 0.18 0.375</size></box></geometry>
+        <material>
+          <ambient>0.18 0.18 0.20 1</ambient>
+          <diffuse>0.22 0.22 0.26 1</diffuse>
+          <specular>0.25 0.25 0.25 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       ESTEIRA TRANSPORTADORA
+       Corpo principal + superfície + guias laterais + entrada de saída
+       ================================================================ -->
+
+  <!-- Estrutura da esteira -->
+  <model name="belt_frame">
+    <static>true</static>
+    <pose>0.85 0 0.40 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.80 0.36 0.80</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.80 0.36 0.80</size></box></geometry>
+        <material>
+          <ambient>0.22 0.24 0.28 1</ambient>
+          <diffuse>0.28 0.30 0.34 1</diffuse>
+          <specular>0.20 0.20 0.20 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Superfície da correia — textura escura antiderrapante -->
+  <model name="belt_surface">
+    <static>true</static>
+    <pose>0.85 0 0.803 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.78 0.34 0.006</size></box></geometry>
+        <surface>
+          <friction>
+            <ode><mu>1.0</mu><mu2>1.0</mu2></ode>
+          </friction>
+          <contact>
+            <ode><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.78 0.34 0.006</size></box></geometry>
+        <material>
+          <ambient>0.10 0.10 0.12 1</ambient>
+          <diffuse>0.14 0.14 0.16 1</diffuse>
+          <specular>0.02 0.02 0.02 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Marcação da pick station (quadrado amarelo) -->
+  <model name="pick_station_marker">
+    <static>true</static>
+    <pose>0.65 0 0.808 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.16 0.16 0.001</size></box></geometry>
+        <material>
+          <ambient>1.0 0.88 0.0 1</ambient>
+          <diffuse>1.0 0.90 0.0 1</diffuse>
+          <emissive>0.20 0.18 0.0 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Cruz central da pick station -->
+  <model name="pick_cross_h">
+    <static>true</static>
+    <pose>0.65 0 0.809 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.16 0.010 0.001</size></box></geometry>
+        <material>
+          <ambient>0.0 0.0 0.0 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+  <model name="pick_cross_v">
+    <static>true</static>
+    <pose>0.65 0 0.809 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.010 0.16 0.001</size></box></geometry>
+        <material>
+          <ambient>0.0 0.0 0.0 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Guias laterais da esteira (perfil de alumínio) -->
+  <model name="belt_guide_left">
+    <static>true</static>
+    <pose>0.85 0.200 0.870 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
+        <material>
+          <ambient>0.55 0.58 0.60 1</ambient>
+          <diffuse>0.65 0.68 0.70 1</diffuse>
+          <specular>0.40 0.40 0.40 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <model name="belt_guide_right">
+    <static>true</static>
+    <pose>0.85 -0.200 0.870 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
+        <material>
+          <ambient>0.55 0.58 0.60 1</ambient>
+          <diffuse>0.65 0.68 0.70 1</diffuse>
+          <specular>0.40 0.40 0.40 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Pés de suporte da esteira -->
+  <model name="belt_leg_front">
+    <static>true</static>
+    <pose>0.55 0 0.20 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.05 0.30 0.40</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.05 0.30 0.40</size></box></geometry>
+        <material>
+          <ambient>0.30 0.30 0.35 1</ambient><diffuse>0.35 0.35 0.40 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <model name="belt_leg_back">
+    <static>true</static>
+    <pose>1.15 0 0.20 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.05 0.30 0.40</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.05 0.30 0.40</size></box></geometry>
+        <material>
+          <ambient>0.30 0.30 0.35 1</ambient><diffuse>0.35 0.35 0.40 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       SUPORTE DA CÂMERA — coluna industrial com braço articulado
+       ================================================================ -->
+  <!-- Coluna atrás da esteira (x=1.35), fora do alcance do braço -->
+  <model name="camera_column">
+    <static>true</static>
+    <pose>1.35 0.0 0.90 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.04 0.04 1.80</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.04 0.04 1.80</size></box></geometry>
+        <material>
+          <ambient>0.20 0.20 0.22 1</ambient>
+          <diffuse>0.25 0.25 0.28 1</diffuse>
+          <specular>0.30 0.30 0.30 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Braço horizontal em X (da coluna em x=1.35 até câmera em x=1.15) -->
+  <model name="camera_arm">
+    <static>true</static>
+    <pose>1.25 0.0 1.75 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.20 0.03 0.03</size></box></geometry>
+        <material>
+          <ambient>0.20 0.20 0.22 1</ambient>
+          <diffuse>0.25 0.25 0.28 1</diffuse>
+          <specular>0.30 0.30 0.30 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Corpo da câmera — yaw=π para olhar de volta à pick station -->
+  <model name="rgbd_camera">
+    <static>true</static>
+    <pose>1.15 0.0 1.70 0 1.05 3.1416</pose>
+    <link name="camera_link">
+      <visual name="body_visual">
+        <geometry><box><size>0.06 0.12 0.030</size></box></geometry>
+        <material>
+          <ambient>0.08 0.08 0.10 1</ambient>
+          <diffuse>0.10 0.10 0.12 1</diffuse>
+          <specular>0.30 0.30 0.30 1</specular>
+        </material>
+      </visual>
+      <!-- LED indicador (verde = câmera ativa) -->
+      <visual name="led_indicator">
+        <pose>0.025 -0.045 0.010 0 0 0</pose>
+        <geometry><sphere><radius>0.004</radius></sphere></geometry>
+        <material>
+          <ambient>0.0 0.9 0.1 1</ambient>
+          <diffuse>0.0 1.0 0.1 1</diffuse>
+          <emissive>0.0 0.6 0.05 1</emissive>
+        </material>
+      </visual>
+
+      <sensor name="rgb_camera" type="camera">
+        <always_on>true</always_on>
+        <update_rate>30</update_rate>
+        <camera name="camera">
+          <horizontal_fov>1.2217</horizontal_fov>
+          <image>
+            <width>848</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.1</near><far>3.0</far></clip>
+          <noise>
+            <type>gaussian</type><mean>0.0</mean><stddev>0.001</stddev>
+          </noise>
+        </camera>
+        <plugin name="gazebo_ros_camera" filename="libgazebo_ros_camera.so">
+          <ros><namespace>/camera</namespace></ros>
+          <camera_name>color</camera_name>
+          <frame_name>camera_link</frame_name>
+        </plugin>
+      </sensor>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       PRATELEIRA DE CLASSIFICAÇÃO — suporte das caixas (y=+0.65)
+       ================================================================ -->
+  <model name="sort_shelf_body">
+    <static>true</static>
+    <pose>0.25 0.65 0.24 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.86 0.30 0.48</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.86 0.30 0.48</size></box></geometry>
+        <material>
+          <ambient>0.30 0.32 0.35 1</ambient>
+          <diffuse>0.35 0.37 0.40 1</diffuse>
+          <specular>0.15 0.15 0.15 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Tampa/superfície da prateleira -->
+  <model name="sort_shelf_top">
+    <static>true</static>
+    <pose>0.25 0.65 0.493 0 0 0</pose>
+    <link name="link">
+      <collision name="collision">
+        <geometry><box><size>0.86 0.30 0.014</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.86 0.30 0.014</size></box></geometry>
+        <material>
+          <ambient>0.55 0.58 0.60 1</ambient>
+          <diffuse>0.65 0.68 0.70 1</diffuse>
+          <specular>0.40 0.40 0.40 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       CAIXA 1 — Frasco (palm_grip) | VERMELHO | x=-0.05, y=0.65
+       ================================================================ -->
+  <model name="bin_frasco">
+    <static>true</static>
+    <pose>-0.05 0.65 0.535 0 0 0</pose>
+    <link name="link">
+      <collision name="floor_col"><pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.26 0.24 0.07</size></box></geometry>
+      </collision>
+      <visual name="floor_vis"><pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.26 0.24 0.07</size></box></geometry>
+        <material>
+          <ambient>0.55 0.08 0.08 1</ambient><diffuse>0.68 0.10 0.10 1</diffuse>
+          <specular>0.25 0.10 0.10 1</specular>
+        </material>
+      </visual>
+      <!-- Paredes -->
+      <collision name="wall_n_col"><pose>0 0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_n_vis"><pose>0 0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+        <material><ambient>0.55 0.08 0.08 1</ambient><diffuse>0.68 0.10 0.10 1</diffuse></material>
+      </visual>
+      <collision name="wall_s_col"><pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_s_vis"><pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+        <material><ambient>0.55 0.08 0.08 1</ambient><diffuse>0.68 0.10 0.10 1</diffuse></material>
+      </visual>
+      <collision name="wall_e_col"><pose>0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_e_vis"><pose>0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+        <material><ambient>0.55 0.08 0.08 1</ambient><diffuse>0.68 0.10 0.10 1</diffuse></material>
+      </visual>
+      <collision name="wall_w_col"><pose>-0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_w_vis"><pose>-0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+        <material><ambient>0.55 0.08 0.08 1</ambient><diffuse>0.68 0.10 0.10 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- Etiqueta 1 (FRASCO) -->
+  <model name="label_frasco">
+    <static>true</static>
+    <pose>-0.05 0.535 0.585 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.18 0.002 0.06</size></box></geometry>
+        <material>
+          <ambient>1.0 1.0 1.0 1</ambient><diffuse>1.0 1.0 1.0 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       CAIXA 2 — Tubo (claw_grip) | VERDE | x=0.25, y=0.65
+       ================================================================ -->
+  <model name="bin_tubo">
+    <static>true</static>
+    <pose>0.25 0.65 0.535 0 0 0</pose>
+    <link name="link">
+      <collision name="floor_col"><pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.26 0.24 0.07</size></box></geometry>
+      </collision>
+      <visual name="floor_vis"><pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.26 0.24 0.07</size></box></geometry>
+        <material>
+          <ambient>0.08 0.50 0.12 1</ambient><diffuse>0.10 0.62 0.15 1</diffuse>
+          <specular>0.10 0.25 0.10 1</specular>
+        </material>
+      </visual>
+      <collision name="wall_n_col"><pose>0 0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_n_vis"><pose>0 0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+        <material><ambient>0.08 0.50 0.12 1</ambient><diffuse>0.10 0.62 0.15 1</diffuse></material>
+      </visual>
+      <collision name="wall_s_col"><pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_s_vis"><pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+        <material><ambient>0.08 0.50 0.12 1</ambient><diffuse>0.10 0.62 0.15 1</diffuse></material>
+      </visual>
+      <collision name="wall_e_col"><pose>0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_e_vis"><pose>0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+        <material><ambient>0.08 0.50 0.12 1</ambient><diffuse>0.10 0.62 0.15 1</diffuse></material>
+      </visual>
+      <collision name="wall_w_col"><pose>-0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_w_vis"><pose>-0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+        <material><ambient>0.08 0.50 0.12 1</ambient><diffuse>0.10 0.62 0.15 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       CAIXA 3 — Ampola (fingertip_grip) | AZUL | x=0.55, y=0.65
+       ================================================================ -->
+  <model name="bin_ampola">
+    <static>true</static>
+    <pose>0.55 0.65 0.535 0 0 0</pose>
+    <link name="link">
+      <collision name="floor_col"><pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.26 0.24 0.07</size></box></geometry>
+      </collision>
+      <visual name="floor_vis"><pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.26 0.24 0.07</size></box></geometry>
+        <material>
+          <ambient>0.08 0.18 0.60 1</ambient><diffuse>0.10 0.22 0.75 1</diffuse>
+          <specular>0.10 0.15 0.35 1</specular>
+        </material>
+      </visual>
+      <collision name="wall_n_col"><pose>0 0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_n_vis"><pose>0 0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+        <material><ambient>0.08 0.18 0.60 1</ambient><diffuse>0.10 0.22 0.75 1</diffuse></material>
+      </visual>
+      <collision name="wall_s_col"><pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_s_vis"><pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry><box><size>0.26 0.010 0.17</size></box></geometry>
+        <material><ambient>0.08 0.18 0.60 1</ambient><diffuse>0.10 0.22 0.75 1</diffuse></material>
+      </visual>
+      <collision name="wall_e_col"><pose>0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_e_vis"><pose>0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+        <material><ambient>0.08 0.18 0.60 1</ambient><diffuse>0.10 0.22 0.75 1</diffuse></material>
+      </visual>
+      <collision name="wall_w_col"><pose>-0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+      </collision>
+      <visual name="wall_w_vis"><pose>-0.130 0 0.085 0 0 0</pose>
+        <geometry><box><size>0.010 0.24 0.17</size></box></geometry>
+        <material><ambient>0.08 0.18 0.60 1</ambient><diffuse>0.10 0.22 0.75 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ================================================================
+       FÍSICA
+       ================================================================ -->
+  <physics name="default_physics" default="true" type="ode">
+    <max_step_size>0.001</max_step_size>
+    <real_time_factor>1.0</real_time_factor>
+    <real_time_update_rate>1000</real_time_update_rate>
+    <gravity>0 0 -9.81</gravity>
+    <ode>
+      <solver><type>quick</type><iters>150</iters><sor>1.3</sor></solver>
+      <constraints>
+        <cfm>1e-6</cfm><erp>0.2</erp>
+        <contact_max_correcting_vel>0.1</contact_max_correcting_vel>
+        <contact_surface_layer>0.001</contact_surface_layer>
+      </constraints>
+    </ode>
+  </physics>
+
+</world>
+</sdf>

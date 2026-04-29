@@ -1,3 +1,14 @@
+# ============================================================
+# pipeline_params.yaml — Célula de Manufatura Biomédica
+# CR10 + COVVI Hand + Esteira
+#
+# Objetos:
+#   frasco — frasco de medicamento (âmbar, r=42mm, h=90mm) → Palm Grip → Box 1
+#   tubo   — tubo de ensaio        (azul,  r=12mm, h=120mm) → Claw Grip → Box 2
+#   ampola — ampola farmacêutica   (verde, r=5mm,  h=75mm)  → Fingertip Grip → Box 3
+# ============================================================
+
+# ── Detector de objetos ──────────────────────────────────────
 object_detector:
   ros__parameters:
     use_yolo: false              # true para robô físico com GPU
@@ -5,27 +16,54 @@ object_detector:
     confidence_threshold: 0.45
     publish_debug: true
 
-pose_estimator:
+# ── Controlador da esteira ────────────────────────────────────
+conveyor_controller:
   ros__parameters:
-    camera_frame: "camera_link"
-    depth_scale: 1.0
-    camera_pos_x: 0.10
-    camera_pos_y: 0.0
-    camera_pos_z: 1.70
-    camera_pitch_rad: 1.05
-    table_z_world: 0.75
-    robot_base_z_world: 0.375
+    sim_only: true
+    pick_x: 0.65
+    pick_y: 0.00
+    belt_surface_z: 0.806   # topo real da correia (para referência)
+    spawn_z: 2.0             # altura de spawn; objeto cai até a correia por gravidade
+    object_sequence: ['frasco', 'tubo', 'ampola']
 
-grasp_planner:
-  ros__parameters:
-    n_candidates: 5
-    score_threshold: 0.45
-
+# ── Executor de grasp ─────────────────────────────────────────
 grasp_executor:
   ros__parameters:
-    simulation_mode: true
+    sim_only: true
 
-grasp_pipeline:
+    # Posição XY da pick station (mesma para todos os objetos)
+    pick_x: 0.65
+    pick_y: 0.00
+
+    # Altura TCP no momento do grasp — world frame (belt top = 0.806)
+    # frasco: 0.806 + 0.045 (metade h=90mm) = 0.851
+    pick_z_frasco: 0.851
+    # tubo:   0.806 + 0.060 (metade h=120mm) = 0.866
+    pick_z_tubo:   0.866
+    # ampola: 0.806 + 0.0375 (metade h=75mm) = 0.844
+    pick_z_ampola: 0.844
+
+    # ── Posições das caixas de destino (world frame, TCP drop height) ────
+    # Box 1 — frasco → palm_grip   (vermelho)
+    box1_x: -0.05
+    box1_y:  0.65
+    box1_z:  0.60
+
+    # Box 2 — tubo → claw_grip     (verde)
+    box2_x:  0.25
+    box2_y:  0.65
+    box2_z:  0.60
+
+    # Box 3 — ampola → fingertip   (azul)
+    box3_x:  0.55
+    box3_y:  0.65
+    box3_z:  0.60
+
+# ── Pipeline / orquestrador ───────────────────────────────────
+conveyor_pipeline:
   ros__parameters:
-    loop_rate_hz: 10.0
-    max_attempts: 3
+    autonomous: false
+    loop_rate_hz: 5.0
+    detect_timeout_s: 30.0
+    grasp_timeout_s: 300.0
+    total_cycles: 3
