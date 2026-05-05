@@ -21,7 +21,7 @@ usuário aprenda a associação objeto↔preensão antes de usar a prótese fís
 ENTREGÁVEL DESTA FASE
 ---------------------
 Está completo o componente de gêmeo digital com pipeline de grasp diferenciado:
-  - Célula de manufatura biomédica (Gazebo): esteira, objetos farmacêuticos,
+  - Célula de manufatura biomédica (Gazebo): esteira, objetos,
     caixas de classificação, câmera, iluminação industrial
   - Detecção de objetos por visão computacional (segmentação HSV)
   - Estimativa de posição 3D por back-projection geométrica
@@ -34,7 +34,7 @@ não fazem parte desta entrega.
 VISÃO GERAL TÉCNICA
 -------------------
 Gêmeo digital do braço Dobot CR10 acoplado à mão protética COVVI que executa
-preensão autônoma de objetos farmacêuticos em uma célula de manufatura
+preensão autônoma de objetos em uma célula de manufatura
 simulada. A câmera RGB detecta objetos por segmentação HSV, estima posições 3D
 via back-projection geométrica e o sistema seleciona deterministicamente o tipo
 de preensão adequado ao objeto. O robô executa o ciclo completo de 7 fases:
@@ -80,7 +80,7 @@ HARDWARE / SOFTWARE
       │   ├── grasp_executor.py     ← Candidato → trajetória → execução
       │   ├── pipeline.py           ← Orquestrador (máquina de estados)
       │   ├── grasp_quality_net.py  ← Classificador ML (26 features)
-      │   └── kinematics.py         ← FK/IK analítica + parâmetros DH
+      │   └── kinematics.py         ← FK/IK analítica (convenção URDF — corrige offset DH)
       ├── scripts/
       │   ├── generate_training_data.py  ← Coleta dataset no Gazebo
       │   └── train_grasp_model.py       ← Treina o RandomForest

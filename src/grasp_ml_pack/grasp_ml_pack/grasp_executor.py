@@ -90,21 +90,41 @@ _MIMIC_MAP: dict[str, tuple[str, float]] = {
 }
 
 # ── Parâmetros de movimento ───────────────────────────────────────────
-_HOME_Q         = np.array([0.0, -math.pi / 4, math.pi / 2,
-                             -math.pi / 4, -math.pi / 2, 0.0])
-_APPROACH_CLEAR = 0.15    # m — altura de pré-abordagem
+# Home seguro — braço erguido para trás (TCP ≈ (−0.69, −0.19, 1.31) m robot frame).
+# q2=0 URDF ↔ braço superior vertical; q3=π/2 dobra o antebraço para trás.
+# Validado: nenhum link colide com belt_frame, belt_guides, sort_shelf ou caixas.
+_HOME_Q         = np.array([0.0,  0.0,  math.pi/2,
+                             -math.pi/2, -math.pi/2, 0.0])
+# Seed para IK de pick: configuração compacta de cotovelo acima da esteira.
+# Derivado da solução do frasco com HOME_Q; válido para pick_xy=(0.65,0)
+# e pick_z ∈ [0.90, 0.95] m world. Evita solução de "cotovelo para baixo"
+# que mergulha Link2 abaixo da superfície da correia para tubo/ampola.
+_PICK_SEED_Q    = np.array([0.473, -0.106, -1.542, -1.493,  0.473, 0.0])
+# Seed compacto para IK de approach_box: q2/q3 negativos mantêm Link2/Link3
+# acima da sort_shelf (z≤0.48m) para todos os três boxes.
+_APPROACH_BOX_SEED_Q = np.array([0.0, -0.4, -1.5, -1.3, 0.0, 0.0])
+_APPROACH_CLEAR = 0.15    # m — altura de pré-abordagem (acima da parede das caixas: 0.705m)
 _LIFT_HEIGHT    = 0.22    # m — altura de levantamento pós-grasp
 _CLOSE_EXTRA    = 0.05    # fração extra de fechamento sobre o cfg nominal
 _MAX_JOINT_VEL  = 0.50    # rad/s
 _N_TRAJ_STEPS   = 12      # waypoints por segmento de trajetória
 
-# Approach vector padrão: de cima para baixo (esteira horizontal)
+# Approach vector padrão: de cima para baixo (esteira horizontal).
+# Para IK de pick, usar elbow_up=False: cotovelo fisicamente acima da correia
+# (~1.15 m world), Link6 + mão COVVI chegam ao ponto de captura.
 _AV_DOWN = np.array([0.0, 0.0, -1.0])
 
-# Altura do base_link do robô no world frame do Gazebo (spawn z=0.375).
+# Altura do base_link do robô no world frame do Gazebo.
+# Spawn z=0.375; URDF world_joint xyz=[0,0,0.03] → base_link em z=0.405.
 # Todas as posições world frame devem ter esse offset subtraído antes do IK,
 # pois o módulo kinematics trabalha no frame da base do robô.
-_ROBOT_BASE_Z = 0.375
+_ROBOT_BASE_Z = 0.405
+
+# Altura de trânsito via_box em robot frame (= 1.15m world).
+# Deve estar acima de: belt_guides (0.935m) e de uma zona de descontinuidade
+# na solução IK para box2/box3 entre 1.03-1.085m que mergulha joint3/joint4
+# dentro da sort_shelf. Validado numericamente para frasco, tubo e ampola.
+_TRANSIT_Z = 1.15 - _ROBOT_BASE_Z   # 0.745 m robot frame
 
 
 def _w2r(pos: np.ndarray) -> np.ndarray:
@@ -197,9 +217,9 @@ class GraspExecutorNode(Node):
         self.declare_parameter('sim_only', True)
         self.declare_parameter('pick_x', 0.65)
         self.declare_parameter('pick_y', 0.00)
-        self.declare_parameter('pick_z_frasco', 0.851)
-        self.declare_parameter('pick_z_tubo',   0.866)
-        self.declare_parameter('pick_z_ampola', 0.844)
+        self.declare_parameter('pick_z_frasco', 0.916)
+        self.declare_parameter('pick_z_tubo',   0.946)
+        self.declare_parameter('pick_z_ampola', 0.913)
         self.declare_parameter('box1_x', -0.05)
         self.declare_parameter('box1_y',  0.65)
         self.declare_parameter('box1_z',  0.60)
@@ -355,7 +375,7 @@ class GraspExecutorNode(Node):
 
         # Converter world → robot base frame antes de chamar o IK.
         # O IK calcula posições relativas ao base_link do robô, que está
-        # em world z = _ROBOT_BASE_Z (0.375 m).
+        # em world z = _ROBOT_BASE_Z (0.405 m).
         p_pick = _w2r(pick_w)
         p_box  = _w2r(box_w)
 
@@ -370,23 +390,40 @@ class GraspExecutorNode(Node):
             # ── Calcular todas as poses IK em robot frame ──────────────
             approach_pick = p_pick + np.array([0.0, 0.0, _APPROACH_CLEAR])
             lift_pos      = p_pick + np.array([0.0, 0.0, _LIFT_HEIGHT])
-            approach_box  = p_box  + np.array([0.0, 0.0, _APPROACH_CLEAR])
+            # via_box: altura fixa _TRANSIT_Z (1.15m world) sobre a caixa.
+            # Altura fixa necessária: o IK para box2/box3 tem descontinuidade entre
+            # 1.03-1.085m world que mergulha joint3 dentro da sort_shelf.
+            # 1.15m world garante j3 > 0.50m (sort_shelf top) para todos os objetos.
+            via_pos      = np.array([p_box[0], p_box[1], _TRANSIT_Z])
+            approach_box = p_box + np.array([0.0, 0.0, _APPROACH_CLEAR])
 
-            q_ap,   ok1 = inverse_kinematics(approach_pick, _AV_DOWN, _HOME_Q)
-            if not ok1:
-                raise RuntimeError(f'IK abordagem pick falhou: {approach_pick}')
-            q_pick, ok2 = inverse_kinematics(p_pick, _AV_DOWN, q_ap)
+            # Pick side: seed pick primeiro, depois approach com q_pick como seed.
+            # Isso garante que approach_pick use a mesma postura do braço que pick,
+            # evitando a configuração "spread" que colide com belt_frame.
+            # elbow_up=False mantém cotovelo geometricamente acima da correia.
+            q_pick, ok2     = inverse_kinematics(p_pick,        _AV_DOWN, _PICK_SEED_Q, elbow_up=False)
             if not ok2:
                 raise RuntimeError(f'IK pick falhou: {p_pick}')
-            q_lift, ok_lift = inverse_kinematics(lift_pos,     _AV_DOWN, q_pick)
+            q_ap,   ok1     = inverse_kinematics(approach_pick, _AV_DOWN, q_pick,  elbow_up=False)
+            if not ok1:
+                raise RuntimeError(f'IK abordagem pick falhou: {approach_pick}')
+            q_lift, ok_lift = inverse_kinematics(lift_pos,      _AV_DOWN, q_pick,  elbow_up=False)
             if not ok_lift:
                 raise RuntimeError(f'IK lift falhou: {lift_pos}')
-            q_ab,   ok3 = inverse_kinematics(approach_box,  _AV_DOWN, q_lift)
+
+            # Caixa side: elbow_up=False — mantém cotovelo (joint3) e pulso (joint4)
+            # acima da prateleira de classificação (sort_shelf top=0.50 m world).
+            # via_box: seed = HOME_Q. approach_box: seed = _APPROACH_BOX_SEED_Q.
+            # q_via como seed de approach_box colapsa para configuração spread
+            # (Link2/Link3 dentro da sort_shelf) em ampola/box3. HOME_Q colapsa
+            # em tubo/box2. O seed compacto (q2≈−0.4, q3≈−1.5) é válido para os
+            # três boxes (confirmado por verificação de cantos STL).
+            q_via,  ok_via  = inverse_kinematics(via_pos,      _AV_DOWN, _HOME_Q, elbow_up=False)
+            if not ok_via:
+                raise RuntimeError(f'IK via_box falhou: {via_pos}')
+            q_ab,   ok3     = inverse_kinematics(approach_box, _AV_DOWN, _APPROACH_BOX_SEED_Q, elbow_up=False)
             if not ok3:
                 raise RuntimeError(f'IK abordagem box falhou: {approach_box}')
-            q_box,  ok4 = inverse_kinematics(p_box,         _AV_DOWN, q_ab)
-            if not ok4:
-                raise RuntimeError(f'IK box falhou: {p_box}')
 
             # ── Configurações da mão ───────────────────────────────────
             cfg_open   = HAND_CONFIGS['open']
@@ -400,10 +437,13 @@ class GraspExecutorNode(Node):
             self._send_arm(q_ap)
             time.sleep(0.3)
 
-            # ── FASE 2: Pré-configurar dedos + descer ao objeto ─────────
-            self.get_logger().info('[F2] Pré-grip + descida')
-            self._send_hand(cfg_grasp, 1.5)
+            # ── FASE 2: Descer com mão aberta + configurar grip no ponto ──
+            # Mão aberta durante a descida: dedos se estendem horizontalmente,
+            # sem componente z_mcp (downward). Grip só se fecha ao chegar no
+            # pick_z, evitando colisão das pontas com a esteira durante descida.
+            self.get_logger().info('[F2] Descida (mão aberta) + configuração grip')
             self._send_arm(q_pick)
+            self._send_hand(cfg_grasp, 1.5)
             time.sleep(0.3)
 
             # ── FASE 3: Fechar mão (grasp) ─────────────────────────────
@@ -420,23 +460,36 @@ class GraspExecutorNode(Node):
             self._send_arm(q_lift)
             time.sleep(0.3)
 
-            # ── FASE 5: Trânsito para a caixa ──────────────────────────
+            # ── FASE 5: Trânsito lateral — pick area → via_box ─────────
+            # Mover lateralmente à altura de segurança (lift_z > 1.06 m world),
+            # acima de belt_guides (0.935 m) e sort_shelf (0.50 m).
             self._status_msg = f'TRANSIT:{obj_class}→{box_key}'
-            self.get_logger().info(f'[F5] Trânsito → {box_key}')
-            self._send_arm(q_ab)
-            time.sleep(0.3)
+            self.get_logger().info(f'[F5] Trânsito lateral → {box_key}')
+            self._send_arm(q_via)
+            time.sleep(0.2)
 
-            # ── FASE 6: Descer na caixa e soltar ──────────────────────
+            # ── FASE 6: Descer para abordagem da caixa ─────────────────
+            self.get_logger().info(f'[F6] Descida abordagem → {box_key}')
+            self._send_arm(q_ab)
+            time.sleep(0.2)
+
+            # ── FASE 7: Soltar acima da caixa ─────────────────────────
+            # TCP já em approach_box_z = box_z + _APPROACH_CLEAR ≈ 0.75 m world,
+            # que está acima das paredes das caixas (top ≈ 0.705 m).
+            # O objeto cai livremente para dentro da caixa sem que o braço desça.
             self._status_msg = f'PLACING:{obj_class}'
-            self.get_logger().info(f'[F6] Descendo na caixa e soltando')
-            self._send_arm(q_box)
+            self.get_logger().info(f'[F7] Soltando acima de {box_key}')
             self._send_hand(cfg_open, 2.0)
             time.sleep(0.3)
 
-            # ── FASE 7: Recuar + home ──────────────────────────────────
+            # ── FASE 8: Subir ao via_box ───────────────────────────────
+            self.get_logger().info('[F8] Subindo ao via_box')
+            self._send_arm(q_via)
+            time.sleep(0.1)
+
+            # ── FASE 9: Retorno → HOME ─────────────────────────────────
             self._status_msg = 'HOMING'
-            self.get_logger().info('[F7] Recuando + home')
-            self._send_arm(q_ab)
+            self.get_logger().info('[F9] Retorno → HOME')
             self._do_home()
             success = True
             self.get_logger().info(f'[SUCESSO] {obj_class} ({grip_type}) → {box_key}')

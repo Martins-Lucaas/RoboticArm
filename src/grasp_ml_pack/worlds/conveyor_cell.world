@@ -237,9 +237,7 @@
     <static>true</static>
     <pose>0.85 0 0.40 0 0 0</pose>
     <link name="link">
-      <collision name="collision">
-        <geometry><box><size>0.80 0.36 0.80</size></box></geometry>
-      </collision>
+      <!-- sem colisão: estrutura visual apenas; colisão real nos pés (belt_leg) e guias -->
       <visual name="visual">
         <geometry><box><size>0.80 0.36 0.80</size></box></geometry>
         <material>
@@ -323,7 +321,7 @@
   <!-- Guias laterais da esteira (perfil de alumínio) -->
   <model name="belt_guide_left">
     <static>true</static>
-    <pose>0.85 0.200 0.870 0 0 0</pose>
+    <pose>0.85 0.240 0.870 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
@@ -341,7 +339,7 @@
 
   <model name="belt_guide_right">
     <static>true</static>
-    <pose>0.85 -0.200 0.870 0 0 0</pose>
+    <pose>0.85 -0.240 0.870 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.80 0.025 0.13</size></box></geometry>

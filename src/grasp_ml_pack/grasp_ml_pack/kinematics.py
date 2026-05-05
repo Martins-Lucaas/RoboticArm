@@ -1,16 +1,20 @@
 """
 Módulo centralizado de cinemática — CR10 + COVVI Hand.
 
-Convenção DH padrão (Denavit-Hartenberg):
-    T_i = Rot_z(θᵢ) · Trans_z(dᵢ) · Trans_x(aᵢ) · Rot_x(αᵢ)
+Convenção URDF (ROS 2 / Gazebo):
+    T_joint = T_origin × Rz(q)
+    onde T_origin = Translation(xyz) × R_rpy(roll, pitch, yaw)
 
-    ⎡ cθ  -sθcα   sθsα   a·cθ ⎤
-    ⎢ sθ   cθcα  -cθsα   a·sθ ⎥
-    ⎢  0    sα     cα    d    ⎥
-    ⎣  0    0      0     1    ⎦
+Parâmetros extraídos do URDF cr10_robot.xacro:
+    joint1: xyz=[0, 0, 0.1765]   rpy=[0, 0, 0]
+    joint2: xyz=[0, 0, 0]        rpy=[π/2, π/2, 0]
+    joint3: xyz=[-0.607, 0, 0]   rpy=[0, 0, 0]
+    joint4: xyz=[-0.568, 0, 0.191] rpy=[0, 0, -π/2]
+    joint5: xyz=[0, -0.125, 0]   rpy=[π/2, 0, 0]
+    joint6: xyz=[0, 0.1084, 0]   rpy=[-π/2, 0, 0]
 
-Parâmetros DH do CR10 (User Guide v1.8, Fig. 5.13):
-    d1=176.5mm, a2=607mm, a3=568mm, d4=193mm, d5=125mm, d6=111.4mm
+Os ângulos de junta usados aqui são exatamente os ângulos URDF que o
+controlador ros2_control / Gazebo recebe.
 
 API pública:
     forward_kinematics(q)           → T 4×4
@@ -30,83 +34,118 @@ from __future__ import annotations
 import math
 import numpy as np
 
-# ──────────────────────────────────────────────────────────────────────
-# Parâmetros DH — Standard DH, colunas [a (m), alpha (rad), d (m)]
-# ──────────────────────────────────────────────────────────────────────
 _PI2 = math.pi / 2
 
-DH_CR10 = np.array([
-    #   a        alpha      d
-    [0.0000,   _PI2,    0.1765],   # J1 — rotação da base (waist)
-    [0.6070,   0.000,   0.0000],   # J2 — ombro (shoulder)
-    [0.5680,   0.000,   0.0000],   # J3 — cotovelo (elbow)
-    [0.0000,   _PI2,    0.1930],   # J4 — rotação do pulso (wrist roll)
-    [0.0000,  -_PI2,    0.1250],   # J5 — inclinação do pulso (wrist pitch)
-    [0.0000,   0.000,   0.1114],   # J6 — flange (wrist yaw / spin)
-], dtype=float)
+# ──────────────────────────────────────────────────────────────────────
+# Geometria do braço (constantes físicas em metros)
+# ──────────────────────────────────────────────────────────────────────
+_D1 = 0.1765   # base → joint1 height
+_A2 = 0.6070   # joint2 → joint3 link length
+_A3 = 0.5680   # joint3 → joint4 link length
 
-# Transformação fixa flange → base da mão COVVI (hand_attach_joint)
-#   xyz = [0, 0, 0.01],  rpy = [π/2, 0, 0]  →  Rx(π/2)
+# Transformação fixa flange → centro físico da palma COVVI.
+#
+# O acoplamento hand_coupling (URDF: xyz="0 0 0.01", rpy="π/2 0 0") posiciona
+# hand_base_link apenas 10 mm do flange (eixo Z do Link6 → world -Y para cima).
+# Na configuração de pick, Link6 Y = [0,0,+1] (world Z), portanto o deslocamento
+# de -0.10 m em Link6 Y = 100 mm para baixo em world Z.
+#
+# Esse offset de 100 mm corresponde à profundidade física do corpo da palma COVVI
+# (referência: base_joint xyz="0 0 0.1" no URDF standalone da mão).
+# O TCP do IK é agora o centro da palma, não o acoplamento (hand_base_link).
+#
+# Derivação em frame Link6 (Link6 Y=[0,0,1], Z=[0,-1,0] world no pick):
+#   Trans([0, -0.10, 0.01]) × Rot(Rx(π/2))
+#   → palm_world = link6_world + [0, -0.01, -0.10]  (10 mm -Y, 100 mm ↓Z)
 T_HAND_ATTACH = np.array([
-    [1.0,  0.0,  0.0, 0.00],
-    [0.0,  0.0, -1.0, 0.00],
-    [0.0,  1.0,  0.0, 0.01],
-    [0.0,  0.0,  0.0, 1.00],
+    [1.0,  0.0,  0.0,  0.00],
+    [0.0,  0.0, -1.0, -0.10],
+    [0.0,  1.0,  0.0,  0.01],
+    [0.0,  0.0,  0.0,  1.00],
 ], dtype=float)
 
-# Limites articulares do CR10 (rad)
-JOINT_MIN = np.deg2rad(np.array([-180.0, -135.0, -135.0, -135.0, -135.0, -360.0]))
-JOINT_MAX = np.deg2rad(np.array([ 180.0,  135.0,  135.0,  135.0,  135.0,  360.0]))
+# Limites articulares — convenção URDF (rad).
+# Joints 2 e 4 têm offset de -π/2 em relação à convenção DH;
+# os limites físicos são mapeados de ±135° (DH) → [-5π/4, π/4] (URDF).
+JOINT_MIN = np.deg2rad([-180., -260., -135., -260., -135., -360.])
+JOINT_MAX = np.deg2rad([ 180.,   80.,  135.,   80.,  135.,  360.])
 
-# Distância efetiva WC→TCP ao longo da direção de abordagem (m).
-# Inclui contribuições de d5, d6 e hand_attach para grasps verticais.
-# Valor calibrado para minimizar erro de posição do IK geométrico.
-_D_WC_TCP = 0.260
+# Distância efetiva WC→TCP ao longo do vetor de abordagem (m).
+# = distância original WC→hand_base_link (0.260) + offset palma (0.100).
+_D_WC_TCP = 0.360
+
+# ──────────────────────────────────────────────────────────────────────
+# Origens URDF das juntas: (xyz, rpy)
+# ──────────────────────────────────────────────────────────────────────
+_URDF_ORIGINS = (
+    ((0.0000,  0.0000, 0.1765), ( 0.0,   0.0,  0.0 )),  # joint1
+    ((0.0000,  0.0000, 0.0000), (_PI2, _PI2,   0.0 )),  # joint2
+    ((-0.6070, 0.0000, 0.0000), ( 0.0,   0.0,  0.0 )),  # joint3
+    ((-0.5680, 0.0000, 0.1910), ( 0.0,   0.0, -_PI2)),  # joint4
+    (( 0.0000,-0.1250, 0.0000), (_PI2,   0.0,  0.0 )),  # joint5
+    (( 0.0000, 0.1084, 0.0000), (-_PI2,  0.0,  0.0 )),  # joint6
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # Parâmetros da mão COVVI
 # ──────────────────────────────────────────────────────────────────────
-_L_PROX       = 0.0450   # comprimento da falange proximal (m)
-_L_DIST       = 0.0300   # comprimento da falange distal   (m)
-_K_P_FINGER   = 1.516    # razão mimic proximal — dedos normais
-_K_D_FINGER   = 0.718    # razão mimic distal   — dedos normais
-_K_P_THUMB    = 1.400    # razão mimic proximal — polegar
+_L_PROX       = 0.0450
+_L_DIST       = 0.0300
+_K_P_FINGER   = 1.516
+_K_D_FINGER   = 0.718
+_K_P_THUMB    = 1.400
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Primitiva DH — matriz homogênea de um elo
+# Primitivas URDF
 # ──────────────────────────────────────────────────────────────────────
 
-def _dh(a: float, alpha: float, d: float, theta: float) -> np.ndarray:
-    ct, st = math.cos(theta), math.sin(theta)
-    ca, sa = math.cos(alpha), math.sin(alpha)
-    return np.array([
-        [ct, -st * ca,  st * sa,  a * ct],
-        [st,  ct * ca, -ct * sa,  a * st],
-        [0.0,       sa,      ca,  d     ],
-        [0.0,      0.0,     0.0,  1.0   ],
+def _make_T(xyz: tuple, rpy: tuple) -> np.ndarray:
+    """Constrói T 4×4 a partir de origem URDF (xyz, rpy)."""
+    x, y, z = xyz
+    r, p, yaw = rpy
+    cr, sr = math.cos(r), math.sin(r)
+    cp, sp = math.cos(p), math.sin(p)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    R = np.array([
+        [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
+        [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
+        [  -sp,            cp*sr,             cp*cr  ],
     ])
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3,  3] = [x, y, z]
+    return T
+
+
+def _Rz4(q: float) -> np.ndarray:
+    """Rotação em torno de z como matriz 4×4."""
+    c, s = math.cos(q), math.sin(q)
+    return np.array([[c, -s, 0., 0.],
+                     [s,  c, 0., 0.],
+                     [0., 0., 1., 0.],
+                     [0., 0., 0., 1.]])
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Cinemática Direta (FK)
+# Cinemática Direta (FK) — convenção URDF
 # ──────────────────────────────────────────────────────────────────────
 
 def forward_kinematics(q: np.ndarray,
                        include_hand: bool = True) -> np.ndarray:
     """
-    FK completa: base → flange J6 (opcionalmente até a base da mão COVVI).
+    FK completa: base → flange Link6 (opcionalmente até hand_base_link COVVI).
 
     Args:
-        q:            ângulos das juntas (6,) em rad
+        q:            ângulos das juntas URDF (6,) em rad
         include_hand: aplica T_HAND_ATTACH ao resultado se True
 
     Returns:
         T: pose do efetuador, matriz homogênea 4×4
     """
     T = np.eye(4)
-    for (a, alpha, d), qi in zip(DH_CR10, q):
-        T = T @ _dh(a, alpha, d, float(qi))
+    for (xyz, rpy), qi in zip(_URDF_ORIGINS, q):
+        T = T @ _make_T(xyz, rpy) @ _Rz4(float(qi))
     if include_hand:
         T = T @ T_HAND_ATTACH
     return T
@@ -116,8 +155,8 @@ def fk_partial(q: np.ndarray, n_links: int) -> np.ndarray:
     """FK dos primeiros n_links elos — ex.: n_links=3 retorna T₀₃."""
     T = np.eye(4)
     for i in range(n_links):
-        a, alpha, d = DH_CR10[i]
-        T = T @ _dh(a, alpha, d, float(q[i]))
+        xyz, rpy = _URDF_ORIGINS[i]
+        T = T @ _make_T(xyz, rpy) @ _Rz4(float(q[i]))
     return T
 
 
@@ -126,20 +165,15 @@ def fk_partial(q: np.ndarray, n_links: int) -> np.ndarray:
 # ──────────────────────────────────────────────────────────────────────
 
 def jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """
-    Jacobiano geométrico 6×6 (translação nas 3 primeiras linhas,
-    rotação nas 3 últimas) via diferenças finitas.
-    """
+    """Jacobiano geométrico 6×6 via diferenças finitas."""
     J = np.zeros((6, 6))
     T0 = forward_kinematics(q)
     p0, R0 = T0[:3, 3].copy(), T0[:3, :3].copy()
 
     for i in range(6):
-        dq = q.copy()
-        dq[i] += eps
+        dq = q.copy(); dq[i] += eps
         T1 = forward_kinematics(dq)
         J[:3, i] = (T1[:3, 3] - p0) / eps
-        # Erro angular escalarizado via vetorização anti-simétrica
         dR = (T1[:3, :3] - R0) / eps
         J[3, i] = (dR[2, 1] - dR[1, 2]) / 2.0
         J[4, i] = (dR[0, 2] - dR[2, 0]) / 2.0
@@ -149,16 +183,9 @@ def jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 
 
 def manipulability(q: np.ndarray) -> float:
-    """
-    Índice de manipulabilidade translacional de Yoshikawa:
-        w = sqrt(det(Jv · Jvᵀ))
-
-    Valores maiores indicam configuração mais afastada de singularidades.
-    """
-    J = jacobian(q)
-    Jv = J[:3, :]
-    val = float(np.sqrt(max(0.0, np.linalg.det(Jv @ Jv.T))))
-    return val
+    """Índice de manipulabilidade translacional de Yoshikawa."""
+    Jv = jacobian(q)[:3, :]
+    return float(np.sqrt(max(0.0, np.linalg.det(Jv @ Jv.T))))
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -166,148 +193,212 @@ def manipulability(q: np.ndarray) -> float:
 # ──────────────────────────────────────────────────────────────────────
 
 def approach_to_Rtcp(approach_vec: np.ndarray) -> np.ndarray:
-    """
-    Constrói a matriz de rotação do TCP a partir do vetor de abordagem.
-
-    O vetor de abordagem define o eixo z do TCP (aponta para o objeto).
-    Os eixos x e y são escolhidos para minimizar o rolamento do efetuador.
-    """
+    """Constrói R_tcp a partir do vetor de abordagem (eixo z do TCP)."""
     z = np.asarray(approach_vec, dtype=float)
     z = z / (np.linalg.norm(z) + 1e-12)
-    ref = np.array([0.0, 0.0, 1.0]) if abs(z[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
-    y = np.cross(z, ref)
-    y /= np.linalg.norm(y) + 1e-12
+    ref = np.array([0., 0., 1.]) if abs(z[2]) < 0.9 else np.array([1., 0., 0.])
+    y = np.cross(z, ref); y /= np.linalg.norm(y) + 1e-12
     x = np.cross(y, z)
     return np.column_stack([x, y, z])
 
 
 def _rot_error(R_curr: np.ndarray, R_des: np.ndarray) -> np.ndarray:
-    """Erro de rotação como vetor (3,) — eixo × sen(ângulo)."""
-    return 0.5 * (
-        np.cross(R_curr[:, 0], R_des[:, 0]) +
-        np.cross(R_curr[:, 1], R_des[:, 1]) +
-        np.cross(R_curr[:, 2], R_des[:, 2])
-    )
+    """Erro de rotação robusto — fórmula de Rodrigues (vee do skew de R_err)."""
+    R_err = R_des @ R_curr.T
+    cos_t = float(np.clip(0.5 * (np.trace(R_err) - 1.0), -1.0, 1.0))
+    s = 0.5 * np.array([
+        R_err[2, 1] - R_err[1, 2],
+        R_err[0, 2] - R_err[2, 0],
+        R_err[1, 0] - R_err[0, 1],
+    ])
+    sin_t = float(np.linalg.norm(s))
+    if sin_t < 1e-7:
+        if cos_t >= 0.0:
+            return s
+        diag = np.array([R_err[0,0]+1., R_err[1,1]+1., R_err[2,2]+1.])
+        idx = int(np.argmax(diag))
+        ax = R_err[:, idx] + np.eye(3)[:, idx]
+        return math.pi * ax / (float(np.linalg.norm(ax)) + 1e-12)
+    return (math.atan2(sin_t, cos_t) / sin_t) * s
+
+
+def _wrist_from_R36(R36: np.ndarray) -> tuple[float, float, float]:
+    """
+    Extrai (q4_u, q5_u, q6_u) de R36 em convenção URDF.
+
+    A cadeia de pulso URDF decompõe-se como:
+        R36_urdf = Rz(q4_u − π/2) · Ry(−q5_u) · Rz(q6_u)
+
+    Extraindo: q4_u = atan2(−r12/s5, −r02/s5) + π/2
+               q5_u = atan2(s5, r22)
+               q6_u = atan2(−R36[2,1]/s5,  R36[2,0]/s5)
+    """
+    r02, r12, r22 = R36[0, 2], R36[1, 2], R36[2, 2]
+    s5p = math.sqrt(r02*r02 + r12*r12)
+    if s5p > 1e-6:
+        q5 = math.atan2(s5p, r22)
+        q4 = math.atan2(-r12/s5p, -r02/s5p) + _PI2   # +π/2 vs DH
+        q6 = math.atan2(-R36[2,1]/s5p, R36[2,0]/s5p)
+    else:
+        q5, q4 = 0.0, 0.0
+        q6 = math.atan2(-R36[0,1], R36[0,0])
+    # Wrap q4 to (−π, π] so atan2 + π/2 does not exceed joint limits
+    q4 = (q4 + math.pi) % (2*math.pi) - math.pi
+    return q4, q5, q6
 
 
 def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
                      elbow_up: bool = True,
                      q1_force: float | None = None) -> np.ndarray:
     """
-    Estimativa inicial analítica geométrica (pulso esférico aproximado).
+    Palpite inicial analítico geométrico em convenção URDF.
 
-    Passos:
-      1. WC = p_tcp − d_eff·ẑ_tcp
-      2. θ₁ = atan2(WCy, WCx)  [ou q1_force se fornecido]
-      3. θ₂, θ₃ via lei dos cossenos
-      4. θ₄, θ₅, θ₆ via R₃₆ = R₀₃ᵀ·R_tcp  [com q1 correto!]
-
-    q1_force: forçar q1 a um valor específico (para multi-start varredura).
-      Sem isso, substituir g[0] após o cálculo deixa q4-q6 inconsistentes,
-      pois R03 (que depende de q1) foi calculada com o q1 original.
+    Relação com DH:
+        q2_urdf = θ2_DH − π/2   (q2=0 URDF ≡ braço vertical)
+        q3_urdf = θ3_DH          (sem offset)
+        q4_urdf = θ4_DH − π/2   (extraído do R36_urdf com +π/2)
+        q5_urdf = θ5_DH,  q6_urdf = θ6_DH
     """
-    a2 = DH_CR10[1, 0]   # 0.607
-    a3 = DH_CR10[2, 0]   # 0.568
-    d1 = DH_CR10[0, 2]   # 0.1765
-
+    # ── Posição do wrist center ─────────────────────────────────────
     p_wc = p_tcp - _D_WC_TCP * R_tcp[:, 2]
 
-    # θ₁ — usa q1_force se fornecido, caso contrário cálculo analítico
     q1 = float(q1_force) if q1_force is not None else math.atan2(p_wc[1], p_wc[0])
 
-    # θ₃ — lei dos cossenos sobre a projeção do WC
-    r = math.sqrt(p_wc[0] ** 2 + p_wc[1] ** 2)
-    s = p_wc[2] - d1
-    D = (r * r + s * s - a2 * a2 - a3 * a3) / (2.0 * a2 * a3)
+    # ── θ3_DH via lei dos cossenos ──────────────────────────────────
+    r = math.sqrt(p_wc[0]**2 + p_wc[1]**2)
+    s = p_wc[2] - _D1
+    D = (r*r + s*s - _A2*_A2 - _A3*_A3) / (2.0 * _A2 * _A3)
     D = max(-1.0, min(1.0, D))
     sign = 1.0 if elbow_up else -1.0
-    q3 = math.atan2(sign * math.sqrt(max(0.0, 1.0 - D * D)), D)
+    th3 = math.atan2(sign * math.sqrt(max(0.0, 1.0 - D*D)), D)   # θ3_DH
 
-    # θ₂
-    q2 = math.atan2(s, r) - math.atan2(a3 * math.sin(q3),
-                                         a2 + a3 * math.cos(q3))
+    # ── θ2_DH ───────────────────────────────────────────────────────
+    th2 = math.atan2(s, r) - math.atan2(_A3*math.sin(th3), _A2 + _A3*math.cos(th3))
 
-    # θ₄, θ₅, θ₆ via R₃₆ = R₀₃ᵀ · R_tcp  (R03 usa o q1 correto)
-    q_tmp = np.array([q1, q2, q3, 0.0, 0.0, 0.0])
+    # ── Converter para URDF ─────────────────────────────────────────
+    q2 = th2 - _PI2                                      # q2_urdf = θ2_DH − π/2
+    q3 = th3                                              # q3_urdf = θ3_DH
+
+    # ── R36_urdf via fk_partial URDF ───────────────────────────────
+    R_flange_target = R_tcp @ T_HAND_ATTACH[:3, :3].T
+    q_tmp = np.array([q1, q2, q3, 0., 0., 0.])
     R03 = fk_partial(q_tmp, 3)[:3, :3]
-    R36 = R03.T @ R_tcp
+    R36 = R03.T @ R_flange_target
 
-    r02, r12, r22 = R36[0, 2], R36[1, 2], R36[2, 2]
-    s5 = math.sqrt(r02 * r02 + r12 * r12)
-    q5 = math.atan2(s5, r22)
-
-    if s5 > 1e-6:
-        q4 = math.atan2(r12 / s5, r02 / s5)
-        q6 = math.atan2(-R36[2, 1] / s5, R36[2, 0] / s5)
-    else:
-        q4 = 0.0
-        q6 = math.atan2(-R36[0, 1], R36[0, 0])
+    q4, q5, q6 = _wrist_from_R36(R36)
 
     return np.array([q1, q2, q3, q4, q5, q6])
 
 
+def _set_wrist(q: np.ndarray, R_target: np.ndarray) -> np.ndarray:
+    """
+    Recalcula q3-q5 analiticamente dado q0-q2 (posição do braço).
+    Testa ambas as soluções do pulso (±q5_u) e retorna a de menor erro.
+    """
+    R_flange_target = R_target @ T_HAND_ATTACH[:3, :3].T
+    R03 = fk_partial(q, 3)[:3, :3]
+    R36 = R03.T @ R_flange_target
+
+    r02, r12, r22 = R36[0, 2], R36[1, 2], R36[2, 2]
+    s5p = math.sqrt(r02*r02 + r12*r12)
+
+    solutions = []
+    if s5p > 1e-6:
+        for sign in (+1.0, -1.0):
+            s5 = sign * s5p
+            q5 = math.atan2(s5, r22)
+            q4_raw = math.atan2(-sign * r12/s5p, -sign * r02/s5p) + _PI2  # +π/2 URDF
+            q4 = (q4_raw + math.pi) % (2*math.pi) - math.pi   # wrap to (−π, π]
+            q6 = math.atan2(-sign * R36[2,1]/s5p,  sign * R36[2,0]/s5p)
+            q_cand = q.copy(); q_cand[3], q_cand[4], q_cand[5] = q4, q5, q6
+            T_check = forward_kinematics(q_cand)
+            ang_err = float(np.linalg.norm(_rot_error(T_check[:3,:3], R_target)))
+            solutions.append((ang_err, q_cand))
+    else:
+        q5, q4 = 0.0, 0.0
+        q6 = math.atan2(-R36[0,1], R36[0,0])
+        q_cand = q.copy(); q_cand[3], q_cand[4], q_cand[5] = q4, q5, q6
+        T_check = forward_kinematics(q_cand)
+        ang_err = float(np.linalg.norm(_rot_error(T_check[:3,:3], R_target)))
+        solutions.append((ang_err, q_cand))
+
+    solutions.sort(key=lambda x: x[0])
+    return solutions[0][1]
+
+
 def _ik_refine(p_target: np.ndarray, R_target: np.ndarray,
                q0: np.ndarray,
-               n_iter: int = 150,
-               tol: float = 5e-4,
-               lr: float = 0.45,
-               lam: float = 0.08) -> tuple[np.ndarray, bool]:
+               n_iter: int = 300,
+               tol_pos: float = 3e-3,
+               tol_ori: float = 0.05) -> tuple[np.ndarray, bool]:
     """
-    Refinamento numérico via pseudo-inverso amortecido (DLS) com lambda adaptativo.
+    Refinamento numérico IK — abordagem desacoplada iterativa.
 
-    Lambda decai exponencialmente de lam (0.08) até lam_min (0.003) ao longo
-    das iterações: começo estável (previne oscilações em poses de alta extensão)
-    e final preciso (permite convergência fina).
-
-    Returns (q, converged).
+    Estágio 1: 4 ciclos de (DLS 3-DOF braço + _set_wrist analítico).
+    Estágio 2: ajuste fino 6-DOF DLS (100 iter).
     """
     q = q0.copy().astype(float)
+    I3 = np.eye(3)
     I6 = np.eye(6)
-    lam_min = 0.003
+    lr = 0.40
 
-    for i in range(n_iter):
-        lam_i = lam * (lam_min / lam) ** (i / n_iter)
+    n_arm = 60
+    for _cycle in range(4):
+        lam_arm = 0.06
+        for i in range(n_arm):
+            lam_i = lam_arm * (0.003/lam_arm) ** (float(i)/n_arm)
+            T = forward_kinematics(q)
+            dp = p_target - T[:3, 3]
+            if float(np.linalg.norm(dp)) < tol_pos:
+                break
+            J_arm = jacobian(q)[:3, :3]
+            dq3 = J_arm.T @ np.linalg.solve(J_arm @ J_arm.T + lam_i*lam_i*I3, dp)
+            q[:3] = np.clip(q[:3] + lr*dq3, JOINT_MIN[:3], JOINT_MAX[:3])
+
+        q = _set_wrist(q, R_target)
+
+        T = forward_kinematics(q)
+        dp_c = float(np.linalg.norm(p_target - T[:3, 3]))
+        dw_c = float(np.linalg.norm(_rot_error(T[:3, :3], R_target)))
+        if dp_c < tol_pos and dw_c < tol_ori:
+            return q, True
+
+    W_ori = 0.25
+    lam_fine = 0.005
+    for _ in range(100):
         T = forward_kinematics(q)
         dp = p_target - T[:3, 3]
-        dw = _rot_error(T[:3, :3], R_target)
-        err = np.concatenate([dp, dw])
-        if np.linalg.norm(err) < tol:
+        dw_raw = _rot_error(T[:3, :3], R_target)
+        if float(np.linalg.norm(dp)) < tol_pos and float(np.linalg.norm(dw_raw)) < tol_ori:
             return q, True
-        J = jacobian(q)
-        JJt = J @ J.T
-        dq = J.T @ np.linalg.solve(JJt + lam_i * lam_i * I6, err)
-        q = np.clip(q + lr * dq, JOINT_MIN, JOINT_MAX)
+        dw = W_ori * dw_raw
+        J = jacobian(q).copy(); J[3:, :] *= W_ori
+        dq = J.T @ np.linalg.solve(J @ J.T + lam_fine*lam_fine*I6, np.concatenate([dp, dw]))
+        q = np.clip(q + lr*dq, JOINT_MIN, JOINT_MAX)
 
     T_f = forward_kinematics(q)
-    return q, float(np.linalg.norm(p_target - T_f[:3, 3])) < 10e-3
+    dp_f = float(np.linalg.norm(p_target - T_f[:3, 3]))
+    dw_f = float(np.linalg.norm(_rot_error(T_f[:3, :3], R_target)))
+    return q, dp_f < 8e-3 and dw_f < 0.25
 
 
 def _ik_candidates(p_tcp: np.ndarray, R_tcp: np.ndarray,
-                    q_seed: np.ndarray | None) -> list[np.ndarray]:
-    """
-    Gera lista de candidatos de palpite inicial para o IK.
-
-    Varre q1 em torno do atan2 ingênuo e gera variantes de
-    cotovelo-acima/abaixo para cada valor, compensando o offset d4.
-    """
+                    q_seed: np.ndarray | None,
+                    elbow_up: bool = True) -> list[np.ndarray]:
+    """Gera candidatos de palpite inicial varrendo q1 ±40° e ambos os cotovelos."""
     candidates: list[np.ndarray] = []
-
     q1_naive = math.atan2(p_tcp[1], p_tcp[0])
+    primary   = True  if elbow_up else False
+    secondary = False if elbow_up else True
 
-    # Varre q1 num intervalo de ±40° em torno do valor ingênuo
     for dq1 in (-0.7, -0.4, -0.2, 0.0, 0.2, 0.4, 0.7):
-        q1 = q1_naive + dq1
-        for elbow in (True, False):
-            g = _geometric_guess(p_tcp, R_tcp, elbow)
-            g = g.copy()
-            g[0] = q1   # forçar q1 varrido
-            candidates.append(g)
+        candidates.append(_geometric_guess(p_tcp, R_tcp, primary,   q1_force=q1_naive+dq1))
+    candidates.append(_geometric_guess(p_tcp, R_tcp, primary))
 
-    # Sempre incluir a estimativa geométrica pura
-    candidates.append(_geometric_guess(p_tcp, R_tcp, True))
-    candidates.append(_geometric_guess(p_tcp, R_tcp, False))
+    for dq1 in (-0.7, -0.4, -0.2, 0.0, 0.2, 0.4, 0.7):
+        candidates.append(_geometric_guess(p_tcp, R_tcp, secondary, q1_force=q1_naive+dq1))
+    candidates.append(_geometric_guess(p_tcp, R_tcp, secondary))
 
-    # Incluir seed externo se disponível
     if q_seed is not None:
         candidates.insert(0, np.asarray(q_seed, dtype=float))
 
@@ -320,29 +411,23 @@ def inverse_kinematics(
         q_seed: np.ndarray | None = None,
         elbow_up: bool = True) -> tuple[np.ndarray, bool]:
     """
-    IK completa do CR10 dada posição do TCP e vetor de abordagem.
-
-    Estratégia multi-start: gera ~16 candidatos de palpite inicial
-    (varrendo q1 ±40° e ambas as configurações de cotovelo) e refina
-    numericamente cada um.  Retorna a solução com menor erro residual.
+    IK completa do CR10 — retorna ângulos URDF (prontos para enviar ao Gazebo).
 
     Args:
         p_tcp:        posição desejada do TCP (3,) em metros [frame base]
         approach_vec: direção de abordagem unitária (TCP z-axis)
-        q_seed:       palpite inicial opcional (e.g., solução anterior)
-        elbow_up:     preferência de configuração de cotovelo (guia a varredura)
+        q_seed:       palpite inicial opcional em convenção URDF
+        elbow_up:     preferência de configuração de cotovelo
 
     Returns:
-        (q, converged): ângulos (6,) rad e flag de convergência
+        (q, converged): ângulos URDF (6,) rad e flag de convergência
     """
     R_tcp = approach_to_Rtcp(np.asarray(approach_vec))
     p_tcp = np.asarray(p_tcp, dtype=float)
 
-    candidates = _ik_candidates(p_tcp, R_tcp, q_seed)
+    candidates = _ik_candidates(p_tcp, R_tcp, q_seed, elbow_up)
 
-    best_q   = candidates[0].copy()
-    best_err = 1e9
-    best_ok  = False
+    best_q, best_err, best_ok = candidates[0].copy(), 1e9, False
 
     for cand in candidates:
         q_cand = np.clip(cand, JOINT_MIN, JOINT_MAX)
@@ -350,11 +435,9 @@ def inverse_kinematics(
         T = forward_kinematics(q)
         err = float(np.linalg.norm(p_tcp - T[:3, 3]))
         if err < best_err:
-            best_err = err
-            best_q   = q
-            best_ok  = ok
+            best_err = err; best_q = q; best_ok = ok
         if best_ok and best_err < 2e-3:
-            break   # solução boa o suficiente — não procurar mais
+            break
 
     return best_q, best_ok and best_err < 10e-3
 
@@ -364,43 +447,28 @@ def inverse_kinematics(
 # ──────────────────────────────────────────────────────────────────────
 
 def reach_margin(q: np.ndarray) -> float:
-    """
-    Margem de alcance [0, 1]: quão longe está da fronteira exterior
-    do espaço de trabalho. 0 = limite externo, 1 = centro do workspace.
-    """
+    """Margem de alcance [0, 1]: quão longe está da fronteira exterior do workspace."""
     p_wc = fk_partial(q, 3)[:3, 3]
-    a2, a3 = DH_CR10[1, 0], DH_CR10[2, 0]
-    d1 = DH_CR10[0, 2]
-    r = math.sqrt(p_wc[0] ** 2 + p_wc[1] ** 2)
-    s = p_wc[2] - d1
-    dist_sq = r * r + s * s
-    r_max_sq = (a2 + a3) ** 2
-    return float(max(0.0, 1.0 - dist_sq / r_max_sq))
+    r = math.sqrt(p_wc[0]**2 + p_wc[1]**2)
+    s = p_wc[2] - _D1
+    dist_sq = r*r + s*s
+    return float(max(0.0, 1.0 - dist_sq / (_A2 + _A3)**2))
 
 
 def singularity_distances(q: np.ndarray) -> tuple[float, float, float]:
     """
     Distâncias normalizadas [0, 1] de cada tipo de singularidade.
     Retorna (shoulder_dist, elbow_dist, wrist_dist).
-    Valores próximos de 0 indicam singularidade iminente.
     """
-    T03 = fk_partial(q, 3)
-    p_wc = T03[:3, 3]
-    a2, a3 = DH_CR10[1, 0], DH_CR10[2, 0]
-    d1 = DH_CR10[0, 2]
-
-    # Singularidade de ombro: WC sobre o eixo J1 (r ≈ 0)
-    r = math.sqrt(p_wc[0] ** 2 + p_wc[1] ** 2)
-    d_shoulder = min(1.0, r / 0.10)
-
-    # Singularidade de cotovelo: braço totalmente estendido/recolhido
-    s = p_wc[2] - d1
-    D = (r * r + s * s - a2 * a2 - a3 * a3) / (2.0 * a2 * a3)
+    p_wc = fk_partial(q, 3)[:3, 3]
+    r = math.sqrt(p_wc[0]**2 + p_wc[1]**2)
+    s = p_wc[2] - _D1
+    D = (r*r + s*s - _A2*_A2 - _A3*_A3) / (2.0 * _A2 * _A3)
     D = max(-1.0, min(1.0, D))
-    d_elbow = min(1.0, (1.0 - abs(D)) / 0.20)
 
-    # Singularidade de pulso: sin(q5) ≈ 0
-    d_wrist = min(1.0, abs(math.sin(float(q[4]))) / math.sin(math.radians(10)))
+    d_shoulder = min(1.0, r / 0.10)
+    d_elbow    = min(1.0, (1.0 - abs(D)) / 0.20)
+    d_wrist    = min(1.0, abs(math.sin(float(q[4]))) / math.sin(math.radians(10)))
 
     return (d_shoulder, d_elbow, d_wrist)
 
@@ -414,11 +482,7 @@ def finger_fk(driver_angle: float,
               l_dist: float = _L_DIST,
               k_p: float = _K_P_FINGER,
               k_d: float = _K_D_FINGER) -> np.ndarray:
-    """
-    FK de um dedo (cadeia 2-link planar no plano sagital).
-
-    Returns: posição da ponta (x, 0, z) no referencial MCP do dedo.
-    """
+    """FK de um dedo (cadeia 2-link planar). Retorna [x, 0, z] no frame MCP."""
     t1 = k_p * driver_angle
     t2 = k_d * driver_angle
     x = l_prox * math.cos(t1) + l_dist * math.cos(t1 + t2)
@@ -431,59 +495,45 @@ def _finger_ik(target_xz: np.ndarray,
                k_p: float) -> float:
     """IK 2-link → ângulo driver. Retorna nan se fora do alcance."""
     xf, zf = float(target_xz[0]), float(target_xz[1])
-    D = (xf * xf + zf * zf - l_prox * l_prox - l_dist * l_dist) / (
-        2.0 * l_prox * l_dist)
+    D = (xf*xf + zf*zf - l_prox*l_prox - l_dist*l_dist) / (2.0 * l_prox * l_dist)
     if abs(D) > 1.0:
         return float('nan')
-    t2 = math.atan2(-math.sqrt(max(0.0, 1.0 - D * D)), D)
-    t1 = math.atan2(zf, xf) - math.atan2(
-        l_dist * math.sin(t2), l_prox + l_dist * math.cos(t2))
+    t2 = math.atan2(-math.sqrt(max(0.0, 1.0 - D*D)), D)
+    t1 = math.atan2(zf, xf) - math.atan2(l_dist*math.sin(t2), l_prox + l_dist*math.cos(t2))
     return t1 / k_p
 
 
-# Configurações nominais de mão por tipo de grasp (driver joints, rad)
 HAND_CONFIGS: dict[str, dict[str, float]] = {
     'open': {
         'Thumb': 0.00, 'Index': 0.00, 'Middle': 0.00,
         'Ring':  0.00, 'Little': 0.00, 'Rotate': 0.00,
     },
     'pinch': {
-        # Polegar + indicador em precisão; demais dedos recolhidos
         'Thumb': 0.85, 'Index': 0.80, 'Middle': 0.05,
         'Ring':  0.05, 'Little': 0.05, 'Rotate': 0.85,
     },
     'cylindrical': {
-        # Todos os dedos em arco envolvendo o cilindro
         'Thumb': 1.20, 'Index': 1.20, 'Middle': 1.20,
         'Ring':  1.10, 'Little': 1.00, 'Rotate': 0.50,
     },
     'spherical': {
-        # Power grasp esférico — todos os dedos curvados
         'Thumb': 1.00, 'Index': 1.00, 'Middle': 1.00,
         'Ring':  1.00, 'Little': 0.90, 'Rotate': 0.60,
     },
-    # ── Novos grips para célula de manufatura ─────────────────────────
     'palm_grip': {
-        # Preensão palmar — todos os dedos profundamente curvados sobre objeto
-        # volumoso/pesado; palma como base de sustentação (ex.: bola)
         'Thumb': 1.10, 'Index': 1.25, 'Middle': 1.25,
         'Ring':  1.20, 'Little': 1.10, 'Rotate': 0.25,
     },
     'claw_grip': {
-        # Preensão em garra — ponta dos dedos curvada para objetos médios
-        # (ex.: copo); força distribuída entre as falanges distais
         'Thumb': 0.90, 'Index': 1.10, 'Middle': 1.10,
         'Ring':  1.05, 'Little': 0.95, 'Rotate': 0.45,
     },
     'fingertip_grip': {
-        # Preensão de precisão — polegar + indicador + médio na ponta dos dedos
-        # para objetos pequenos/delicados (ex.: lápis)
         'Thumb': 0.75, 'Index': 0.70, 'Middle': 0.65,
         'Ring':  0.05, 'Little': 0.05, 'Rotate': 0.82,
     },
 }
 
-# Limites máximos dos driver joints (rad) — clamp de segurança
 HAND_LIMITS: dict[str, float] = {
     'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
     'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0,
@@ -491,42 +541,20 @@ HAND_LIMITS: dict[str, float] = {
 
 
 def hand_ik(grasp_type: str, obj_diameter: float = 0.0) -> dict[str, float]:
-    """
-    IK da mão COVVI: retorna driver joints (rad) para o tipo de grasp.
-    Usa configurações nominais de HAND_CONFIGS como base e escala
-    levemente pela abertura necessária para o diâmetro do objeto.
-
-    A escala é linear:
-      - objeto muito grande (≥ diâmetro máximo) → 100% da config nominal
-      - objeto muito pequeno (≤ diâmetro mínimo) → escala reduzida
-    A direção segura é MANTER os valores nominais pré-calibrados.
-
-    Args:
-        grasp_type:   'open' | 'pinch' | 'cylindrical' | 'spherical'
-        obj_diameter: diâmetro do objeto em metros (≤0 usa config padrão)
-
-    Returns:
-        dict {joint_name: angle_rad} para as 6 juntas primárias
-    """
+    """IK da mão COVVI: retorna driver joints (rad) para o tipo de grasp."""
     cfg = dict(HAND_CONFIGS[grasp_type])
     if obj_diameter <= 0.0 or grasp_type == 'open':
         return cfg
 
-    # Diâmetros de calibração (m): objeto para qual a config nominal é ideal
     _NOMINAL_DIAM = {
         'pinch': 0.010, 'cylindrical': 0.070, 'spherical': 0.060,
         'palm_grip': 0.064, 'claw_grip': 0.050, 'fingertip_grip': 0.010,
     }
     d_nom = _NOMINAL_DIAM.get(grasp_type, obj_diameter)
-
     if abs(d_nom) < 1e-9 or abs(obj_diameter - d_nom) < 5e-3:
-        return cfg   # dentro de 5 mm do nominal — não ajustar
+        return cfg
 
-    # Escala proporcional: objetos menores precisam de menos abertura
-    # (os dedos ficam mais fechados para objetos menores)
     scale = float(np.clip(obj_diameter / d_nom, 0.50, 1.30))
-
-    # Aplica escala apenas nas juntas de flexão (não no Rotate)
     for j in ['Thumb', 'Index', 'Middle', 'Ring', 'Little']:
         cfg[j] = float(np.clip(cfg[j] * scale, 0.05, HAND_LIMITS[j]))
 

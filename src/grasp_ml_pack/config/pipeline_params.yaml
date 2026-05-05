@@ -35,15 +35,30 @@ grasp_executor:
     pick_x: 0.65
     pick_y: 0.00
 
-    # Altura TCP no momento do grasp — world frame (belt top = 0.806)
-    # frasco: 0.806 + 0.045 (metade h=90mm) = 0.851
-    pick_z_frasco: 0.851
-    # tubo:   0.806 + 0.060 (metade h=120mm) = 0.866
-    pick_z_tubo:   0.866
-    # ampola: 0.806 + 0.0375 (metade h=75mm) = 0.844
-    pick_z_ampola: 0.844
+    # Altura do TCP (hand_base_link = centro da palma COVVI) no momento do grasp.
+    # world frame; belt_top = 0.806 m.
+    #
+    # Os dedos em configuração de grasp curlam para baixo (eixo Z da palma = [0,0,-1]
+    # no frame world), chegando até ~70 mm abaixo da palma (finger_fk z_mcp):
+    #   palm_grip  Thumb (1.10 rad, k_p=1.400) → 67 mm
+    #   claw_grip  Thumb (0.90 rad, k_p=1.400) → 71 mm  ← máximo
+    #   fingertip  Index (0.70 rad, k_p=1.516) → 69 mm
+    #
+    # A palma DEVE ficar acima do topo do objeto para que as pontas dos dedos
+    # alcancem a altura correta de preensão (~50% da altura do objeto).
+    # Fórmula: pick_z = belt_top + obj_height + clearance_acima_do_topo
+    #
+    # frasco (h=90mm):  0.806 + 0.090 + 0.020 = 0.916 → dedos a ~43-51% de h
+    pick_z_frasco: 0.916
+    # tubo   (h=120mm): 0.806 + 0.120 + 0.020 = 0.946 → dedos a ~58% de h
+    pick_z_tubo:   0.946
+    # ampola (h=75mm):  0.806 + 0.075 + 0.032 = 0.913 → dedos a ~51% de h
+    pick_z_ampola: 0.913
 
-    # ── Posições das caixas de destino (world frame, TCP drop height) ────
+    # ── Posições das caixas de destino (world frame) ─────────────────────
+    # box_z é a altura de referência do centro da caixa.
+    # O soltar ocorre em approach_box_z = box_z + APPROACH_CLEAR ≈ 0.75 m world,
+    # acima das paredes das caixas (~0.705 m world). O objeto cai livremente.
     # Box 1 — frasco → palm_grip   (vermelho)
     box1_x: -0.05
     box1_y:  0.65
