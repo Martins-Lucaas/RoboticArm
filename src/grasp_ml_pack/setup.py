@@ -35,6 +35,7 @@ setup(
             'grasp_executor       = grasp_ml_pack.grasp_executor:main',
             'conveyor_controller  = grasp_ml_pack.conveyor_controller:main',
             'gui_control          = grasp_ml_pack.gui_control_node:main',
+            'teach_pendant        = grasp_ml_pack.teach_pendant:main',
             'pipeline             = grasp_ml_pack.pipeline:main',
             # ── Módulos originais preservados (não usados no novo pipeline) ──
             'pose_estimator       = grasp_ml_pack.pose_estimator:main',

@@ -43,7 +43,7 @@
 
   <!-- Luz acima da pick station -->
   <light name="pick_station_light" type="point">
-    <pose>0.65 0 2.1 0 0 0</pose>
+    <pose>0.75 0 2.1 0 0 0</pose>
     <diffuse>0.80 0.80 0.80 1</diffuse>
     <specular>0.30 0.30 0.30 1</specular>
     <attenuation>
@@ -235,7 +235,7 @@
   <!-- Estrutura da esteira -->
   <model name="belt_frame">
     <static>true</static>
-    <pose>0.85 0 0.40 0 0 0</pose>
+    <pose>0.95 0 0.40 0 0 0</pose>
     <link name="link">
       <!-- sem colisão: estrutura visual apenas; colisão real nos pés (belt_leg) e guias -->
       <visual name="visual">
@@ -252,7 +252,7 @@
   <!-- Superfície da correia — textura escura antiderrapante -->
   <model name="belt_surface">
     <static>true</static>
-    <pose>0.85 0 0.803 0 0 0</pose>
+    <pose>0.95 0 0.803 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.78 0.34 0.006</size></box></geometry>
@@ -279,7 +279,7 @@
   <!-- Marcação da pick station (quadrado amarelo) -->
   <model name="pick_station_marker">
     <static>true</static>
-    <pose>0.65 0 0.808 0 0 0</pose>
+    <pose>0.75 0 0.808 0 0 0</pose>
     <link name="link">
       <visual name="visual">
         <geometry><box><size>0.16 0.16 0.001</size></box></geometry>
@@ -295,7 +295,7 @@
   <!-- Cruz central da pick station -->
   <model name="pick_cross_h">
     <static>true</static>
-    <pose>0.65 0 0.809 0 0 0</pose>
+    <pose>0.75 0 0.809 0 0 0</pose>
     <link name="link">
       <visual name="visual">
         <geometry><box><size>0.16 0.010 0.001</size></box></geometry>
@@ -307,7 +307,7 @@
   </model>
   <model name="pick_cross_v">
     <static>true</static>
-    <pose>0.65 0 0.809 0 0 0</pose>
+    <pose>0.75 0 0.809 0 0 0</pose>
     <link name="link">
       <visual name="visual">
         <geometry><box><size>0.010 0.16 0.001</size></box></geometry>
@@ -321,7 +321,7 @@
   <!-- Guias laterais da esteira (perfil de alumínio) -->
   <model name="belt_guide_left">
     <static>true</static>
-    <pose>0.85 0.240 0.870 0 0 0</pose>
+    <pose>0.95 0.240 0.870 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
@@ -339,7 +339,7 @@
 
   <model name="belt_guide_right">
     <static>true</static>
-    <pose>0.85 -0.240 0.870 0 0 0</pose>
+    <pose>0.95 -0.240 0.870 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
@@ -358,7 +358,7 @@
   <!-- Pés de suporte da esteira -->
   <model name="belt_leg_front">
     <static>true</static>
-    <pose>0.55 0 0.20 0 0 0</pose>
+    <pose>0.65 0 0.20 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.05 0.30 0.40</size></box></geometry>
@@ -374,7 +374,7 @@
 
   <model name="belt_leg_back">
     <static>true</static>
-    <pose>1.15 0 0.20 0 0 0</pose>
+    <pose>1.25 0 0.20 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.05 0.30 0.40</size></box></geometry>
@@ -391,10 +391,10 @@
   <!-- ================================================================
        SUPORTE DA CÂMERA — coluna industrial com braço articulado
        ================================================================ -->
-  <!-- Coluna atrás da esteira (x=1.35), fora do alcance do braço -->
+  <!-- Coluna atrás da esteira (x=1.45), fora do alcance do braço -->
   <model name="camera_column">
     <static>true</static>
-    <pose>1.35 0.0 0.90 0 0 0</pose>
+    <pose>1.45 0.0 0.90 0 0 0</pose>
     <link name="link">
       <collision name="collision">
         <geometry><box><size>0.04 0.04 1.80</size></box></geometry>
@@ -410,10 +410,10 @@
     </link>
   </model>
 
-  <!-- Braço horizontal em X (da coluna em x=1.35 até câmera em x=1.15) -->
+  <!-- Braço horizontal em X (da coluna em x=1.45 até câmera em x=1.25) -->
   <model name="camera_arm">
     <static>true</static>
-    <pose>1.25 0.0 1.75 0 0 0</pose>
+    <pose>1.35 0.0 1.75 0 0 0</pose>
     <link name="link">
       <visual name="visual">
         <geometry><box><size>0.20 0.03 0.03</size></box></geometry>
@@ -429,7 +429,7 @@
   <!-- Corpo da câmera — yaw=π para olhar de volta à pick station -->
   <model name="rgbd_camera">
     <static>true</static>
-    <pose>1.15 0.0 1.70 0 1.05 3.1416</pose>
+    <pose>1.25 0.0 1.70 0 1.05 3.1416</pose>
     <link name="camera_link">
       <visual name="body_visual">
         <geometry><box><size>0.06 0.12 0.030</size></box></geometry>

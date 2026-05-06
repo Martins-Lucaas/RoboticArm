@@ -23,16 +23,24 @@ MARGIN      = 0.005   # 5 mm de margem de colisão
 _AV_DOWN    = np.array([0.0, 0.0, -1.0])
 _HOME_Q     = np.array([0.0, 0.0, math.pi/2,
                         -math.pi/2, -math.pi/2, 0.0])
-# Seed compacto para IK de pick: mantém o braço em configuração de cotovelo
-# acima da esteira. Derivado da solução do frasco (único objeto cujo seed
-# HOME_Q converge para a configuração correta). Válido para pick_xy=(0.65,0)
-# e pick_z ∈ [0.90, 0.95] m world.
-_PICK_SEED_Q = np.array([0.473, -0.106, -1.542, -1.493, 0.473, 0.0])
+# Seeds compactos por objeto para pick_xy=(0.75,0).
+# q_pick é calculado primeiro com o seed do objeto, depois q_ap seeded a partir de q_pick.
+# frasco/ampola usam q4<0 (mesmo ramo); tubo usa q4>0 (apenas ramo estendido disponível).
+_PICK_SEED_Q = {
+    'frasco': np.array([0.411, -0.277, -1.335, -1.529,  0.411,  0.0  ]),
+    'tubo':   np.array([0.411, -0.381, -1.652,  2.032, -0.411,  3.142]),
+    'ampola': np.array([0.411, -0.277, -1.341, -1.524,  0.411,  0.0  ]),
+}
 
 # Seed compacto para IK de approach_box: q2 e q3 negativos mantêm o braço
 # "dobrado para cima" e evitam que Link2/Link3 entrem na sort_shelf (z ≤ 0.48m).
 # Funciona para os três boxes (x=−0.05, 0.25, 0.55 m; y=0.65 m; z=0.75 m world).
 _APPROACH_BOX_SEED_Q = np.array([0.0, -0.4, -1.5, -1.3, 0.0, 0.0])
+
+# Seed para via_box (z=1.15m world): converge para ramo compacto (q2≈-0.5,
+# q3≈-0.8) com Link2/Link3 y_max<0.52 para todos os três destinos.
+# Seed encadeado approach_box→via_box divergia para ramo errado em box2/box3.
+_VIA_BOX_SEED_Q = np.array([0.5, -0.5, -0.8, -1.5, 0.5, 0.0])
 
 # ── STL bounding boxes (frame do link) ──────────────────────────────────
 # Formato: (xmin, xmax, ymin, ymax, zmin, zmax)
@@ -46,17 +54,37 @@ STL_BOUNDS = {
     'Link6':     (-0.045, +0.045, -0.055, +0.045, -0.042,  0.000),
 }
 
-# ── Obstáculos: (cx, cy, cz, sx, sy, sz) world frame ────────────────────
-OBS = {
-    'belt_frame':     (0.85,  0.0,   0.40,  0.80, 0.36,  0.80),
-    'belt_surface':   (0.85,  0.0,   0.803, 0.78, 0.34,  0.006),
-    'belt_guide_L':   (0.85,  0.240, 0.870, 0.80, 0.025, 0.13),
-    'belt_guide_R':   (0.85, -0.240, 0.870, 0.80, 0.025, 0.13),
-    'belt_leg_front': (0.55,  0.0,   0.20,  0.05, 0.30,  0.40),
+# ── Obstáculos estáticos: (cx, cy, cz, sx, sy, sz) world frame ──────────
+OBS_STATIC = {
+    'belt_frame':     (0.95,  0.0,   0.40,  0.80, 0.36,  0.80),
+    'belt_surface':   (0.95,  0.0,   0.803, 0.78, 0.34,  0.006),
+    'belt_guide_L':   (0.95,  0.240, 0.870, 0.80, 0.025, 0.13),
+    'belt_guide_R':   (0.95, -0.240, 0.870, 0.80, 0.025, 0.13),
+    'belt_leg_front': (0.65,  0.0,   0.20,  0.05, 0.30,  0.40),
     'sort_shelf':     (0.25,  0.65,  0.24,  0.86, 0.30,  0.48),
     'sort_shelf_top': (0.25,  0.65,  0.493, 0.86, 0.30,  0.014),
     'pedestal':       (0.0,   0.0,   0.1875,0.18, 0.18,  0.375),
 }
+
+# ── Objetos spawnados: pick objects (presentes apenas nas fases 0-3) ──────
+# AABB do cilindro: sx=sy=2r (diâmetro), sz=altura, cz=belt_top+h/2
+OBS_PICK = {
+    'pick_frasco': (0.75, 0.00, 0.851, 0.090, 0.090, 0.090),  # r=42mm h=90mm
+    'pick_tubo':   (0.75, 0.00, 0.866, 0.030, 0.030, 0.120),  # r=12mm h=120mm
+    'pick_ampola': (0.75, 0.00, 0.844, 0.015, 0.015, 0.075),  # r=5mm  h=75mm
+}
+
+# ── Objetos spawnados: caixas de destino (sempre presentes) ──────────────
+# Hull exterior: pose=(cx,0.65,0.535), paredes h=0.17, topo em z=0.705m.
+# cx±0.135 em x, ±0.130 em y  →  sx=0.270, sy=0.260; sz=floor_h+wall_h=0.205
+OBS_BINS = {
+    'bin_frasco': (-0.05, 0.65, 0.603, 0.270, 0.260, 0.205),
+    'bin_tubo':   ( 0.25, 0.65, 0.603, 0.270, 0.260, 0.205),
+    'bin_ampola': ( 0.55, 0.65, 0.603, 0.270, 0.260, 0.205),
+}
+
+# Conjunto completo de obstáculos (usado por check_all_collisions)
+OBS = {**OBS_STATIC, **OBS_BINS}
 
 # ── Box positions (world frame) ──────────────────────────────────────────
 BOXES = {
@@ -71,7 +99,7 @@ PICK_Z = {
     'tubo':   0.946,
     'ampola': 0.913,
 }
-PICK_XY = np.array([0.65, 0.00])
+PICK_XY = np.array([0.75, 0.00])
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -168,12 +196,14 @@ def compute_link_aabbs(q):
     return link_aabbs, link_bounds
 
 
-def check_all_collisions(q, waypoint_name, margin=MARGIN):
-    """Verifica colisões de todos os links com todos os obstáculos."""
+def check_all_collisions(q, waypoint_name, obs_dict=None, margin=MARGIN):
+    """Verifica colisões de todos os links com todos os obstáculos em obs_dict."""
+    if obs_dict is None:
+        obs_dict = OBS
     link_aabbs, link_bounds = compute_link_aabbs(q)
     collisions = []
     for link_name, link_aabb in link_aabbs.items():
-        for obs_name, obs_tuple in OBS.items():
+        for obs_name, obs_tuple in obs_dict.items():
             collides, clearance = check_collision(link_aabb, obs_tuple, margin)
             if collides:
                 collisions.append({
@@ -210,8 +240,10 @@ def fk_tcp_world(q):
 # ────────────────────────────────────────────────────────────────────────
 
 def generate_waypoints(obj_name, box_key):
-    """Gera lista de (nome_waypoint, q, ok) para um objeto/caixa.
-    Seeding idêntico ao grasp_executor.py."""
+    """
+    Gera lista de (nome_waypoint, q, ok) para um objeto/caixa.
+    Seeding idêntico ao grasp_executor.py (incluindo via_pick).
+    """
     box_world = BOXES[box_key]
     pick_z_w  = PICK_Z[obj_name]
     pick_world = np.array([PICK_XY[0], PICK_XY[1], pick_z_w])
@@ -222,34 +254,35 @@ def generate_waypoints(obj_name, box_key):
     q_home = _HOME_Q.copy()
     waypoints.append(('HOME', q_home, True))
 
-    # 2. pick (seed = _PICK_SEED_Q — configuração compacta validada)
-    q_pick, ok_pick = ik_robot(pick_world, seed=_PICK_SEED_Q, elbow_up=False)
-    waypoints.append(('pick', q_pick, ok_pick))
+    # pick primeiro (seed por objeto); approach/via_pick/lift seeded a partir de q_pick.
+    # Esta ordem garante que q_pick converge para o ramo compacto correto.
+    q_pick, ok_pick = ik_robot(pick_world, seed=_PICK_SEED_Q[obj_name], elbow_up=False)
 
-    # 3. approach_pick (seed = q_pick — mesma postura, sem config "spread")
     ap_pick_world = np.array([PICK_XY[0], PICK_XY[1], pick_z_w + AP_CLEAR])
     q_ap, ok_ap = ik_robot(ap_pick_world, seed=q_pick, elbow_up=False)
-    waypoints.append(('approach_pick', q_ap, ok_ap))
 
-    # 4. lift (seed = q_pick)
+    via_pick_world = np.array([PICK_XY[0], PICK_XY[1], BASE_Z + TRANSIT_Z])
+    q_vp, ok_vp = ik_robot(via_pick_world, seed=q_ap, elbow_up=False)
+
     lift_world = np.array([PICK_XY[0], PICK_XY[1], pick_z_w + LIFT_H])
-    q_lift, ok_lift = ik_robot(lift_world, seed=q_pick, elbow_up=False)
-    waypoints.append(('lift', q_lift, ok_lift))
+    q_lift, ok_lift = ik_robot(lift_world, seed=q_vp, elbow_up=False)
 
-    # 5. via_box (XY da caixa, z = TRANSIT_Z; seed = HOME_Q)
-    # O executor usa box XY para via_box, não pick XY.
-    via_world = np.array([box_world[0], box_world[1], BASE_Z + TRANSIT_Z])
-    q_via, ok_via = ik_robot(via_world, seed=_HOME_Q, elbow_up=False)
-    waypoints.append(('via_box', q_via, ok_via))
-
-    # 6. approach_box (acima da caixa; seed = _APPROACH_BOX_SEED_Q)
-    # Seed compacto (q2≈−0.4, q3≈−1.5) mantém Link2/Link3 acima da sort_shelf
-    # para todos os boxes. Seed q_via ou HOME_Q causam colisão em um ou outro box.
+    # approach_box primeiro (seed compacto); via_box seeded de q_ap_box para
+    # evitar que o IK diverga para ramo errado em z=1.15m para box2/box3.
     ap_box_world = np.array([box_world[0], box_world[1], box_world[2] + AP_CLEAR])
     q_ap_box, ok_ap_box = ik_robot(ap_box_world, seed=_APPROACH_BOX_SEED_Q, elbow_up=False)
-    waypoints.append(('approach_box', q_ap_box, ok_ap_box))
 
-    # Sem place_box: executor solta o objeto em approach_box (acima das paredes).
+    via_world = np.array([box_world[0], box_world[1], BASE_Z + TRANSIT_Z])
+    q_via, ok_via = ik_robot(via_world, seed=_VIA_BOX_SEED_Q, elbow_up=False)
+
+    # Append em ordem de movimento
+    waypoints.append(('via_pick',      q_vp,     ok_vp))
+    waypoints.append(('approach_pick', q_ap,     ok_ap))
+    waypoints.append(('pick',          q_pick,   ok_pick))
+    waypoints.append(('lift',          q_lift,   ok_lift))
+    waypoints.append(('via_box',       q_via,    ok_via))
+    waypoints.append(('approach_box',  q_ap_box, ok_ap_box))
+
     return waypoints
 
 
@@ -265,8 +298,8 @@ def analyze_descent_clearance(obj_name):
     ap_world  = np.array([PICK_XY[0], PICK_XY[1], ap_z_w])
     pick_world = np.array([PICK_XY[0], PICK_XY[1], pick_z_w])
 
-    q_pick, ok_pick = ik_robot(pick_world, seed=_PICK_SEED_Q, elbow_up=False)
-    q_ap, ok_ap     = ik_robot(ap_world,   seed=q_pick,       elbow_up=False)
+    q_pick, ok_pick = ik_robot(pick_world, seed=_PICK_SEED_Q[obj_name], elbow_up=False)
+    q_ap, ok_ap     = ik_robot(ap_world,   seed=q_pick,                 elbow_up=False)
 
     steps = 20
     results = []
@@ -326,7 +359,8 @@ def corners_in_obs(q, link_name, obs_name):
     bounds = STL_BOUNDS[link_name]
     corners_w = transform_corners(T_world, bounds)  # 3×8
 
-    cx, cy, cz, sx, sy, sz = OBS[obs_name]
+    all_obs = {**OBS, **OBS_PICK}
+    cx, cy, cz, sx, sy, sz = all_obs[obs_name]
     xmin, xmax = cx - sx/2, cx + sx/2
     ymin, ymax = cy - sy/2, cy + sy/2
     zmin, zmax = cz - sz/2, cz + sz/2
@@ -382,10 +416,15 @@ def main():
     all_below_belt = []
     waypoint_qs    = {}   # key = "obj/wp" → q (para corner check)
 
+    # Waypoints em que o pick object já está presente (fases 0-3 do executor)
+    PICK_PRESENT_WPS = {'HOME', 'via_pick', 'approach_pick', 'pick'}
+
     for obj_name, box_key in OBJECTS:
         print(f"\n{'─'*60}")
         print(f"OBJETO: {obj_name.upper()}  →  {box_key.upper()}")
         print(f"{'─'*60}")
+
+        pick_obj_key = f'pick_{obj_name}'
 
         waypoints = generate_waypoints(obj_name, box_key)
 
@@ -398,7 +437,24 @@ def main():
             print(f"    q = [{', '.join(f'{v:.3f}' for v in q)}]")
             print(f"    TCP world = [{tcp_w[0]:.4f}, {tcp_w[1]:.4f}, {tcp_w[2]:.4f}]")
 
-            collisions, link_aabbs, link_bounds = check_all_collisions(q, wp_key)
+            # Escolhe conjunto de obstáculos ativo para este waypoint
+            if wp_name in PICK_PRESENT_WPS:
+                # Objeto spawnado presente; verificar que braço não toca objeto.
+                # Em 'pick' apenas Link6 pode entrar no objeto (mão toca): excluir da check.
+                obs_active = dict(OBS)
+                obs_active[f'pick_{obj_name}'] = OBS_PICK[f'pick_{obj_name}']
+            else:
+                obs_active = dict(OBS)
+
+            collisions_raw, link_aabbs, link_bounds = check_all_collisions(q, wp_key, obs_active)
+
+            # Em pick: Link6 pode tocar o objeto (mão envolve objeto) — filtrar
+            if wp_name == 'pick':
+                collisions = [c for c in collisions_raw
+                              if not (c['link'] == 'Link6'
+                                      and c['obstacle'] == f'pick_{obj_name}')]
+            else:
+                collisions = collisions_raw
 
             # Imprime AABB de cada link
             for lname, (cx,cy,cz,sx,sy,sz) in link_aabbs.items():
@@ -417,7 +473,7 @@ def main():
             else:
                 print(f"    --> Nenhuma colisão detectada.")
 
-            # Check below belt durante pick
+            # Check below belt durante pick / approach_pick
             if 'pick' in wp_name or 'approach_pick' in wp_name:
                 below = check_below_belt(q, wp_name)
                 if below:
@@ -514,8 +570,10 @@ def main():
     print("\nVerificando via_box especificamente...")
     for obj_name, box_key in OBJECTS:
         box_w = BOXES[box_key]
+        ap_box_w = np.array([box_w[0], box_w[1], box_w[2] + AP_CLEAR])
+        q_ab_chk, _ = ik_robot(ap_box_w, seed=_APPROACH_BOX_SEED_Q, elbow_up=False)
         via_world = np.array([box_w[0], box_w[1], BASE_Z + TRANSIT_Z])
-        q_via, ok_via = ik_robot(via_world, seed=_HOME_Q, elbow_up=False)
+        q_via, ok_via = ik_robot(via_world, seed=_VIA_BOX_SEED_Q, elbow_up=False)
         tcp_w = fk_tcp_world(q_via)
         _, link_aabbs_via = compute_link_aabbs(q_via)  # bounds
         link_aabbs_d, link_bounds_via = compute_link_aabbs(q_via)

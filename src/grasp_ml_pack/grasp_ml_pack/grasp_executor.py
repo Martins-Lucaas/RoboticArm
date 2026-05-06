@@ -48,6 +48,7 @@ from vision_msgs.msg import Detection2DArray
 
 from .kinematics import (
     inverse_kinematics,
+    forward_kinematics, fk_partial,
     HAND_CONFIGS, HAND_LIMITS, hand_ik,
     JOINT_MIN, JOINT_MAX,
 )
@@ -95,19 +96,29 @@ _MIMIC_MAP: dict[str, tuple[str, float]] = {
 # Validado: nenhum link colide com belt_frame, belt_guides, sort_shelf ou caixas.
 _HOME_Q         = np.array([0.0,  0.0,  math.pi/2,
                              -math.pi/2, -math.pi/2, 0.0])
-# Seed para IK de pick: configuração compacta de cotovelo acima da esteira.
-# Derivado da solução do frasco com HOME_Q; válido para pick_xy=(0.65,0)
-# e pick_z ∈ [0.90, 0.95] m world. Evita solução de "cotovelo para baixo"
-# que mergulha Link2 abaixo da superfície da correia para tubo/ampola.
-_PICK_SEED_Q    = np.array([0.473, -0.106, -1.542, -1.493,  0.473, 0.0])
+# Seeds compactos por objeto para IK de pick (pick_xy=(0.75,0)).
+# q_pick é calculado primeiro com o seed do objeto; approach/via/lift seeded
+# a partir de q_pick. frasco/ampola usam ramo q4<0; tubo usa o único ramo estável.
+_PICK_SEED_Q = {
+    'frasco': np.array([0.411, -0.277, -1.335, -1.529,  0.411,  0.0  ]),
+    'tubo':   np.array([0.411, -0.381, -1.652,  2.032, -0.411,  3.142]),
+    'ampola': np.array([0.411, -0.277, -1.341, -1.524,  0.411,  0.0  ]),
+}
 # Seed compacto para IK de approach_box: q2/q3 negativos mantêm Link2/Link3
 # acima da sort_shelf (z≤0.48m) para todos os três boxes.
 _APPROACH_BOX_SEED_Q = np.array([0.0, -0.4, -1.5, -1.3, 0.0, 0.0])
+# Seed para via_box (z=1.15m world, diretamente acima do box em transit altitude).
+# Seed [0.5,-0.5,-0.8,-1.5,0.5,0] converge para o ramo compacto (q2≈-0.5,q3≈-0.8)
+# que mantém Link2/Link3 com y_max<0.52 (abaixo da parede frontal das caixas
+# y=0.52 world) para todos os três boxes. Outros seeds convergem para ramo errado
+# (q2≈-1.6, q3≈+1.2) onde Link2 invade a zona das caixas.
+_VIA_BOX_SEED_Q = np.array([0.5, -0.5, -0.8, -1.5, 0.5, 0.0])
 _APPROACH_CLEAR = 0.15    # m — altura de pré-abordagem (acima da parede das caixas: 0.705m)
 _LIFT_HEIGHT    = 0.22    # m — altura de levantamento pós-grasp
 _CLOSE_EXTRA    = 0.05    # fração extra de fechamento sobre o cfg nominal
 _MAX_JOINT_VEL  = 0.50    # rad/s
 _N_TRAJ_STEPS   = 12      # waypoints por segmento de trajetória
+_N_CART_VIA     = 10      # waypoints Cartesianos para transição HOME → via_pick
 
 # Approach vector padrão: de cima para baixo (esteira horizontal).
 # Para IK de pick, usar elbow_up=False: cotovelo fisicamente acima da correia
@@ -125,6 +136,39 @@ _ROBOT_BASE_Z = 0.405
 # na solução IK para box2/box3 entre 1.03-1.085m que mergulha joint3/joint4
 # dentro da sort_shelf. Validado numericamente para frasco, tubo e ampola.
 _TRANSIT_Z = 1.15 - _ROBOT_BASE_Z   # 0.745 m robot frame
+
+
+# ── Bounding boxes dos links STL (frame local do link, em metros) ─────
+# Usados para verificação em tempo de execução: proibido qualquer link do
+# braço (exceto mão) tocar objeto spawnado.
+_LINK_STL_BOUNDS: dict[str, tuple] = {
+    'base_link': (-0.139, +0.093, -0.093, +0.093,  0.000, +0.093),
+    'Link1':     (-0.077, +0.077, -0.102, +0.077, -0.097, +0.109),
+    'Link2':     (-0.669, +0.077, -0.077, +0.077, +0.102, +0.302),
+    'Link3':     (-0.614, +0.061, -0.061, +0.061, -0.023, +0.124),
+    'Link4':     (-0.046, +0.046, -0.068, +0.089, -0.067, +0.046),
+    'Link5':     (-0.046, +0.046, -0.101, +0.067, -0.057, +0.046),
+    'Link6':     (-0.045, +0.045, -0.055, +0.045, -0.042,  0.000),
+}
+
+# ── Bounding boxes dos objetos spawnados (world frame, cx cy cz sx sy sz) ─
+# Frasco r=42mm h=90mm: centro z = belt_top(0.806) + h/2 = 0.851
+# Tubo   r=12mm h=120mm: centro z = 0.806 + 0.060 = 0.866
+# Ampola r=5mm  h=75mm:  centro z = 0.806 + 0.0375 = 0.844
+_PICK_OBJ_BBOX: dict[str, tuple] = {
+    'frasco': (0.75, 0.00, 0.851, 0.090, 0.090, 0.090),
+    'tubo':   (0.75, 0.00, 0.866, 0.030, 0.030, 0.120),
+    'ampola': (0.75, 0.00, 0.844, 0.015, 0.015, 0.075),
+}
+
+# ── Bounding boxes das caixas de destino (world frame, cx cy cz sx sy sz) ─
+# Caixas: pose=(box_x, 0.65, 0.535), paredes h=0.17, topo em z=0.705m
+# Hull exterior: x±0.135, y±0.130 relativo ao centro, z=[0.500, 0.705]
+_BIN_BBOX: dict[str, tuple] = {
+    'box1': (-0.05, 0.65, 0.603, 0.270, 0.260, 0.205),
+    'box2': ( 0.25, 0.65, 0.603, 0.270, 0.260, 0.205),
+    'box3': ( 0.55, 0.65, 0.603, 0.270, 0.260, 0.205),
+}
 
 
 def _w2r(pos: np.ndarray) -> np.ndarray:
@@ -204,6 +248,128 @@ def _close_extra(cfg: dict[str, float]) -> dict[str, float]:
     return {j: float(min(cfg.get(j, 0.0) + _CLOSE_EXTRA * HAND_LIMITS[j],
                          HAND_LIMITS[j]))
             for j in _HAND_PRIMARY}
+
+
+# ── Verificação de colisão em tempo de execução ───────────────────────
+
+def _link_world_aabb(q: np.ndarray, link_idx: int) -> tuple:
+    """
+    Calcula AABB world (cx,cy,cz,sx,sy,sz) de um link do braço.
+    link_idx: 0=base_link, 1..6=Link1..Link6.
+    """
+    T_base = np.eye(4)
+    T_base[2, 3] = _ROBOT_BASE_Z
+
+    if link_idx == 0:
+        T_world = T_base
+        key = 'base_link'
+    else:
+        T_world = T_base @ fk_partial(q, link_idx)
+        key = f'Link{link_idx}'
+
+    xmin, xmax, ymin, ymax, zmin, zmax = _LINK_STL_BOUNDS[key]
+    pts = []
+    for x in (xmin, xmax):
+        for y in (ymin, ymax):
+            for z in (zmin, zmax):
+                p = T_world @ np.array([x, y, z, 1.0])
+                pts.append(p[:3])
+    pts = np.array(pts)
+    cx = float((pts[:, 0].min() + pts[:, 0].max()) / 2)
+    cy = float((pts[:, 1].min() + pts[:, 1].max()) / 2)
+    cz = float((pts[:, 2].min() + pts[:, 2].max()) / 2)
+    sx = float(pts[:, 0].max() - pts[:, 0].min())
+    sy = float(pts[:, 1].max() - pts[:, 1].min())
+    sz = float(pts[:, 2].max() - pts[:, 2].min())
+    return (cx, cy, cz, sx, sy, sz)
+
+
+def _bbox_overlap(a: tuple, b: tuple, margin: float = 0.005) -> tuple[bool, float]:
+    """Verifica overlap entre dois AABBs. Retorna (colide, clearance_mm)."""
+    cx1, cy1, cz1, sx1, sy1, sz1 = a
+    cx2, cy2, cz2, sx2, sy2, sz2 = b
+    ox = abs(cx1 - cx2) - (sx1 + sx2) / 2 - margin
+    oy = abs(cy1 - cy2) - (sy1 + sy2) / 2 - margin
+    oz = abs(cz1 - cz2) - (sz1 + sz2) / 2 - margin
+    collides = ox < 0 and oy < 0 and oz < 0
+    return collides, max(ox, oy, oz) * 1000.0
+
+
+def _arm_clears_bbox(q: np.ndarray, bbox: tuple,
+                     links: tuple = (1, 2, 3, 4, 5, 6)) -> tuple[bool, str]:
+    """
+    Verifica que os links do braço (sem mão) não colidem com bbox.
+    Retorna (tudo_livre, mensagem_de_diagnóstico).
+    """
+    for li in links:
+        la = _link_world_aabb(q, li)
+        coll, clr = _bbox_overlap(la, bbox)
+        if coll:
+            return False, f'Link{li} penetra objeto (clearance={clr:.1f}mm)'
+    return True, 'OK'
+
+
+# ── Trajetória Cartesiana ─────────────────────────────────────────────
+
+def _cartesian_arm_goal(q_start: np.ndarray,
+                        q_end: np.ndarray,
+                        n_via: int = _N_CART_VIA
+                        ) -> tuple[FollowJointTrajectory.Goal, float]:
+    """
+    Trajetória com n_via waypoints interpolados no espaço Cartesiano do TCP.
+
+    Cada waypoint é calculado por IK ao longo da linha reta entre FK(q_start)
+    e FK(q_end), com seed propagado da solução anterior. Isso garante que:
+      1. O TCP percorra uma trajetória previsível (linha reta Cartesiana).
+      2. As mudanças de junta por passo sejam pequenas (seed contínuo).
+      3. Nenhum link do braço varra regiões de obstáculos durante transições
+         de grande amplitude no espaço de juntas (ex.: HOME → via_pick).
+
+    A mudança de branch de IK (e.g., "home branch" → "pick branch") ocorre
+    gradualmente ao longo dos n_via passos, nunca num único salto de 3 rad.
+    """
+    T0 = forward_kinematics(q_start)
+    T1 = forward_kinematics(q_end)
+    p0 = T0[:3, 3]
+    p1 = T1[:3, 3]
+
+    configs: list[np.ndarray] = []
+    q_prev = q_start.copy()
+
+    for i in range(1, n_via + 1):
+        alpha = float(i) / n_via
+        p_i = p0 + alpha * (p1 - p0)
+        q_i, _ = inverse_kinematics(p_i, _AV_DOWN, q_seed=q_prev, elbow_up=False)
+        configs.append(q_i)
+        q_prev = q_i
+
+    # Duração: maior delta de junta em qualquer passo consecutivo
+    q_all = [q_start] + configs
+    max_delta = max(
+        float(np.max(np.abs(q_all[i + 1] - q_all[i])))
+        for i in range(len(q_all) - 1)
+    )
+    step_dur = max(max_delta / _MAX_JOINT_VEL, 0.40)
+    total_dur = max(step_dur * len(configs), 3.0)
+
+    traj = JointTrajectory()
+    traj.joint_names = _ARM_JOINTS
+
+    for i, q in enumerate(configs, 1):
+        smooth = 0.5 * (1.0 - math.cos(math.pi * i / len(configs)))
+        t = total_dur * smooth
+        pt = JointTrajectoryPoint()
+        pt.positions = [float(v) for v in q]
+        if i == len(configs):
+            pt.velocities    = [0.0] * 6
+            pt.accelerations = [0.0] * 6
+        sec = int(t)
+        pt.time_from_start = Duration(sec=sec, nanosec=int((t - sec) * 1e9))
+        traj.points.append(pt)
+
+    goal = FollowJointTrajectory.Goal()
+    goal.trajectory = traj
+    return goal, total_dur
 
 
 # ── Nó executor ──────────────────────────────────────────────────────
@@ -390,49 +556,90 @@ class GraspExecutorNode(Node):
             # ── Calcular todas as poses IK em robot frame ──────────────
             approach_pick = p_pick + np.array([0.0, 0.0, _APPROACH_CLEAR])
             lift_pos      = p_pick + np.array([0.0, 0.0, _LIFT_HEIGHT])
+            # via_pick: altura TRANSIT_Z diretamente sobre a pick station.
+            # Usar _PICK_SEED_Q garante que via_pick, approach_pick e pick
+            # estejam todos no mesmo branch de IK (configuração compacta).
+            # A transição HOME → via_pick é feita por caminho Cartesiano
+            # (ver FASE 0) para evitar que Link2/Link3 varram a zona do objeto.
+            via_pick_pos  = np.array([p_pick[0], p_pick[1], _TRANSIT_Z])
             # via_box: altura fixa _TRANSIT_Z (1.15m world) sobre a caixa.
-            # Altura fixa necessária: o IK para box2/box3 tem descontinuidade entre
-            # 1.03-1.085m world que mergulha joint3 dentro da sort_shelf.
-            # 1.15m world garante j3 > 0.50m (sort_shelf top) para todos os objetos.
-            via_pos      = np.array([p_box[0], p_box[1], _TRANSIT_Z])
-            approach_box = p_box + np.array([0.0, 0.0, _APPROACH_CLEAR])
+            via_pos       = np.array([p_box[0],  p_box[1],  _TRANSIT_Z])
+            approach_box  = p_box + np.array([0.0, 0.0, _APPROACH_CLEAR])
 
-            # Pick side: seed pick primeiro, depois approach com q_pick como seed.
-            # Isso garante que approach_pick use a mesma postura do braço que pick,
-            # evitando a configuração "spread" que colide com belt_frame.
-            # elbow_up=False mantém cotovelo geometricamente acima da correia.
-            q_pick, ok2     = inverse_kinematics(p_pick,        _AV_DOWN, _PICK_SEED_Q, elbow_up=False)
+            # Ordem de seed para o lado do pick (pick primeiro com seed por objeto,
+            # depois approach/via/lift derivados de q_pick):
+            #   pick          ← _PICK_SEED_Q[obj_name]  (seed compacto por objeto)
+            #   approach_pick ← q_pick (branch consistente com pick)
+            #   via_pick      ← q_ap   (mesmo branch, z mais alto)
+            #   lift          ← q_vp   (via_pick próximo em z)
+            q_pick, ok2     = inverse_kinematics(p_pick,         _AV_DOWN, _PICK_SEED_Q[obj_class],      elbow_up=False)
             if not ok2:
                 raise RuntimeError(f'IK pick falhou: {p_pick}')
-            q_ap,   ok1     = inverse_kinematics(approach_pick, _AV_DOWN, q_pick,  elbow_up=False)
+            q_ap,   ok1     = inverse_kinematics(approach_pick,  _AV_DOWN, q_pick,                       elbow_up=False)
             if not ok1:
                 raise RuntimeError(f'IK abordagem pick falhou: {approach_pick}')
-            q_lift, ok_lift = inverse_kinematics(lift_pos,      _AV_DOWN, q_pick,  elbow_up=False)
+            q_vp,   ok_vp   = inverse_kinematics(via_pick_pos,   _AV_DOWN, q_ap,                         elbow_up=False)
+            if not ok_vp:
+                raise RuntimeError(f'IK via_pick falhou: {via_pick_pos}')
+            q_lift, ok_lift = inverse_kinematics(lift_pos,       _AV_DOWN, q_vp,                         elbow_up=False)
             if not ok_lift:
                 raise RuntimeError(f'IK lift falhou: {lift_pos}')
 
-            # Caixa side: elbow_up=False — mantém cotovelo (joint3) e pulso (joint4)
-            # acima da prateleira de classificação (sort_shelf top=0.50 m world).
-            # via_box: seed = HOME_Q. approach_box: seed = _APPROACH_BOX_SEED_Q.
-            # q_via como seed de approach_box colapsa para configuração spread
-            # (Link2/Link3 dentro da sort_shelf) em ampola/box3. HOME_Q colapsa
-            # em tubo/box2. O seed compacto (q2≈−0.4, q3≈−1.5) é válido para os
-            # três boxes (confirmado por verificação de cantos STL).
-            q_via,  ok_via  = inverse_kinematics(via_pos,      _AV_DOWN, _HOME_Q, elbow_up=False)
-            if not ok_via:
-                raise RuntimeError(f'IK via_box falhou: {via_pos}')
-            q_ab,   ok3     = inverse_kinematics(approach_box, _AV_DOWN, _APPROACH_BOX_SEED_Q, elbow_up=False)
+            # Lado da caixa: approach_box com seed compacto; via_box com seed
+            # _VIA_BOX_SEED_Q que converge para ramo compacto (q2≈-0.5, q3≈-0.8)
+            # para TODOS os três boxes. Seed encadeado (ab→via) divergia para ramo
+            # errado (q2≈-1.6) em box2/box3 na altitude z=1.15m.
+            q_ab,   ok3     = inverse_kinematics(approach_box,   _AV_DOWN, _APPROACH_BOX_SEED_Q, elbow_up=False)
             if not ok3:
                 raise RuntimeError(f'IK abordagem box falhou: {approach_box}')
+            q_via,  ok_via  = inverse_kinematics(via_pos,        _AV_DOWN, _VIA_BOX_SEED_Q,      elbow_up=False)
+            if not ok_via:
+                raise RuntimeError(f'IK via_box falhou: {via_pos}')
+
+            # ── Verificação estática: nenhum link do braço toca o objeto ─
+            # O check é feito nos waypoints IK calculados. A FASE 0 (caminho
+            # Cartesiano) garante que nenhum waypoint intermédio viola esses
+            # limites. Qualquer violação nos waypoints fixos levanta RuntimeError.
+            obj_bbox = _PICK_OBJ_BBOX.get(obj_class)
+            if obj_bbox is not None:
+                for wp_name, q_wp in (('via_pick', q_vp), ('approach_pick', q_ap)):
+                    ok_c, msg_c = _arm_clears_bbox(q_wp, obj_bbox)
+                    if not ok_c:
+                        raise RuntimeError(
+                            f'Colisão de braço com objeto [{obj_class}] em {wp_name}: {msg_c}')
+                # pick: mão toca o objeto (esperado); braço NÃO deve tocar
+                ok_c, msg_c = _arm_clears_bbox(q_pick, obj_bbox, links=(1, 2, 3, 4, 5))
+                if not ok_c:
+                    raise RuntimeError(
+                        f'Colisão de braço com objeto [{obj_class}] em pick: {msg_c}')
+
+            bin_bbox = _BIN_BBOX.get(box_key)
+            if bin_bbox is not None:
+                for wp_name, q_wp in (('via_box', q_via), ('approach_box', q_ab)):
+                    ok_c, msg_c = _arm_clears_bbox(q_wp, bin_bbox)
+                    if not ok_c:
+                        raise RuntimeError(
+                            f'Colisão de braço com caixa [{box_key}] em {wp_name}: {msg_c}')
 
             # ── Configurações da mão ───────────────────────────────────
             cfg_open   = HAND_CONFIGS['open']
             cfg_grasp  = hand_ik(grip_type, obj_diam)
             cfg_closed = _close_extra(cfg_grasp)
 
-            # ── FASE 1: Abrir mão + ir para abordagem pick ─────────────
+            # ── FASE 0: HOME → via_pick (caminho Cartesiano) ────────────
+            # Interpola n_via posições TCP ao longo da linha reta de HOME_TCP
+            # até via_pick_TCP. IK de cada posição usa o resultado anterior
+            # como seed: garante transição suave (delta ≈ 3.1 rad em q3 dividido
+            # por _N_CART_VIA passos) e mantém o TCP acima de via_pick_z ≥ 1.15m
+            # world durante toda a transição — zona do objeto fica em z ≤ 0.946m.
             self._status_msg = f'APPROACH_PICK:{obj_class}'
-            self.get_logger().info('[F1] Abrindo mão + abordagem pick')
+            self.get_logger().info('[F0] HOME → via_pick (caminho Cartesiano)')
+            self._send_arm_cartesian(q_vp)
+            time.sleep(0.2)
+
+            # ── FASE 1: Abrir mão + via_pick → approach_pick ─────────────
+            # Pequeno descenso dentro do mesmo branch de IK: delta q3 ≈ 0.36 rad.
+            self.get_logger().info('[F1] Abrindo mão + via_pick → approach_pick')
             self._send_hand(cfg_open, 2.0)
             self._send_arm(q_ap)
             time.sleep(0.3)
@@ -461,16 +668,19 @@ class GraspExecutorNode(Node):
             time.sleep(0.3)
 
             # ── FASE 5: Trânsito lateral — pick area → via_box ─────────
-            # Mover lateralmente à altura de segurança (lift_z > 1.06 m world),
-            # acima de belt_guides (0.935 m) e sort_shelf (0.50 m).
+            # Caminho Cartesiano: TCP percorre linha reta de lift_pos até via_box.
+            # Evita que Link2/Link3 varram a zona das caixas (z ≤ 0.705 m) durante
+            # a transição de branch PICK→HOME que ocorre neste segmento.
             self._status_msg = f'TRANSIT:{obj_class}→{box_key}'
-            self.get_logger().info(f'[F5] Trânsito lateral → {box_key}')
-            self._send_arm(q_via)
+            self.get_logger().info(f'[F5] Trânsito lateral → {box_key} (Cartesiano)')
+            self._send_arm_cartesian(q_via)
             time.sleep(0.2)
 
             # ── FASE 6: Descer para abordagem da caixa ─────────────────
-            self.get_logger().info(f'[F6] Descida abordagem → {box_key}')
-            self._send_arm(q_ab)
+            # Caminho Cartesiano: garante descida vertical direta sobre a abertura
+            # da caixa (TCP passa pelo centro da abertura), evitando paredes laterais.
+            self.get_logger().info(f'[F6] Descida abordagem → {box_key} (Cartesiano)')
+            self._send_arm_cartesian(q_ab)
             time.sleep(0.2)
 
             # ── FASE 7: Soltar acima da caixa ─────────────────────────
@@ -483,8 +693,10 @@ class GraspExecutorNode(Node):
             time.sleep(0.3)
 
             # ── FASE 8: Subir ao via_box ───────────────────────────────
-            self.get_logger().info('[F8] Subindo ao via_box')
-            self._send_arm(q_via)
+            # Caminho Cartesiano: subida vertical até altura de segurança,
+            # espelho da descida da Fase 6.
+            self.get_logger().info('[F8] Subindo ao via_box (Cartesiano)')
+            self._send_arm_cartesian(q_via)
             time.sleep(0.1)
 
             # ── FASE 9: Retorno → HOME ─────────────────────────────────
@@ -529,8 +741,10 @@ class GraspExecutorNode(Node):
 
     # ──────────────────────────────────────────────────────────────────
     def _do_home(self):
-        """Envia braço ao home e libera busy quando chamado via serviço direto."""
-        self._send_arm(_HOME_Q)
+        """Envia braço ao home via caminho Cartesiano e libera busy."""
+        # Caminho Cartesiano para HOME: evita que o braço desça abaixo
+        # de obstáculos durante a transição de qualquer configuração para HOME.
+        self._send_arm_cartesian(_HOME_Q)
         time.sleep(0.3)
         if self._busy and self._status_msg == 'HOMING':
             self._status_msg = 'IDLE'
@@ -542,6 +756,20 @@ class GraspExecutorNode(Node):
         goal, _ = _make_smooth_arm_goal(self._current_q, q)
         self._arm_ac.send_goal(goal)  # blocking in this rclpy version
         self._current_q = q.copy()
+
+    def _send_arm_cartesian(self, q_target: np.ndarray,
+                             n_via: int = _N_CART_VIA):
+        """
+        Envia o braço para q_target via trajetória Cartesiana.
+
+        Calcula n_via waypoints intermediários ao longo da linha reta
+        TCP_atual → TCP_alvo, resolvendo IK com seed propagado.
+        Usado para transições de grande amplitude de junta (HOME → via_pick)
+        que poderiam fazer links varreram a zona de objetos spawnados.
+        """
+        goal, _ = _cartesian_arm_goal(self._current_q, q_target, n_via)
+        self._arm_ac.send_goal(goal)  # blocking
+        self._current_q = q_target.copy()
 
     def _send_hand(self, cfg: dict[str, float], duration: float):
         """Envia posição à mão e bloqueia até o goal ser concluído."""

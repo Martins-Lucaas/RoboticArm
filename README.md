@@ -82,12 +82,12 @@ Cada objeto tem cor específica na simulação Gazebo para a segmentação HSV:
 
 ## Arquitetura do sistema
 
-O pipeline tem **5 nós ROS 2** comunicando em grafo:
+O pipeline tem **5 nós ROS 2** comunicando em grafo, mais um **teach pendant** para programação manual de waypoints:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Câmera RGB (Gazebo)                                                │
-│  x=1.15, z=1.70, pitch=60°, yaw=180°  —  montada atrás da esteira  │
+│  x=1.25, z=1.70, pitch=60°, yaw=180°  —  montada atrás da esteira  │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │ /camera/color/image_raw
                            ▼
@@ -102,7 +102,7 @@ O pipeline tem **5 nós ROS 2** comunicando em grafo:
 │  [grasp_executor]                                                    │
 │  Recebe classe do objeto → escolhe grip + caixa destino              │
 │  Calcula IK analítica para todas as poses do ciclo                   │
-│  Executa 7 fases de movimento                                        │
+│  Executa 10 fases de movimento (F0–F9)                               │
 └──────────────────┬───────────────────────────────────────────────────┘
                    │ /conveyor/retreat  (remove objeto após grasp)
                    │
@@ -128,17 +128,20 @@ O pipeline tem **5 nós ROS 2** comunicando em grafo:
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Ciclo de grasp — 7 fases
+### Ciclo de grasp — 10 fases
 
 ```
-[F1] Abrir mão + ir para abordagem pick  (15 cm acima do objeto)
-[F2] Pré-configurar dedos + descer ao objeto
+[F0] HOME → via_pick  (caminho Cartesiano — evita varredura sobre objetos)
+[F1] Abrir mão + via_pick → approach_pick  (15 cm acima do objeto)
+[F2] Descer com mão aberta + pré-configurar dedos
 [F3] Fechar mão — grasp
      → /conveyor/retreat (remove objeto da esteira)
 [F4] Levantar com objeto  (22 cm)
-[F5] Trânsito para a caixa de destino
-[F6] Descer na caixa + abrir mão (soltar)
-[F7] Recuar + retornar ao home
+[F5] Trânsito para a caixa de destino  (caminho Cartesiano)
+[F6] Descer na caixa  (caminho Cartesiano)
+[F7] Abrir mão — soltar objeto
+[F8] Subir ao via_box
+[F9] Retornar ao HOME  (caminho Cartesiano)
 ```
 
 ---
@@ -147,7 +150,9 @@ O pipeline tem **5 nós ROS 2** comunicando em grafo:
 
 A cinemática inversa usa **multi-start DLS com lambda adaptativo** — damping alto (λ=0.08) para estabilização e decay exponencial até λ=0.003 para precisão fina.
 
-O braço opera com **conversão de frames obrigatória**: o base_link do robô está em `world z = 0.375 m` (topo do pedestal), portanto todas as posições world frame têm esse offset subtraído antes do cálculo IK.
+O braço opera com **conversão de frames obrigatória**: o base_link do robô está em `world z = 0.405 m` (pedestal + offset URDF), portanto todas as posições world frame têm esse offset subtraído antes do cálculo IK.
+
+Seeds por objeto foram determinados experimentalmente para garantir ramo de IK compacto (cotovelo acima da esteira) e ausência de colisões em toda a cadeia de waypoints. A análise completa está em `collision_analysis.py`.
 
 ```bash
 ros2 run grasp_ml_pack test_kin
@@ -171,7 +176,7 @@ Resultado geral: PASS ✓
 |---|---|---|
 | Braço | **Dobot CR10** | 6-DOF, alcance 1375 mm, payload 10 kg |
 | Mão | **COVVI Hand** | 5 dedos + 31 juntas (6 primárias + 25 mimic) |
-| Câmera | RGB Gazebo | 848×480, FoV 70°, x=1.15 m, z=1.70 m, pitch=60°, yaw=180° |
+| Câmera | RGB Gazebo | 848×480, FoV 70°, x=1.25 m, z=1.70 m, pitch=60°, yaw=180° |
 
 ---
 
@@ -199,9 +204,6 @@ sudo apt install -y \
 
 # Python — numpy<2 obrigatório (cv_bridge do Humble compilado com NumPy 1.x)
 pip install "numpy<2" opencv-python
-
-# Opcional — YOLOv8 para robô físico com GPU
-pip install ultralytics
 ```
 
 ---
@@ -257,9 +259,9 @@ Com o launch rodando, a **GUI de Controle** abre automaticamente com dois painé
 | `Home` | Envia braço para posição home |
 
 **Fluxo típico de operação:**
-1. Clique `Avançar Esteira` — objeto spawna em x=0.65, y=0, z=2.0 e cai na esteira
+1. Clique `Avançar Esteira` — objeto spawna em x=0.75, y=0, z=2.0 e cai na esteira
 2. Aguarde o objeto aparecer na janela da câmera com bounding box
-3. Clique `AGARRAR` — o braço executa as 7 fases e deposita na caixa certa
+3. Clique `AGARRAR` — o braço executa as 10 fases e deposita na caixa certa
 
 ### Modo autônomo
 
@@ -271,6 +273,32 @@ conveyor_pipeline:
     autonomous: true      # ← muda para true
     total_cycles: 9       # 3 ciclos × 3 objetos
 ```
+
+### Teach Pendant — programação manual de waypoints
+
+O teach pendant permite jogar o braço manualmente, gravar waypoints e exportá-los para uso no pipeline automático.
+
+```bash
+ros2 run grasp_ml_pack teach_pendant
+```
+
+A GUI abre com dois painéis:
+
+**Painel esquerdo — controle do braço:**
+- Sliders individuais para cada junta (J1–J6) com limites do CR10
+- Botões `+` / `−` para jog incremental por junta
+- Botão `Go Home` para retornar à posição home
+
+**Painel direito — waypoints:**
+| Botão | Ação |
+|---|---|
+| `Gravar Waypoint` | Captura a configuração atual das juntas |
+| `Ir para` | Envia o braço para o waypoint selecionado |
+| `Remover` | Remove o waypoint selecionado da lista |
+| `Exportar YAML` | Salva todos os waypoints em arquivo `.yaml` |
+| `Exportar Python` | Gera snippet Python com `TEACH_WAYPOINTS = [...]` |
+
+O arquivo `config/teach_sequence.yaml` contém os waypoints gravados para a pick station do frasco (posição de referência).
 
 ### Controle manual da mão e braço (sem pipeline)
 
@@ -287,22 +315,20 @@ Permite controlar a mão COVVI e as juntas do CR10 individualmente pela GUI comb
 ```
 RoboticArm/
 ├── images/                              screenshots e mídia
-│   ├── conveyor_cell_gazebo_full_scene.png
-│   ├── conveyor_cell_gazebo_simulation_running.png
-│   ├── conveyor_cell_gui_camera_idle.png
-│   ├── conveyor_cell_gui_arm_picking.png
-│   ├── conveyor_cell_gazebo_closeup_bins.png
-│   └── ...
+├── teach_sequence.yaml                  waypoints gravados pelo teach pendant
+├── collision_analysis.py                análise de colisão offline (FK + AABB + cantos STL)
 ├── src/
 │   ├── grasp_ml_pack/                   pacote principal — célula de manufatura
 │   │   ├── config/
-│   │   │   └── pipeline_params.yaml     parâmetros de todos os nós
+│   │   │   ├── pipeline_params.yaml     parâmetros de todos os nós
+│   │   │   └── teach_sequence.yaml      cópia dos waypoints gravados
 │   │   ├── grasp_ml_pack/
 │   │   │   ├── kinematics.py            IK analítica CR10 (DH, multi-start DLS)
 │   │   │   ├── object_detector.py       detecção HSV + back-projection 2D→3D
-│   │   │   ├── grasp_executor.py        ciclo pick→lift→place (7 fases)
+│   │   │   ├── grasp_executor.py        ciclo pick→lift→place (10 fases, F0–F9)
 │   │   │   ├── conveyor_controller.py   spawn/delete objetos + serviços de esteira
 │   │   │   ├── gui_control_node.py      GUI Tkinter (esteira + braço)
+│   │   │   ├── teach_pendant.py         teach pendant: jog + gravação + exportação
 │   │   │   └── pipeline.py              orquestrador (máquina de estados)
 │   │   ├── launch/
 │   │   │   └── conveyor_cell.launch.py  launch principal da célula
@@ -328,15 +354,6 @@ RoboticArm/
 
 ## Tópicos principais
 
-<<<<<<< HEAD
-| Punho esquerda | Punho direita |
-|---|---|
-| ![Aberta](images/covvi_hand_rviz_joints_open.png) | ![Fechada](images/covvi_hand_rviz_joints_closed.png) |
-
-| Malha de colisão | Vista lateral |
-|---|---|
-| ![Colisão](images/covvi_hand_rviz_collision_mesh.png) | ![Branca](images/covvi_hand_rviz_white_version.png) |
-=======
 | Tópico | Tipo | Descrição |
 |---|---|---|
 | `/camera/color/image_raw` | `sensor_msgs/Image` | Feed RGB bruto da câmera Gazebo |
@@ -350,7 +367,6 @@ RoboticArm/
 | `/cell/go_home` | `std_srvs/Trigger` | Serviço: envia braço ao home |
 | `/cell/status` | `std_msgs/String` (JSON) | Estado do executor (APPROACH_PICK, GRASPING…) |
 | `/joint_states` | `sensor_msgs/JointState` | Posições das 37 juntas (6 braço + 31 mão) |
->>>>>>> 43f20eb (finalização do código base)
 
 ---
 
@@ -386,6 +402,9 @@ pkill -f gzserver; pkill -f gzclient
 
 # Testar IK isoladamente
 ros2 run grasp_ml_pack test_kin
+
+# Análise de colisão offline
+python3 collision_analysis.py
 ```
 
 > **Build com erro de symlink?** Se aparecer `symbolic link ... Is a directory`:
