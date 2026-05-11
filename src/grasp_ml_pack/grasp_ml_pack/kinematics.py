@@ -43,25 +43,27 @@ _D1 = 0.1765   # base → joint1 height
 _A2 = 0.6070   # joint2 → joint3 link length
 _A3 = 0.5680   # joint3 → joint4 link length
 
-# Transformação fixa flange → centro físico da palma COVVI.
+# Transformação fixa flange → ponto de preensão (TCP efetivo) na palma COVVI.
 #
-# O acoplamento hand_coupling (URDF: xyz="0 0 0.01", rpy="π/2 0 0") posiciona
-# hand_base_link apenas 10 mm do flange (eixo Z do Link6 → world -Y para cima).
-# Na configuração de pick, Link6 Y = [0,0,+1] (world Z), portanto o deslocamento
-# de -0.10 m em Link6 Y = 100 mm para baixo em world Z.
+# Acoplamento URDF Link6 → hand_base_link: xyz="0 0 0.01" rpy="π/2 0 0".
+# Em configuração palm-down (q_pick padrão), Link6_y aponta para +world_Z.
 #
-# Esse offset de 100 mm corresponde à profundidade física do corpo da palma COVVI
-# (referência: base_joint xyz="0 0 0.1" no URDF standalone da mão).
-# O TCP do IK é agora o centro da palma, não o acoplamento (hand_base_link).
+# A correção crítica: o TCP DEVE coincidir com a região onde os dedos fecham
+# em torno do objeto, não com hand_base_link nem com um ponto fantasma.
+# Análise geométrica COVVI (verificada por FK):
+#   • hand_base_link world Z ≈ Link6 world Z (acoplamento na lateral)
+#   • Index MCP world Z = Link6 world Z + 0.015   (dedo nasce 15 mm acima)
+#   • Fingertip fechado world Z = MCP − 0.067     (curl efetivo)
+#                              = Link6 world Z − 0.052
 #
-# Derivação em frame Link6 (Link6 Y=[0,0,1], Z=[0,-1,0] world no pick):
-#   Trans([0, -0.10, 0.01]) × Rot(Rx(π/2))
-#   → palm_world = link6_world + [0, -0.01, -0.10]  (10 mm -Y, 100 mm ↓Z)
+# Portanto, com TCP definido como `(0, -0.052, 0.01)` no frame do Link6, o
+# ponto IK passa pela zona de preensão real. O usuário define `pick_z` como
+# o centro do objeto (belt_top + h/2) e os dedos fechados envolvem o objeto.
 T_HAND_ATTACH = np.array([
-    [1.0,  0.0,  0.0,  0.00],
-    [0.0,  0.0, -1.0, -0.10],
-    [0.0,  1.0,  0.0,  0.01],
-    [0.0,  0.0,  0.0,  1.00],
+    [1.0,  0.0,  0.0,  0.000],
+    [0.0,  0.0, -1.0, -0.075],   # 75 mm — TCP entre palma e fingertips
+    [0.0,  1.0,  0.0,  0.010],
+    [0.0,  0.0,  0.0,  1.000],
 ], dtype=float)
 
 # Limites articulares — convenção URDF (rad).
@@ -71,8 +73,10 @@ JOINT_MIN = np.deg2rad([-180., -260., -135., -260., -135., -360.])
 JOINT_MAX = np.deg2rad([ 180.,   80.,  135.,   80.,  135.,  360.])
 
 # Distância efetiva WC→TCP ao longo do vetor de abordagem (m).
-# = distância original WC→hand_base_link (0.260) + offset palma (0.100).
-_D_WC_TCP = 0.360
+# WC→hand_base_link ≈ 0.260; novo offset palma→TCP = 0.075 → soma = 0.335.
+# Apenas heurística inicial: o refinamento numérico do IK (DLS) absorve
+# diferenças residuais.
+_D_WC_TCP = 0.335
 
 # ──────────────────────────────────────────────────────────────────────
 # Origens URDF das juntas: (xyz, rpy)

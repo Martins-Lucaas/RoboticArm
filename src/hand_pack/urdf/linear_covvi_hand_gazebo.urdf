@@ -277,9 +277,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_proximal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0485 0.0537 0.0216" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="0.0655 0.0440 0.0097" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_thumb_proximal_l0">
@@ -328,9 +328,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_thumb_distal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0324 0.0332 0.0210" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="0.0986 0.0732 0.0096" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_thumb_distal_l0">
@@ -481,9 +481,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_index_proximal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0145 0.0425 0.0205" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="0.0225 0.1031 -0.0188" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_index_proximal_l0">
@@ -532,9 +532,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_index_distal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0166 0.0380 0.0275" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="0.0265 0.1374 -0.0080" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_index_distal_l0">
@@ -736,9 +736,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_proximal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0146 0.0461 0.0207" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="0.0028 0.1083 -0.0194" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_middle_proximal_l0">
@@ -787,9 +787,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_middle_distal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0172 0.0378 0.0289" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="0.0045 0.1445 -0.0088" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_middle_distal_l0">
@@ -991,9 +991,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_proximal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0144 0.0444 0.0206" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="-0.0166 0.1072 -0.0148" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_ring_proximal_l0">
@@ -1042,9 +1042,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_ring_distal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0158 0.0379 0.0278" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="-0.0172 0.1424 -0.0045" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_ring_distal_l0">
@@ -1246,9 +1246,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_little_proximal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0143 0.0367 0.0179" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="-0.0333 0.0929 -0.0092" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_little_proximal_l0">
@@ -1297,9 +1297,9 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://hand_pack/urdf/linear_meshes/right_little_distal.STL" scale="0.001 0.001 0.001" />
+                <box size="0.0161 0.0293 0.0254" />
             </geometry>
-            <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+            <origin xyz="-0.0361 0.1196 -0.0008" rpy="0 0 0" />
         </collision>
     </link>
     <link name="_little_distal_l0">
@@ -1490,42 +1490,48 @@
         <parent link="base_link" />
         <child link="Thumb_driver_link" />
         <axis xyz="0 0 1" />
-        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="1.0" velocity="1.0" />
+        <dynamics damping="0.5" friction="0.05" />
     </joint>
     <joint name="Index" type="revolute">
         <origin xyz="0 0 0" />
         <parent link="base_link" />
         <child link="Index_driver_link" />
         <axis xyz="0 0 1" />
-        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="1.0" velocity="1.0" />
+        <dynamics damping="0.5" friction="0.05" />
     </joint>
     <joint name="Middle" type="revolute">
         <origin xyz="0 0 0" />
         <parent link="base_link" />
         <child link="Middle_driver_link" />
         <axis xyz="0 0 1" />
-        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="1.0" velocity="1.0" />
+        <dynamics damping="0.5" friction="0.05" />
     </joint>
     <joint name="Ring" type="revolute">
         <origin xyz="0 0 0" />
         <parent link="base_link" />
         <child link="Ring_driver_link" />
         <axis xyz="0 0 1" />
-        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="1.0" velocity="1.0" />
+        <dynamics damping="0.5" friction="0.05" />
     </joint>
     <joint name="Little" type="revolute">
         <origin xyz="0 0 0" />
         <parent link="base_link" />
         <child link="Little_driver_link" />
         <axis xyz="0 0 1" />
-        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000000000000000000" upper="1.60000000000000008882" effort="1.0" velocity="1.0" />
+        <dynamics damping="0.5" friction="0.05" />
     </joint>
     <joint name="Rotate" type="revolute">
         <origin xyz="0 0 0" />
         <parent link="base_link" />
         <child link="Rotate_driver_link" />
         <axis xyz="0 0 1" />
-        <limit lower="0.00000000000000000000" upper="1.00000000000000000000" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000000000000000000" upper="1.00000000000000000000" effort="1.0" velocity="1.0" />
+        <dynamics damping="0.5" friction="0.05" />
     </joint>
     <joint name="_lisa_j_input_joint" type="fixed">
         <origin xyz="0.01063932804486799125 0.01989224021220993913 0.01239670635855700739" rpy="-0.00000001490116097180 0 0" />
@@ -1539,7 +1545,7 @@
         <child link="_lisa_l1" />
         <axis xyz="8.166136313026937e-09 0.9999999999999999 1.300658039224663e-08" />
         <mimic joint="Rotate" multiplier="1.07337741974876732520" offset="0.00000001490116097180" />
-        <limit lower="0.00000001490116097180" upper="1.07337743464992829701" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000001490116097180" upper="1.07337743464992829701" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_lisa_j_lisa" type="fixed">
         <origin xyz="-0.01063932804486799125 -0.01989224021220993913 -0.01239670635855700739" rpy="-0.00000001490116097180 0 0" />
@@ -1558,7 +1564,7 @@
         <child link="_thumb_chassis_l1" />
         <axis xyz="-1.0039121702977482e-08 -0.9999999999999999 1.8777992879094288e-08" />
         <mimic joint="Rotate" multiplier="1.53339618284689227501" offset="0.00000002107342389479" />
-        <limit lower="0.00000002107342389479" upper="1.53339620392031616980" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000002107342389479" upper="1.53339620392031616980" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_thumb_chassis_j_thumb_chassis" type="fixed">
         <origin xyz="-0.02423845277709852850 -0.02291912894867134329 -0.01255090207192549601" rpy="-0.00000002107342389479 0 0" />
@@ -1577,7 +1583,7 @@
         <child link="_thumb_proximal_l1" />
         <axis xyz="0.14866818156281958 -0.1305261869683429 0.9802350158540093" />
         <mimic joint="Thumb" multiplier="0.72022188617106031039" offset="-0.00000000000000016653" />
-        <limit lower="-0.00000000000000016653" upper="1.15235501787369631899" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000016653" upper="1.15235501787369631899" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_thumb_proximal_j_thumb_proximal" type="fixed">
         <origin xyz="-0.04595257006791431120 -0.02166263305070318529 -0.01040755413061646151" rpy="0.00000000000000016653 0 0" />
@@ -1596,7 +1602,7 @@
         <child link="_thumb_distal_l1" />
         <axis xyz="0.1486681537240236 -0.13052619107234176 0.9802350195297231" />
         <mimic joint="Thumb" multiplier="1.06686018440504470917" offset="-0.00000000000000033307" />
-        <limit lower="-0.00000000000000033307" upper="1.70697629504807113499" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000033307" upper="1.70697629504807113499" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_thumb_distal_j_thumb_distal" type="fixed">
         <origin xyz="-0.08608527475741903356 -0.06726879476898903198 -0.01020346018803429920" rpy="0.00000000000000033307 0 0" />
@@ -1615,7 +1621,7 @@
         <child link="_thumb_link_l1" />
         <axis xyz="0.1486681500676118 -0.1305261887766519 0.9802350203899655" />
         <mimic joint="Thumb" multiplier="0.76799454671461719890" offset="-0.00000000000000016653" />
-        <limit lower="-0.00000000000000016653" upper="1.22879127474338734061" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000016653" upper="1.22879127474338734061" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_thumb_link_j_thumb_link" type="fixed">
         <origin xyz="-0.03708075693949615392 -0.02584733559806719899 -0.01235203067266419860" rpy="0.00000000000000016653 0 0" />
@@ -1634,7 +1640,7 @@
         <child link="_thumb_follower_l1" />
         <axis xyz="-0.1486655629842887 0.13052549101972807 -0.9802355056702565" />
         <mimic joint="Thumb" multiplier="0.93732763826281451092" offset="-0.00000000000000022204" />
-        <limit lower="-0.00000000000000022204" upper="1.49972422122050308424" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000022204" upper="1.49972422122050308424" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_thumb_follower_j_thumb_follower" type="fixed">
         <origin xyz="-0.04353337295874371016 -0.04556966526534234063 -0.01386344556778203695" rpy="0.00000000000000022204 0 0" />
@@ -1653,7 +1659,7 @@
         <child link="_index_proximal_l1" />
         <axis xyz="0.9935814517046622 -0.052307286750173175 -0.10029878653947531" />
         <mimic joint="Index" multiplier="1.51604339913513674887" offset="0.00000001490116086078" />
-        <limit lower="0.00000001490116086078" upper="2.42566945351737972558" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000001490116086078" upper="2.42566945351737972558" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_index_proximal_j_index_proximal" type="fixed">
         <origin xyz="-0.02310181874349595543 -0.09135775242514412864 0.01475797798070892577" rpy="-0.00000001490116086078 0 0" />
@@ -1672,7 +1678,7 @@
         <child link="_index_distal_l1" />
         <axis xyz="0.9935814496116296 -0.0523072979212324 -0.10029880144763517" />
         <mimic joint="Index" multiplier="1.33574108836935590006" offset="0.00000002107342395030" />
-        <limit lower="0.00000002107342395030" upper="2.13718576246439351252" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000002107342395030" upper="2.13718576246439351252" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_index_distal_j_index_distal" type="fixed">
         <origin xyz="-0.02411285599885701347 -0.12125582378095388358 0.01703670477389252966" rpy="-0.00000002107342395030 0 0" />
@@ -1691,7 +1697,7 @@
         <child link="_index_knuckle_l1" />
         <axis xyz="-0.9935814514632575 0.05230723732964991 0.10029881470439378" />
         <mimic joint="Index" multiplier="1.25181519799450313712" offset="0.00000002107342400581" />
-        <limit lower="0.00000002107342400581" upper="2.00290433786462918064" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000002107342400581" upper="2.00290433786462918064" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_index_knuckle_j_index_knuckle" type="fixed">
         <origin xyz="-0.02185696861910891090 -0.08518861336989590194 0.02377974218847496435" rpy="-0.00000002107342400581 0 0" />
@@ -1710,7 +1716,7 @@
         <child link="_index_follower_l1" />
         <axis xyz="-0.9935816391717812 0.05230592427414335 0.10029763998491735" />
         <mimic joint="Index" multiplier="0.26422627443923907276" offset="-0.00000000000000005551" />
-        <limit lower="-0.00000000000000005551" upper="0.42276203910278248310" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000005551" upper="0.42276203910278248310" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_index_follower_j_index_follower" type="fixed">
         <origin xyz="-0.02126332486903161414 -0.06718356934512285938 0.02086463184043339109" rpy="0.00000000000000005551 0 0" />
@@ -1729,7 +1735,7 @@
         <child link="_index_link_l1" />
         <axis xyz="0.9935814462116063 -0.05230730452290644 -0.10029883168612273" />
         <mimic joint="Index" multiplier="1.33574038782547521720" offset="-0.00000000000000033307" />
-        <limit lower="-0.00000000000000033307" upper="2.13718462052076008106" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000033307" upper="2.13718462052076008106" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_index_link_j_index_link" type="fixed">
         <origin xyz="-0.02230975421329699920 -0.09276185548137087789 0.01898194461297319016" rpy="0.00000000000000033307 0 0" />
@@ -1748,7 +1754,7 @@
         <child link="_middle_proximal_l1" />
         <axis xyz="0.9910685918607293 1.8063346067449371e-09 -0.13335308855512615" />
         <mimic joint="Middle" multiplier="1.51604368978713033300" offset="-0.00000000000000055511" />
-        <limit lower="-0.00000000000000055511" upper="2.42566990365940826635" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000055511" upper="2.42566990365940826635" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_middle_proximal_j_middle_proximal" type="fixed">
         <origin xyz="-0.00335577897664234102 -0.09437654729131618458 0.01554025498118630916" rpy="0.00000000000000055511 0 0" />
@@ -1767,7 +1773,7 @@
         <child link="_middle_distal_l1" />
         <axis xyz="0.9910685909316314 -1.689482686870114e-09 -0.13335309546010102" />
         <mimic joint="Middle" multiplier="1.34986011532341310115" offset="0.00000002107342389479" />
-        <limit lower="0.00000002107342389479" upper="2.15977620559088512309" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000002107342389479" upper="2.15977620559088512309" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_middle_distal_j_middle_distal" type="fixed">
         <origin xyz="-0.00315021984886607260 -0.12835482705769826750 0.01673844088477480230" rpy="-0.00000002107342389479 0 0" />
@@ -1786,7 +1792,7 @@
         <child link="_middle_knuckle_l1" />
         <axis xyz="-0.9910685921320656 -5.1727278766516505e-09 0.13335308653857816" />
         <mimic joint="Middle" multiplier="1.25181499257524908586" offset="-0.00000000000000022204" />
-        <limit lower="-0.00000000000000022204" upper="2.00290398812039871501" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000022204" upper="2.00290398812039871501" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_middle_knuckle_j_middle_knuckle" type="fixed">
         <origin xyz="-0.00212324272181780302 -0.08821425617019010290 0.02456840545838286441" rpy="0.00000000000000022204 0 0" />
@@ -1805,7 +1811,7 @@
         <child link="_middle_follower_l1" />
         <axis xyz="-0.9910686221283496 -3.493623730798563e-07 0.13335286360814524" />
         <mimic joint="Middle" multiplier="0.26422641895880322194" offset="-0.00000000000000005551" />
-        <limit lower="-0.00000000000000005551" upper="0.42276227033408514400" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000005551" upper="0.42276227033408514400" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_middle_follower_j_middle_follower" type="fixed">
         <origin xyz="-0.00255694270015837354 -0.07018275101578626274 0.02179193443405985989" rpy="0.00000000000000005551 0 0" />
@@ -1824,7 +1830,7 @@
         <child link="_middle_link_l1" />
         <axis xyz="0.991068591048481 -2.638530424585682e-09 -0.13335309459168482" />
         <mimic joint="Middle" multiplier="1.34986028913700661924" offset="-0.00000000000000027756" />
-        <limit lower="-0.00000000000000027756" upper="2.15977646261921041315" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000027756" upper="2.15977646261921041315" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_middle_link_j_middle_link" type="fixed">
         <origin xyz="-0.00237710147026564322 -0.09576712113917089375 0.01972689166796307361" rpy="0.00000000000000027756 0 0" />
@@ -1843,7 +1849,7 @@
         <child link="_ring_proximal_l1" />
         <axis xyz="0.9904648606189275 0.03489949479855251 -0.1332718467716812" />
         <mimic joint="Ring" multiplier="1.51604328762193563129" offset="-0.00000000000000022204" />
-        <limit lower="-0.00000000000000022204" upper="2.42566926019509709889" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000022204" upper="2.42566926019509709889" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_ring_proximal_j_ring_proximal" type="fixed">
         <origin xyz="0.01620238965583657015 -0.09437690256137018507 0.01089082627874189517" rpy="0.00000000000000022204 0 0" />
@@ -1862,7 +1868,7 @@
         <child link="_ring_distal_l1" />
         <axis xyz="0.9904648613223425 0.03489949532287934 -0.1332718414066574" />
         <mimic joint="Ring" multiplier="1.34878317629562793911" offset="-0.00000000000000033307" />
-        <limit lower="-0.00000000000000033307" upper="2.15805308207300416967" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000033307" upper="2.15805308207300416967" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_ring_distal_j_ring_distal" type="fixed">
         <origin xyz="0.01762227755248994832 -0.12627599850794304914 0.01299599236375689748" rpy="0.00000000000000033307 0 0" />
@@ -1881,7 +1887,7 @@
         <child link="_ring_knuckle_l1" />
         <axis xyz="-0.9904648595323436 -0.034899502408724456 0.13327185285422538" />
         <mimic joint="Ring" multiplier="1.25181510906761461754" offset="-0.00000000000000033307" />
-        <limit lower="-0.00000000000000033307" upper="2.00290417450818303280" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000033307" upper="2.00290417450818303280" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_ring_knuckle_j_ring_knuckle" type="fixed">
         <origin xyz="0.01722059899818313700 -0.08821779811286711848 0.01994780695453863412" rpy="0.00000000000000033307 0 0" />
@@ -1900,7 +1906,7 @@
         <child link="_ring_follower_l1" />
         <axis xyz="-0.99046478428178 -0.03489870585914611 0.13327262069533985" />
         <mimic joint="Ring" multiplier="0.26423062522385398765" offset="-0.00000000000000005551" />
-        <limit lower="-0.00000000000000005551" upper="0.42276900035816633583" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000005551" upper="0.42276900035816633583" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_ring_follower_j_ring_follower" type="fixed">
         <origin xyz="0.01616326811675704994 -0.07019940355315565372 0.01725522945416899101" rpy="0.00000000000000005551 0 0" />
@@ -1919,7 +1925,7 @@
         <child link="_ring_link_l1" />
         <axis xyz="0.9904648586488499 0.03489949747682052 -0.1332718607117766" />
         <mimic joint="Ring" multiplier="1.34878364034376629910" offset="-0.00000000000000027756" />
-        <limit lower="-0.00000000000000027756" upper="2.15805382455002581210" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000027756" upper="2.15805382455002581210" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_ring_link_j_ring_link" type="fixed">
         <origin xyz="0.01725715360384478397 -0.09575127250935432099 0.01506722438739311817" rpy="0.00000000000000027756 0 0" />
@@ -1938,7 +1944,7 @@
         <child link="_little_proximal_l1" />
         <axis xyz="0.9786112745748743 0.10442184811921981 -0.1772457359439341" />
         <mimic joint="Little" multiplier="1.51604353824540605267" offset="-0.00000000000000022204" />
-        <limit lower="-0.00000000000000022204" upper="2.42566966119265003954" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000022204" upper="2.42566966119265003954" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_little_proximal_j_little_proximal" type="fixed">
         <origin xyz="0.03291711558758805140 -0.08432862024056332617 0.00394580508456284385" rpy="0.00000000000000022204 0 0" />
@@ -1957,7 +1963,7 @@
         <child link="_little_distal_l1" />
         <axis xyz="0.9786112688356977 0.1044218162920877 -0.177245786381644" />
         <mimic joint="Little" multiplier="1.31664152870820272412" offset="0.00000001490116086078" />
-        <limit lower="0.00000001490116086078" upper="2.10662646083428528598" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000001490116086078" upper="2.10662646083428528598" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_little_distal_j_little_distal" type="fixed">
         <origin xyz="0.03603301422386206987 -0.10788477611974905956 0.00732198662249569296" rpy="-0.00000001490116086078 0 0" />
@@ -1976,7 +1982,7 @@
         <child link="_little_knuckle_l1" />
         <axis xyz="-0.9786112715268198 -0.10442182673933997 0.1772457653685416" />
         <mimic joint="Little" multiplier="1.25181529061989249563" offset="0.00000001490116097180" />
-        <limit lower="0.00000001490116097180" upper="2.00290447989298892040" effort="10.0" velocity="1.0" />
+        <limit lower="0.00000001490116097180" upper="2.00290447989298892040" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_little_knuckle_j_little_knuckle" type="fixed">
         <origin xyz="0.03392079632896654456 -0.07815466145347918503 0.01299430664069186649" rpy="-0.00000001490116097180 0 0" />
@@ -1995,7 +2001,7 @@
         <child link="_little_follower_l1" />
         <axis xyz="-0.9786113234476818 -0.10442071454400961 0.1772461339327191" />
         <mimic joint="Little" multiplier="0.26422625333146315674" offset="-0.00000000000000005551" />
-        <limit lower="-0.00000000000000005551" upper="0.42276200533034102857" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000005551" upper="0.42276200533034102857" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_little_follower_j_little_follower" type="fixed">
         <origin xyz="0.03149519863160547828 -0.06024141689774143577 0.01049149309765334825" rpy="0.00000000000000005551 0 0" />
@@ -2014,7 +2020,7 @@
         <child link="_little_link_l1" />
         <axis xyz="0.9786112669174357 0.10442180910601918 -0.17724580120634031" />
         <mimic joint="Little" multiplier="1.31664159359669974414" offset="-0.00000000000000022204" />
-        <limit lower="-0.00000000000000022204" upper="2.10662654975471985708" effort="10.0" velocity="1.0" />
+        <limit lower="-0.00000000000000022204" upper="2.10662654975471985708" effort="1.0" velocity="1.0" />
     </joint>
     <joint name="_little_link_j_little_link" type="fixed">
         <origin xyz="0.03415996392861379849 -0.08565528985387488303 0.00807674552178466558" rpy="0.00000000000000022204 0 0" />
@@ -2109,6 +2115,72 @@
     <gazebo reference="little_link"><visual><material><ambient>0.10 0.10 0.12 1</ambient><diffuse>0.14 0.14 0.16 1</diffuse></material></visual></gazebo>
     <gazebo reference="_little_link_l0"><visual><material><ambient>0.10 0.10 0.12 1</ambient><diffuse>0.14 0.14 0.16 1</diffuse></material></visual></gazebo>
     <gazebo reference="_little_link_l1"><visual><material><ambient>0.10 0.10 0.12 1</ambient><diffuse>0.14 0.14 0.16 1</diffuse></material></visual></gazebo>
+
+    <!-- ── Propriedades de superfície para grasping ──────────────────────
+         Sem essas tags, ODE usa mu=0 nos meshes dos dedos e o objeto
+         escorrega/atravessa a mão. Aplicadas em todos os elos que
+         efetivamente tocam o objeto: palma (lisa) + proximais + distais
+         dos 5 dedos.
+           mu1/mu2  → fricção alta (segura cilindros lisos)
+           kp/kd    → contato mole; kp baixo evita ejeção, kd amortece
+           minDepth → permite micro-penetração antes da força repulsiva
+           maxVel   → limita velocidade de correção (evita "chute")
+         Tags em namespace gazebo (não ODE) — gazebo_ros as converte. -->
+    <gazebo reference="lisa">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="thumb_proximal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="thumb_distal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="index_proximal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="index_distal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="middle_proximal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="middle_distal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="ring_proximal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="ring_distal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="little_proximal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
+    <gazebo reference="little_distal">
+        <mu1>1.5</mu1><mu2>1.5</mu2>
+        <kp>50000</kp><kd>10</kd>
+        <minDepth>0.002</minDepth><maxVel>0.05</maxVel>
+    </gazebo>
 
     <gazebo>
         <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">

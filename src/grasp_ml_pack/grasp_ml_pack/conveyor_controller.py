@@ -174,6 +174,16 @@ class ConveyorControllerNode(Node):
         self.create_service(Trigger, '/conveyor/reset',
                             self._cb_reset, callback_group=cb)
 
+        # Spawns específicos por classe — permitem ao operador escolher
+        # diretamente qual objeto colocar na pick station, em vez de avançar
+        # ciclicamente. Usados pelo `manual_control` (botões coloridos por
+        # objeto). Se já houver um objeto presente, ele é removido antes.
+        for obj_class in ('frasco', 'tubo', 'ampola'):
+            self.create_service(
+                Trigger, f'/conveyor/spawn_{obj_class}',
+                lambda req, resp, oc=obj_class: self._cb_spawn_specific(oc, req, resp),
+                callback_group=cb)
+
         self._pub_status = self.create_publisher(String, '/conveyor/status', 10)
         self.create_timer(1.0, self._pub_status_tick)
 
@@ -257,6 +267,52 @@ class ConveyorControllerNode(Node):
         resp.success = ok
         resp.message = msg
         self.get_logger().info(f'[CONVEYOR] retreat → {msg}')
+        return resp
+
+    # ──────────────────────────────────────────────────────────────────
+    def _cb_spawn_specific(self, obj_class: str,
+                            _req, resp: Trigger.Response):
+        """
+        Spawna um objeto específico (frasco/tubo/ampola). Se já houver outro
+        objeto na pick station, ele é removido primeiro. Mantém `current_idx`
+        sincronizado com `_sequence` para o status JSON.
+        """
+        if obj_class not in _SPAWN_SDF:
+            resp.success = False
+            resp.message = f'Classe desconhecida: {obj_class!r}'
+            return resp
+
+        with self._lock:
+            if self._busy:
+                resp.success = False
+                resp.message = 'Esteira ocupada.'
+                return resp
+            self._busy = True
+
+        # Remove qualquer objeto presente antes de spawnar o novo
+        if self._has_object:
+            self._delete_object()
+            with self._lock:
+                self._has_object = False
+
+        ok = self._spawn_object(obj_class)
+
+        with self._lock:
+            if ok:
+                # Sincroniza `current_idx` para o status refletir o spawn
+                try:
+                    self._current_idx = self._sequence.index(obj_class)
+                except ValueError:
+                    self._current_idx = -1
+                self._has_object = True
+                msg = f'Pick station: {obj_class}'
+            else:
+                msg = f'Falha ao spawnar {obj_class}.'
+            self._busy = False
+
+        resp.success = ok
+        resp.message = msg
+        self.get_logger().info(f'[CONVEYOR] spawn_{obj_class} → {msg}')
         return resp
 
     # ──────────────────────────────────────────────────────────────────

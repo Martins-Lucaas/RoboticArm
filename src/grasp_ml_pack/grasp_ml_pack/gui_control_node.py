@@ -5,11 +5,11 @@ Interface Tkinter integrada ao ROS 2. O spin do ROS corre em thread de fundo;
 o Tkinter ocupa a thread principal (exigência da maioria das plataformas).
 
 Botões:
-  [Próximo Objeto]   → /conveyor/advance  (Trigger)
-  [Estágio Anterior] → /conveyor/retreat  (Trigger)
-  [Agarrar]          → /cell/execute_grasp (Trigger)
-  [Home]             → /cell/go_home      (Trigger)
-  [Resetar Esteira]  → /conveyor/reset    (Trigger)
+  [Próximo Objeto]   → /conveyor/advance    (Trigger)
+  [Estágio Anterior] → /conveyor/retreat    (Trigger)
+  [Agarrar]          → /cell/execute_grasp  (Trigger) — ciclo completo pick+place
+  [Home]             → /cell/go_home        (Trigger)
+  [Resetar Esteira]  → /conveyor/reset      (Trigger)
 
 Monitora (subscreve):
   /conveyor/status  (String JSON) — estado da esteira
@@ -58,16 +58,26 @@ class GUIControlNode(Node):
 
         # Clients de serviço
         self._cli: dict[str, rclpy.client.Client] = {
-            'advance': self.create_client(
+            'advance':    self.create_client(
                 Trigger, '/conveyor/advance', callback_group=cb),
-            'retreat': self.create_client(
+            'retreat':    self.create_client(
                 Trigger, '/conveyor/retreat', callback_group=cb),
-            'reset':   self.create_client(
+            'reset':      self.create_client(
                 Trigger, '/conveyor/reset',   callback_group=cb),
-            'execute': self.create_client(
+            # AGARRAR dispara o ciclo completo (braço + mão + place + home)
+            'execute':    self.create_client(
                 Trigger, '/cell/execute_grasp', callback_group=cb),
-            'home':    self.create_client(
+            'home':       self.create_client(
                 Trigger, '/cell/go_home',     callback_group=cb),
+        }
+
+        # Mapeamento didático objeto→grip (espelha _OBJECT_MAP do executor —
+        # usado para rotular o botão AGARRAR mostrando qual preensão será
+        # aplicada ao objeto correntemente exposto na esteira).
+        self._obj_to_grip: dict[str, str] = {
+            'frasco': 'palm_grip',
+            'tubo':   'claw_grip',
+            'ampola': 'fingertip_grip',
         }
 
         # Estado da esteira e do executor (atualizado via callbacks)
@@ -212,9 +222,13 @@ class CellControlApp:
                  fg=_CLR_TXT_DIM).grid(row=5, column=0, columnspan=2,
                                         sticky='w', pady=(0, 6))
 
+        # AGARRAR — ciclo completo: braço aproxima, fecha mão, levanta,
+        # transporta, solta na caixa, volta a HOME. O texto do botão é
+        # atualizado dinamicamente em `_poll_status` para mostrar qual grip
+        # (palm/claw/fingertip) será aplicado conforme o objeto exposto.
         self._btn_grasp = self._make_btn(
             btn_frame, '✋  AGARRAR', _CLR_BTN_BLU,
-            lambda: self._action('execute', 'Iniciando ciclo de grasp...'),
+            lambda: self._action('execute', 'Iniciando ciclo de pick-and-place...'),
             row=6, col=0, colspan=2, large=True)
 
         self._btn_home = self._make_btn(
@@ -292,27 +306,41 @@ class CellControlApp:
     def _poll_status(self):
         """Atualiza os labels de status periodicamente (poll Tkinter-safe)."""
         cs = self._node._conveyor_state
+        current_obj: str | None = None
         if cs:
             obj  = cs.get('current_obj', '—')
             has  = '✔' if cs.get('has_object') else '○'
             idx  = cs.get('queue_idx', -1) + 1
             tot  = cs.get('queue_total', 0)
             self._conveyor_var.set(f'{has} {obj}  [{idx}/{tot}]')
+            if cs.get('has_object') and obj in self._node._obj_to_grip:
+                current_obj = obj
 
         xs = self._node._cell_state
+        busy_flag = False
         if xs:
             state  = xs.get('state', '—')
             busy   = '⏳' if xs.get('busy') else '✔'
             last   = xs.get('last_obj') or '—'
             self._cell_state_var.set(f'{busy} {state}  (objeto: {last})')
+            busy_flag = xs.get('busy', False)
 
-            # Habilita/desabilita botão Agarrar conforme disponibilidade
-            if hasattr(self, '_btn_grasp'):
-                busy_flag = xs.get('busy', False)
+        # Rótulo dinâmico do botão AGARRAR: mostra a preensão que será aplicada
+        # ao objeto atualmente exposto, refletindo a associação didática
+        # objeto↔grip (palm/claw/fingertip). Sem objeto exposto, o botão fica
+        # desabilitado e o texto pede o avanço da esteira.
+        if hasattr(self, '_btn_grasp'):
+            if current_obj is not None:
+                grip = self._node._obj_to_grip[current_obj]
                 self._btn_grasp.configure(
+                    text=f'✋  AGARRAR — {current_obj} ({grip})',
                     state='disabled' if busy_flag else 'normal')
+            else:
+                self._btn_grasp.configure(
+                    text='✋  AGARRAR  (avance a esteira)',
+                    state='disabled')
 
-        self._root.after(500, self._poll_status)
+        self._root.after(300, self._poll_status)
 
 
 def main(args=None):

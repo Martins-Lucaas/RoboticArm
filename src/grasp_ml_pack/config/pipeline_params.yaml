@@ -35,27 +35,22 @@ grasp_executor:
     pick_x: 0.75
     pick_y: 0.00
 
-    # Altura do TCP (hand_base_link = centro da palma COVVI) no momento do grasp.
+    # Altura do TCP (75 mm abaixo do flange Link6) no momento do grasp.
     # world frame; belt_top = 0.806 m.
     #
-    # Os dedos em configuração de grasp curlam para baixo (eixo Z da palma = [0,0,-1]
-    # no frame world), chegando até ~70 mm abaixo da palma (finger_fk z_mcp):
-    #   palm_grip  Thumb (1.10 rad, k_p=1.400) → 67 mm
-    #   claw_grip  Thumb (0.90 rad, k_p=1.400) → 71 mm  ← máximo
-    #   fingertip  Index (0.70 rad, k_p=1.516) → 69 mm
+    # Após a recalibração de `T_HAND_ATTACH` (kinematics.py), o TCP fica
+    # 75 mm abaixo do Link6, ou seja, no meio da palma+dedos. Os dedos
+    # estendidos fazem contato real com o objeto, e o flange Link6 fica
+    # ~5–10 mm acima do topo do objeto.
+    # Fórmula: pick_z = belt_top + obj_height − 0.030
+    #          (≈ obj_top − 30 mm para que TCP fique na cintura do objeto)
     #
-    # A palma DEVE ficar acima do topo do objeto para que as pontas dos dedos
-    # alcancem a altura correta de preensão (~50% da altura do objeto).
-    # Fórmula: pick_z = belt_top + obj_height + clearance_acima_do_topo
-    #
-    # frasco (h=90mm):  0.806 + 0.090 + 0.020 = 0.916 → dedos a ~43-51% de h
-    # teach_sequence.yaml ponto_1 (gravado em x=0.65) validou z≈0.862 na posição
-    # anterior; a x=0.75 o ramo IK muda e z=0.916 é o único com cadeia sem colisão.
-    pick_z_frasco: 0.916
-    # tubo   (h=120mm): 0.806 + 0.120 + 0.020 = 0.946 → dedos a ~58% de h
-    pick_z_tubo:   0.946
-    # ampola (h=75mm):  0.806 + 0.075 + 0.032 = 0.913 → dedos a ~51% de h
-    pick_z_ampola: 0.913
+    # frasco (h=90mm):  0.806 + 0.090 − 0.030 = 0.866
+    pick_z_frasco: 0.866
+    # tubo   (h=120mm): 0.806 + 0.120 − 0.030 = 0.896
+    pick_z_tubo:   0.896
+    # ampola (h=75mm):  0.806 + 0.075 − 0.030 = 0.851
+    pick_z_ampola: 0.851
 
     # ── Posições das caixas de destino (world frame) ─────────────────────
     # box_z é a altura de referência do centro da caixa.

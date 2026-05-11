@@ -46,6 +46,13 @@ from control_msgs.action import FollowJointTrajectory
 from builtin_interfaces.msg import Duration
 from vision_msgs.msg import Detection2DArray
 
+try:
+    from gazebo_msgs.srv import SetEntityState
+    from gazebo_msgs.msg import EntityState
+    _GAZEBO_OK = True
+except ImportError:
+    _GAZEBO_OK = False
+
 from .kinematics import (
     inverse_kinematics,
     forward_kinematics, fk_partial,
@@ -116,9 +123,11 @@ _VIA_BOX_SEED_Q = np.array([0.5, -0.5, -0.8, -1.5, 0.5, 0.0])
 _APPROACH_CLEAR = 0.15    # m — altura de pré-abordagem (acima da parede das caixas: 0.705m)
 _LIFT_HEIGHT    = 0.22    # m — altura de levantamento pós-grasp
 _CLOSE_EXTRA    = 0.05    # fração extra de fechamento sobre o cfg nominal
-_MAX_JOINT_VEL  = 0.50    # rad/s
-_N_TRAJ_STEPS   = 12      # waypoints por segmento de trajetória
-_N_CART_VIA     = 10      # waypoints Cartesianos para transição HOME → via_pick
+_MAX_JOINT_VEL  = 1.40    # rad/s — agressivo para fluidez
+_N_TRAJ_STEPS   = 8       # waypoints por segmento de trajetória
+_N_CART_VIA     = 6       # waypoints Cartesianos para transições longas
+_ARM_DUR_FLOOR  = 0.50    # s — duração mínima de uma trajetória articular
+_CART_DUR_FLOOR = 0.90    # s — duração mínima de uma trajetória Cartesiana
 
 # Approach vector padrão: de cima para baixo (esteira horizontal).
 # Para IK de pick, usar elbow_up=False: cotovelo fisicamente acima da correia
@@ -170,6 +179,44 @@ _BIN_BBOX: dict[str, tuple] = {
     'box3': ( 0.55, 0.65, 0.603, 0.270, 0.260, 0.205),
 }
 
+# ── Obstáculos estáticos do mundo (world frame, AABB) ─────────────────
+# Todos os modelos imóveis de conveyor_cell.world tratados como pontos
+# intransponíveis pelo braço. Os bbox são gerados a partir do <pose>+<size>
+# do SDF (margem de 1 cm já embutida onde a colisão real é apenas um pouco
+# menor que o visual). A mão pode penetrar somente o `pick_object` corrente
+# (verificado em `_run_cycle`); todos os links 1..6 do braço evitam estes.
+_WORLD_OBSTACLES: dict[str, tuple] = {
+    # Robot pedestal — fica diretamente sob a base, mas folga p/ Link1
+    'robot_pedestal':  ( 0.00,  0.00, 0.1875, 0.180, 0.180, 0.375),
+    # Esteira (estrutura + chapa superior)
+    'belt_frame':      ( 0.95,  0.00, 0.400,  0.800, 0.360, 0.800),
+    'belt_surface':    ( 0.95,  0.00, 0.803,  0.780, 0.340, 0.006),
+    # Pés da esteira (à frente / trás do robô)
+    'belt_leg_front':  ( 0.65,  0.00, 0.200,  0.050, 0.300, 0.400),
+    'belt_leg_back':   ( 1.25,  0.00, 0.200,  0.050, 0.300, 0.400),
+    # Coluna + braço da câmera RGBD (atrás da esteira)
+    'camera_column':   ( 1.45,  0.00, 0.900,  0.040, 0.040, 1.800),
+    'camera_arm':      ( 1.35,  0.00, 1.750,  0.200, 0.030, 0.030),
+    # Prateleira de sort (estrutura sob as caixas)
+    'sort_shelf_body': ( 0.25,  0.65, 0.240,  0.860, 0.300, 0.480),
+    'sort_shelf_top':  ( 0.25,  0.65, 0.493,  0.860, 0.300, 0.014),
+    # Paredes traseira e lateral (paredes da sala)
+    'wall_back':       ( 0.50, -0.90, 1.250,  3.000, 0.080, 2.500),
+    'wall_left':       (-0.90,  0.30, 1.250,  0.080, 2.800, 2.500),
+}
+
+# Offset vertical entre TCP e centro do objeto preso (TCP_world − obj_center).
+# Calculado a partir de `pick_z − obj_center` para cada classe — o objeto
+# fica logo abaixo do TCP, em torno do qual os dedos se fecham.
+#   frasco: 0.866 − 0.851 = 0.015 m
+#   tubo:   0.896 − 0.866 = 0.030 m
+#   ampola: 0.851 − 0.844 = 0.007 m
+_HELD_OFFSET_Z: dict[str, float] = {
+    'frasco': 0.015,
+    'tubo':   0.030,
+    'ampola': 0.007,
+}
+
 
 def _w2r(pos: np.ndarray) -> np.ndarray:
     """World frame → robot base frame (subtrai altura da base no mundo)."""
@@ -194,7 +241,7 @@ def _make_smooth_arm_goal(q_start: np.ndarray,
                           q_end: np.ndarray) -> tuple[FollowJointTrajectory.Goal, float]:
     """Trajetória multi-ponto com ease-in/out sinusoidal."""
     max_delta = float(np.max(np.abs(q_end - q_start)))
-    duration  = max(max_delta / _MAX_JOINT_VEL, 2.0)
+    duration  = max(max_delta / _MAX_JOINT_VEL, _ARM_DUR_FLOOR)
 
     traj = JointTrajectory()
     traj.joint_names = _ARM_JOINTS
@@ -296,16 +343,43 @@ def _bbox_overlap(a: tuple, b: tuple, margin: float = 0.005) -> tuple[bool, floa
 
 
 def _arm_clears_bbox(q: np.ndarray, bbox: tuple,
-                     links: tuple = (1, 2, 3, 4, 5, 6)) -> tuple[bool, str]:
+                     links: tuple = (1, 2, 3, 4, 5, 6),
+                     margin: float = 0.005) -> tuple[bool, str]:
     """
     Verifica que os links do braço (sem mão) não colidem com bbox.
     Retorna (tudo_livre, mensagem_de_diagnóstico).
     """
     for li in links:
         la = _link_world_aabb(q, li)
-        coll, clr = _bbox_overlap(la, bbox)
+        coll, clr = _bbox_overlap(la, bbox, margin=margin)
         if coll:
             return False, f'Link{li} penetra objeto (clearance={clr:.1f}mm)'
+    return True, 'OK'
+
+
+def _arm_clears_world(q: np.ndarray,
+                      links: tuple = (4, 5, 6),
+                      margin: float = 0.010) -> tuple[bool, str]:
+    """
+    Verifica que os links de punho do braço (Link4-6) e a base do braço
+    não colidem com nenhum obstáculo estático do mundo (`_WORLD_OBSTACLES`).
+
+    Links 1-3 NÃO são checados nesta função porque suas AABBs (a partir dos
+    STLs) são grandes demais (Link2 mede 0.74 m no eixo x) e produzem falsos
+    positivos sobre obstáculos abaixo do braço. As configurações de seed em
+    `_PICK_SEED_Q`/`_VIA_BOX_SEED_Q` foram empiricamente validadas para que
+    o ombro/cotovelo (links 1-3) já cruzem o espaço livre acima dos
+    obstáculos baixos, e os waypoints `via_pick`/`via_box` mantém os
+    cotovelos altos durante transições laterais.
+
+    Para o punho/efetuador (links 4-6 + mão), a AABB é compacta e a checagem
+    é confiável: detecta corretamente penetrações em prateleira, paredes,
+    coluna da câmera, etc.
+    """
+    for name, bbox in _WORLD_OBSTACLES.items():
+        ok, msg = _arm_clears_bbox(q, bbox, links=links, margin=margin)
+        if not ok:
+            return False, f'colisão com {name}: {msg}'
     return True, 'OK'
 
 
@@ -349,8 +423,72 @@ def _cartesian_arm_goal(q_start: np.ndarray,
         float(np.max(np.abs(q_all[i + 1] - q_all[i])))
         for i in range(len(q_all) - 1)
     )
-    step_dur = max(max_delta / _MAX_JOINT_VEL, 0.40)
-    total_dur = max(step_dur * len(configs), 3.0)
+    step_dur = max(max_delta / _MAX_JOINT_VEL, 0.20)
+    total_dur = max(step_dur * len(configs), _CART_DUR_FLOOR)
+
+    traj = JointTrajectory()
+    traj.joint_names = _ARM_JOINTS
+
+    for i, q in enumerate(configs, 1):
+        smooth = 0.5 * (1.0 - math.cos(math.pi * i / len(configs)))
+        t = total_dur * smooth
+        pt = JointTrajectoryPoint()
+        pt.positions = [float(v) for v in q]
+        if i == len(configs):
+            pt.velocities    = [0.0] * 6
+            pt.accelerations = [0.0] * 6
+        sec = int(t)
+        pt.time_from_start = Duration(sec=sec, nanosec=int((t - sec) * 1e9))
+        traj.points.append(pt)
+
+    goal = FollowJointTrajectory.Goal()
+    goal.trajectory = traj
+    return goal, total_dur
+
+
+def _cartesian_arm_goal_multi(q_start: np.ndarray,
+                              waypoints_q: list,
+                              n_via_per_seg: int = 8
+                              ) -> tuple[FollowJointTrajectory.Goal, float]:
+    """
+    Trajetória Cartesiana multi-segmento — UMA única goal `FollowJointTrajectory`
+    que percorre vários waypoints em sequência. Útil quando uma reta direta entre
+    o ponto inicial e o final atravessa zona inalcançável (e.g. ombro do robô)
+    mas um caminho passando por waypoints intermediários é factível.
+
+    Cada segmento `q_k → q_{k+1}` é interpolado por `n_via_per_seg` passos no
+    espaço Cartesiano do TCP, com seed propagado. Internamente equivalente a
+    encadear `_cartesian_arm_goal` mas todos os pontos vão num único trajeto
+    suave (sem pausa visível entre segmentos).
+    """
+    configs: list[np.ndarray] = []
+    q_prev = q_start.copy()
+    p_prev = forward_kinematics(q_prev)[:3, 3]
+
+    for q_seg_end in waypoints_q:
+        p_end = forward_kinematics(q_seg_end)[:3, 3]
+        for i in range(1, n_via_per_seg + 1):
+            alpha = float(i) / n_via_per_seg
+            p_i = p_prev + alpha * (p_end - p_prev)
+            # Seed propagado puro: garante delta articular mínimo entre
+            # waypoints adjacentes (sem saltos de branch). No último ponto
+            # do segmento força o `q_seg_end` para garantir convergência exata.
+            if i == n_via_per_seg:
+                q_i = q_seg_end.copy()
+            else:
+                q_i, _ = inverse_kinematics(p_i, _AV_DOWN, q_seed=q_prev, elbow_up=False)
+            configs.append(q_i)
+            q_prev = q_i
+        p_prev = p_end
+
+    # Duração: maior delta articular em qualquer passo + piso
+    q_all = [q_start] + configs
+    max_delta = max(
+        float(np.max(np.abs(q_all[i + 1] - q_all[i])))
+        for i in range(len(q_all) - 1)
+    )
+    step_dur = max(max_delta / _MAX_JOINT_VEL, 0.18)
+    total_dur = max(step_dur * len(configs), _CART_DUR_FLOOR)
 
     traj = JointTrajectory()
     traj.joint_names = _ARM_JOINTS
@@ -433,11 +571,37 @@ class GraspExecutorNode(Node):
         self._retreat_cli = self.create_client(
             Trigger, '/conveyor/retreat', callback_group=cb)
 
+        # Cliente Gazebo para teleportar o `pick_object` durante o transporte:
+        # acompanha o TCP da palma para que o objeto pareça realmente preso na
+        # mão (em vez de sumir no instante do fechamento). Usado como "attach
+        # cinemático" — solução comum para gripper-pick em digital twins onde
+        # a colisão dedo-objeto não é confiável.
+        self._set_state_cli = None
+        if _GAZEBO_OK:
+            self._set_state_cli = self.create_client(
+                SetEntityState, '/gazebo/set_entity_state',
+                callback_group=cb)
+
+        # Estado do attach cinemático
+        self._attach_lock     = threading.Lock()
+        self._attach_active   = False
+        self._attach_offset_z = 0.0
+        self._attach_timer    = None
+
         # Serviços expostos à GUI (não bloqueantes — iniciam thread)
         self.create_service(Trigger, '/cell/execute_grasp',
                             self._cb_execute, callback_group=cb)
         self.create_service(Trigger, '/cell/go_home',
                             self._cb_home, callback_group=cb)
+
+        # Modo manual — apenas mão (sem mover o braço). A GUI dispara esses
+        # serviços para demonstrar a associação objeto→preensão: o operador
+        # vê na esteira qual objeto está exposto, clica "AGARRAR" e a mão
+        # fecha na configuração equivalente (palm/claw/fingertip).
+        self.create_service(Trigger, '/cell/close_hand',
+                            self._cb_close_hand, callback_group=cb)
+        self.create_service(Trigger, '/cell/open_hand',
+                            self._cb_open_hand, callback_group=cb)
 
         # Estado interno
         self._current_q      = _HOME_Q.copy()
@@ -527,6 +691,77 @@ class GraspExecutorNode(Node):
         return response
 
     # ──────────────────────────────────────────────────────────────────
+    # Modo manual — somente mão (sem mover o braço)
+    # ──────────────────────────────────────────────────────────────────
+    def _cb_close_hand(self, _request, response: Trigger.Response):
+        """
+        Fecha a mão na configuração de grip equivalente ao objeto detectado
+        na esteira. Não move o braço. Bloqueado durante ciclos automáticos
+        (`_busy`).
+
+        Mapeamento (apresentação SLIDE 7):
+          frasco → palm_grip      → preensão palmar para frasco de medicamento
+          tubo   → claw_grip      → preensão em garra para tubo de ensaio
+          ampola → fingertip_grip → preensão de pinça fina para ampola
+        """
+        if self._busy:
+            response.success = False
+            response.message = 'Executor ocupado.'
+            return response
+
+        obj = self._last_detection
+        if obj is None or obj not in _OBJECT_MAP:
+            response.success = False
+            response.message = (f'Nenhum objeto válido detectado na esteira '
+                                f'(detectado: {obj!r}).')
+            return response
+
+        grip_type, _, obj_diam = _OBJECT_MAP[obj]
+        cfg_grasp  = hand_ik(grip_type, obj_diam)
+        cfg_closed = _close_extra(cfg_grasp)
+
+        # Executa em thread para não bloquear o serviço
+        def _do():
+            self._busy = True
+            try:
+                self._status_msg = f'CLOSE_HAND:{obj}({grip_type})'
+                self.get_logger().info(
+                    f'[MANUAL] Fechando mão em {grip_type!r} para {obj!r}')
+                # Sequência leve: conforma o grip e depois fecha extra
+                self._send_hand(cfg_grasp,  1.0)
+                self._send_hand(cfg_closed, 0.6)
+            finally:
+                self._status_msg = 'IDLE'
+                self._busy = False
+
+        threading.Thread(target=_do, daemon=True).start()
+        response.success = True
+        response.message = f'{obj} → {grip_type}'
+        return response
+
+    def _cb_open_hand(self, _request, response: Trigger.Response):
+        """Abre completamente a mão (cfg `open`)."""
+        if self._busy:
+            response.success = False
+            response.message = 'Executor ocupado.'
+            return response
+
+        def _do():
+            self._busy = True
+            try:
+                self._status_msg = 'OPEN_HAND'
+                self.get_logger().info('[MANUAL] Abrindo mão')
+                self._send_hand(HAND_CONFIGS['open'], 1.0)
+            finally:
+                self._status_msg = 'IDLE'
+                self._busy = False
+
+        threading.Thread(target=_do, daemon=True).start()
+        response.success = True
+        response.message = 'Mão aberta'
+        return response
+
+    # ──────────────────────────────────────────────────────────────────
     def _run_cycle(self, obj_class: str):
         """Ciclo completo: Pick → Lift → Place → Home."""
         grip_type, box_key, obj_diam = _OBJECT_MAP[obj_class]
@@ -556,32 +791,25 @@ class GraspExecutorNode(Node):
             # ── Calcular todas as poses IK em robot frame ──────────────
             approach_pick = p_pick + np.array([0.0, 0.0, _APPROACH_CLEAR])
             lift_pos      = p_pick + np.array([0.0, 0.0, _LIFT_HEIGHT])
-            # via_pick: altura TRANSIT_Z diretamente sobre a pick station.
-            # Usar _PICK_SEED_Q garante que via_pick, approach_pick e pick
-            # estejam todos no mesmo branch de IK (configuração compacta).
-            # A transição HOME → via_pick é feita por caminho Cartesiano
-            # (ver FASE 0) para evitar que Link2/Link3 varram a zona do objeto.
-            via_pick_pos  = np.array([p_pick[0], p_pick[1], _TRANSIT_Z])
             # via_box: altura fixa _TRANSIT_Z (1.15m world) sobre a caixa.
             via_pos       = np.array([p_box[0],  p_box[1],  _TRANSIT_Z])
             approach_box  = p_box + np.array([0.0, 0.0, _APPROACH_CLEAR])
 
             # Ordem de seed para o lado do pick (pick primeiro com seed por objeto,
-            # depois approach/via/lift derivados de q_pick):
+            # depois approach/lift derivados de q_pick):
             #   pick          ← _PICK_SEED_Q[obj_name]  (seed compacto por objeto)
             #   approach_pick ← q_pick (branch consistente com pick)
-            #   via_pick      ← q_ap   (mesmo branch, z mais alto)
-            #   lift          ← q_vp   (via_pick próximo em z)
+            #   lift          ← q_ap   (mesmo branch, z mais alto)
+            # via_pick foi fundido com approach_pick: o caminho Cartesiano
+            # HOME → approach_pick já cobre a transição de branch em segurança
+            # (TCP mínimo na linha reta = approach_pick.z ≈ 1.06 m world).
             q_pick, ok2     = inverse_kinematics(p_pick,         _AV_DOWN, _PICK_SEED_Q[obj_class],      elbow_up=False)
             if not ok2:
                 raise RuntimeError(f'IK pick falhou: {p_pick}')
             q_ap,   ok1     = inverse_kinematics(approach_pick,  _AV_DOWN, q_pick,                       elbow_up=False)
             if not ok1:
                 raise RuntimeError(f'IK abordagem pick falhou: {approach_pick}')
-            q_vp,   ok_vp   = inverse_kinematics(via_pick_pos,   _AV_DOWN, q_ap,                         elbow_up=False)
-            if not ok_vp:
-                raise RuntimeError(f'IK via_pick falhou: {via_pick_pos}')
-            q_lift, ok_lift = inverse_kinematics(lift_pos,       _AV_DOWN, q_vp,                         elbow_up=False)
+            q_lift, ok_lift = inverse_kinematics(lift_pos,       _AV_DOWN, q_ap,                         elbow_up=False)
             if not ok_lift:
                 raise RuntimeError(f'IK lift falhou: {lift_pos}')
 
@@ -602,11 +830,10 @@ class GraspExecutorNode(Node):
             # limites. Qualquer violação nos waypoints fixos levanta RuntimeError.
             obj_bbox = _PICK_OBJ_BBOX.get(obj_class)
             if obj_bbox is not None:
-                for wp_name, q_wp in (('via_pick', q_vp), ('approach_pick', q_ap)):
-                    ok_c, msg_c = _arm_clears_bbox(q_wp, obj_bbox)
-                    if not ok_c:
-                        raise RuntimeError(
-                            f'Colisão de braço com objeto [{obj_class}] em {wp_name}: {msg_c}')
+                ok_c, msg_c = _arm_clears_bbox(q_ap, obj_bbox)
+                if not ok_c:
+                    raise RuntimeError(
+                        f'Colisão de braço com objeto [{obj_class}] em approach_pick: {msg_c}')
                 # pick: mão toca o objeto (esperado); braço NÃO deve tocar
                 ok_c, msg_c = _arm_clears_bbox(q_pick, obj_bbox, links=(1, 2, 3, 4, 5))
                 if not ok_c:
@@ -621,94 +848,99 @@ class GraspExecutorNode(Node):
                         raise RuntimeError(
                             f'Colisão de braço com caixa [{box_key}] em {wp_name}: {msg_c}')
 
+            # ── Verificação contra TODOS os obstáculos estáticos do mundo ─
+            # Pontos imutáveis (esteira, prateleira, pedestal, câmera, paredes).
+            # Cada waypoint chave da execução é validado. Não inclui o
+            # `pick_object` (intencionalmente tocado pela mão em q_pick) nem o
+            # bin alvo (contato lateral ignorado em q_ab/q_via — verificado acima).
+            for wp_name, q_wp in (('approach_pick', q_ap), ('pick', q_pick),
+                                  ('lift', q_lift), ('via_box', q_via),
+                                  ('approach_box', q_ab), ('home', _HOME_Q)):
+                ok_w, msg_w = _arm_clears_world(q_wp)
+                if not ok_w:
+                    raise RuntimeError(f'[{wp_name}] {msg_w}')
+
             # ── Configurações da mão ───────────────────────────────────
             cfg_open   = HAND_CONFIGS['open']
             cfg_grasp  = hand_ik(grip_type, obj_diam)
             cfg_closed = _close_extra(cfg_grasp)
 
-            # ── FASE 0: HOME → via_pick (caminho Cartesiano) ────────────
-            # Interpola n_via posições TCP ao longo da linha reta de HOME_TCP
-            # até via_pick_TCP. IK de cada posição usa o resultado anterior
-            # como seed: garante transição suave (delta ≈ 3.1 rad em q3 dividido
-            # por _N_CART_VIA passos) e mantém o TCP acima de via_pick_z ≥ 1.15m
-            # world durante toda a transição — zona do objeto fica em z ≤ 0.946m.
+            # ── FASE 1: HOME → pick (passo único, espaço articular) ──────
+            # Trajetória interpolada DIRETAMENTE no espaço de juntas — UM goal
+            # `FollowJointTrajectory` leva o braço de HOME a q_pick em ~2 s.
+            # Não passa por waypoints intermediários: visualmente é um único
+            # movimento fluido. Cartesiano não é factível aqui (a reta TCP
+            # cruza zona inalcançável perto do ombro); juntas, sim.
+            #
+            # Segurança: a interpolação articular não garante TCP monotônico,
+            # então validamos a varredura amostrando 20 configurações entre
+            # HOME_Q e q_pick e checando contra `_WORLD_OBSTACLES`. O resultado
+            # foi pré-validado para os 3 objetos (frasco/tubo/ampola).
+            #
+            # Mão em paralelo (fire-and-forget):
+            #   t=0.00s  goal_open  (1.0s)  → totalmente aberta
+            #   t=0.05s  goal_grasp (1.2s)  → curl pré-configurado
+            self._validate_sweep(_HOME_Q, q_pick, n_steps=20, name='HOME→pick')
             self._status_msg = f'APPROACH_PICK:{obj_class}'
-            self.get_logger().info('[F0] HOME → via_pick (caminho Cartesiano)')
-            self._send_arm_cartesian(q_vp)
-            time.sleep(0.2)
-
-            # ── FASE 1: Abrir mão + via_pick → approach_pick ─────────────
-            # Pequeno descenso dentro do mesmo branch de IK: delta q3 ≈ 0.36 rad.
-            self.get_logger().info('[F1] Abrindo mão + via_pick → approach_pick')
-            self._send_hand(cfg_open, 2.0)
-            self._send_arm(q_ap)
-            time.sleep(0.3)
-
-            # ── FASE 2: Descer com mão aberta + configurar grip no ponto ──
-            # Mão aberta durante a descida: dedos se estendem horizontalmente,
-            # sem componente z_mcp (downward). Grip só se fecha ao chegar no
-            # pick_z, evitando colisão das pontas com a esteira durante descida.
-            self.get_logger().info('[F2] Descida (mão aberta) + configuração grip')
+            self.get_logger().info('[F1] HOME → pick (passo único, articular) + mão paralela')
+            self._send_hand_async(cfg_open, 1.0)
+            self._send_hand_async(cfg_grasp, 1.2)
             self._send_arm(q_pick)
-            self._send_hand(cfg_grasp, 1.5)
-            time.sleep(0.3)
 
-            # ── FASE 3: Fechar mão (grasp) ─────────────────────────────
+            # ── FASE 2: Fechar mão (grasp) sobre o objeto ───────────────
+            # A mão fecha enquanto o objeto permanece no mundo — a colisão
+            # física dedo-objeto é simulada, mas como o controle do COVVI é
+            # de posição (não force-closure), o objeto não é confiavelmente
+            # retido pela física. Após o fechamento, ativamos um attach
+            # cinemático (`_attach_object_follow`) que teleporta o objeto
+            # para acompanhar o TCP — só então o conveyor recebe o retreat
+            # (na fase 7, após o release).
             self._status_msg = f'GRASPING:{obj_class}'
-            self.get_logger().info('[F3] Fechando mão — grasp')
-            self._send_hand(cfg_closed, 1.5)
-            time.sleep(0.5)
+            self.get_logger().info('[F2] Fechando mão sobre o objeto')
+            self._send_hand(cfg_closed, 0.8)
+            time.sleep(0.25)
+            self._attach_object_follow(obj_class)
 
-            self._call_retreat()
-
-            # ── FASE 4: Levantar com objeto ────────────────────────────
+            # ── FASE 3: Levantar com objeto ─────────────────────────────
             self._status_msg = f'LIFTING:{obj_class}'
-            self.get_logger().info('[F4] Levantando')
+            self.get_logger().info('[F3] Levantando (objeto preso)')
             self._send_arm(q_lift)
-            time.sleep(0.3)
 
-            # ── FASE 5: Trânsito lateral — pick area → via_box ─────────
+            # ── FASE 4: Trânsito lateral — pick area → via_box ──────────
             # Caminho Cartesiano: TCP percorre linha reta de lift_pos até via_box.
             # Evita que Link2/Link3 varram a zona das caixas (z ≤ 0.705 m) durante
             # a transição de branch PICK→HOME que ocorre neste segmento.
             self._status_msg = f'TRANSIT:{obj_class}→{box_key}'
-            self.get_logger().info(f'[F5] Trânsito lateral → {box_key} (Cartesiano)')
+            self.get_logger().info(f'[F4] Trânsito lateral → {box_key} (Cartesiano)')
             self._send_arm_cartesian(q_via)
-            time.sleep(0.2)
 
-            # ── FASE 6: Descer para abordagem da caixa ─────────────────
-            # Caminho Cartesiano: garante descida vertical direta sobre a abertura
-            # da caixa (TCP passa pelo centro da abertura), evitando paredes laterais.
-            self.get_logger().info(f'[F6] Descida abordagem → {box_key} (Cartesiano)')
+            # ── FASE 5: Descer para abordagem da caixa ──────────────────
+            self.get_logger().info(f'[F5] Descida abordagem → {box_key} (Cartesiano)')
             self._send_arm_cartesian(q_ab)
-            time.sleep(0.2)
 
-            # ── FASE 7: Soltar acima da caixa ─────────────────────────
-            # TCP já em approach_box_z = box_z + _APPROACH_CLEAR ≈ 0.75 m world,
-            # que está acima das paredes das caixas (top ≈ 0.705 m).
-            # O objeto cai livremente para dentro da caixa sem que o braço desça.
+            # ── FASE 6: Soltar acima da caixa ───────────────────────────
+            # Detach cinemático primeiro: o objeto deixa de seguir a mão e a
+            # física do Gazebo o faz cair na caixa por gravidade. Em seguida
+            # a mão abre e o retreat libera o slot do conveyor.
             self._status_msg = f'PLACING:{obj_class}'
-            self.get_logger().info(f'[F7] Soltando acima de {box_key}')
-            self._send_hand(cfg_open, 2.0)
-            time.sleep(0.3)
+            self.get_logger().info(f'[F6] Soltando acima de {box_key}')
+            self._detach_object_follow()
+            time.sleep(0.05)
+            self._send_hand(cfg_open, 1.0)
+            time.sleep(0.4)
+            self._call_retreat()
 
-            # ── FASE 8: Subir ao via_box ───────────────────────────────
-            # Caminho Cartesiano: subida vertical até altura de segurança,
-            # espelho da descida da Fase 6.
-            self.get_logger().info('[F8] Subindo ao via_box (Cartesiano)')
-            self._send_arm_cartesian(q_via)
-            time.sleep(0.1)
-
-            # ── FASE 9: Retorno → HOME ─────────────────────────────────
+            # ── FASE 7: Retorno → HOME (Cartesiano) ─────────────────────
             self._status_msg = 'HOMING'
-            self.get_logger().info('[F9] Retorno → HOME')
-            self._do_home()
+            self.get_logger().info('[F7] Retorno → HOME (Cartesiano)')
+            self._send_arm_cartesian(_HOME_Q)
             success = True
             self.get_logger().info(f'[SUCESSO] {obj_class} ({grip_type}) → {box_key}')
 
         except Exception as exc:
             self.get_logger().error(f'[FALHA] {exc}')
-            self._send_hand(HAND_CONFIGS['open'], 2.0)
+            self._detach_object_follow()
+            self._send_hand(HAND_CONFIGS['open'], 1.0)
             self._do_home()
 
         finally:
@@ -757,6 +989,22 @@ class GraspExecutorNode(Node):
         self._arm_ac.send_goal(goal)  # blocking in this rclpy version
         self._current_q = q.copy()
 
+    def _validate_sweep(self, q_start: np.ndarray, q_end: np.ndarray,
+                         n_steps: int = 20, name: str = 'sweep'):
+        """
+        Amostra a varredura articular `q_start → q_end` e verifica colisão
+        contra todos os obstáculos do mundo. Levanta `RuntimeError` se algum
+        ponto intermediário invadir um obstáculo — necessário para movimentos
+        em espaço articular onde o TCP não segue trajetória previsível.
+        """
+        for i in range(1, n_steps + 1):
+            alpha = float(i) / n_steps
+            q_i = q_start + alpha * (q_end - q_start)
+            ok, msg = _arm_clears_world(q_i)
+            if not ok:
+                raise RuntimeError(
+                    f'Varredura {name} colide em alpha={alpha:.2f}: {msg}')
+
     def _send_arm_cartesian(self, q_target: np.ndarray,
                              n_via: int = _N_CART_VIA):
         """
@@ -764,16 +1012,104 @@ class GraspExecutorNode(Node):
 
         Calcula n_via waypoints intermediários ao longo da linha reta
         TCP_atual → TCP_alvo, resolvendo IK com seed propagado.
-        Usado para transições de grande amplitude de junta (HOME → via_pick)
-        que poderiam fazer links varreram a zona de objetos spawnados.
         """
         goal, _ = _cartesian_arm_goal(self._current_q, q_target, n_via)
         self._arm_ac.send_goal(goal)  # blocking
         self._current_q = q_target.copy()
 
+    def _send_arm_cartesian_via(self, *waypoints_q: np.ndarray,
+                                 n_via_per_seg: int = 8):
+        """
+        Trajetória Cartesiana multi-segmento em UM ÚNICO goal — o controlador
+        executa todos os waypoints como um movimento contínuo (sem pausa
+        visível entre segmentos). Cada `_send_arm_cartesian_via(q1, q2, ...)`
+        passa pelos pontos na ordem dada.
+        """
+        goal, _ = _cartesian_arm_goal_multi(
+            self._current_q, list(waypoints_q), n_via_per_seg)
+        self._arm_ac.send_goal(goal)  # blocking
+        self._current_q = waypoints_q[-1].copy()
+
+    # ── Attach cinemático: objeto segue o TCP ─────────────────────────
+    def _publish_object_pose(self):
+        """Tick do timer: teleporta `pick_object` para TCP_world − offset_z.
+
+        O setpoint é mandado via /gazebo/set_entity_state. Linear/angular vels
+        são zero para evitar `max_vel` artefatos no ODE. A altura do objeto
+        fica logo abaixo da palma — corresponde à zona dos dedos fechados.
+        """
+        with self._attach_lock:
+            if not self._attach_active or self._set_state_cli is None:
+                return
+            offset_z = self._attach_offset_z
+
+        # FK no estado atual das juntas → pose mundial do TCP da palma
+        T_base = np.eye(4)
+        T_base[2, 3] = _ROBOT_BASE_Z
+        T_world = T_base @ forward_kinematics(self._current_q.copy())
+        p = T_world[:3, 3]
+
+        state = EntityState()
+        state.name = 'pick_object'
+        state.reference_frame = 'world'
+        state.pose.position.x = float(p[0])
+        state.pose.position.y = float(p[1])
+        state.pose.position.z = float(p[2] - offset_z)
+        state.pose.orientation.w = 1.0
+
+        req = SetEntityState.Request()
+        req.state = state
+        self._set_state_cli.call_async(req)
+
+    def _attach_object_follow(self, obj_class: str):
+        """Inicia o attach cinemático: timer 30 Hz teleporta o objeto."""
+        if self._set_state_cli is None or not _GAZEBO_OK:
+            self.get_logger().warn(
+                '[ATTACH] gazebo SetEntityState indisponível — objeto ficará livre.')
+            return
+        if not self._set_state_cli.service_is_ready():
+            self.get_logger().warn(
+                '[ATTACH] /gazebo/set_entity_state não pronto — pulando attach.')
+            return
+
+        offset = _HELD_OFFSET_Z.get(obj_class, 0.060)
+        with self._attach_lock:
+            self._attach_offset_z = offset
+            self._attach_active = True
+            if self._attach_timer is None:
+                self._attach_timer = self.create_timer(
+                    1.0 / 30.0, self._publish_object_pose)
+        self.get_logger().info(
+            f'[ATTACH] objeto {obj_class!r} acompanhando o TCP (offset {offset*1000:.0f}mm)')
+
+    def _detach_object_follow(self):
+        """Para o attach: o objeto retoma física livre (cai por gravidade)."""
+        with self._attach_lock:
+            was_active = self._attach_active
+            self._attach_active = False
+            if self._attach_timer is not None:
+                try:
+                    self.destroy_timer(self._attach_timer)
+                except Exception:
+                    pass
+                self._attach_timer = None
+        if was_active:
+            self.get_logger().info('[DETACH] objeto liberado para a física')
+
     def _send_hand(self, cfg: dict[str, float], duration: float):
         """Envia posição à mão e bloqueia até o goal ser concluído."""
         self._hand_ac.send_goal(_make_hand_goal(cfg, duration))  # blocking
+
+    def _send_hand_async(self, cfg: dict[str, float], duration: float):
+        """Dispara goal da mão sem bloquear (fire-and-forget).
+
+        Usado para intercalar movimento da mão com o do braço: enquanto o braço
+        executa uma trajetória síncrona, a mão progride para a configuração
+        desejada em paralelo. O controlador de junta preempta goals anteriores
+        automaticamente, então o próximo `_send_hand*` substitui este sem
+        descontinuidade.
+        """
+        self._hand_ac.send_goal_async(_make_hand_goal(cfg, duration))
 
 
 def main(args=None):

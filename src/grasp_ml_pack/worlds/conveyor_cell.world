@@ -318,43 +318,6 @@
     </link>
   </model>
 
-  <!-- Guias laterais da esteira (perfil de alumínio) -->
-  <model name="belt_guide_left">
-    <static>true</static>
-    <pose>0.95 0.240 0.870 0 0 0</pose>
-    <link name="link">
-      <collision name="collision">
-        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
-      </collision>
-      <visual name="visual">
-        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
-        <material>
-          <ambient>0.55 0.58 0.60 1</ambient>
-          <diffuse>0.65 0.68 0.70 1</diffuse>
-          <specular>0.40 0.40 0.40 1</specular>
-        </material>
-      </visual>
-    </link>
-  </model>
-
-  <model name="belt_guide_right">
-    <static>true</static>
-    <pose>0.95 -0.240 0.870 0 0 0</pose>
-    <link name="link">
-      <collision name="collision">
-        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
-      </collision>
-      <visual name="visual">
-        <geometry><box><size>0.80 0.025 0.13</size></box></geometry>
-        <material>
-          <ambient>0.55 0.58 0.60 1</ambient>
-          <diffuse>0.65 0.68 0.70 1</diffuse>
-          <specular>0.40 0.40 0.40 1</specular>
-        </material>
-      </visual>
-    </link>
-  </model>
-
   <!-- Pés de suporte da esteira -->
   <model name="belt_leg_front">
     <static>true</static>

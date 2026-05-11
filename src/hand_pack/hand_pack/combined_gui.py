@@ -64,6 +64,54 @@ ARM_PRESETS = {
                   'joint4': 0, 'joint5': 0, 'joint6': 0},
 }
 
+# Poses de pick — ângulos em graus calculados via IK do grasp_ml_pack
+# para os 3 objetos farmacêuticos na estação de pick (x=0.75, y=0).
+# Permitem verificar visualmente o alinhamento da mão sobre o objeto antes
+# de rodar o ciclo automático da célula. As três soluções convergem para o
+# mesmo ramo (q3 ≈ -83°, "elbow down, reaching forward").
+PICK_POSES = {
+    'Pick Frasco (z=0.866)': {
+        'joint1': +23.5, 'joint2': -16.6, 'joint3': -83.2,
+        'joint4': -80.2, 'joint5': +23.5, 'joint6':  +0.0,
+    },
+    'Pick Tubo (z=0.896)': {
+        'joint1': +23.5, 'joint2': -16.2, 'joint3': -80.7,
+        'joint4': -83.1, 'joint5': +23.5, 'joint6':  +0.0,
+    },
+    'Pick Ampola (z=0.851)': {
+        'joint1': +23.6, 'joint2': -16.8, 'joint3': -84.5,
+        'joint4': -78.7, 'joint5': +23.3, 'joint6':  +0.2,
+    },
+}
+
+# Configurações de grasp da mão COVVI (extraído de kinematics.HAND_CONFIGS),
+# em valor de slider 0..200 (0=aberto, 200=fechado em max_rad).
+# Mapeamento: cfg_rad_j → slider_j = round(cfg_rad_j / MAX_RAD[j] * 200)
+#   palm_grip      → frasco (preensão palmar, garrafa)
+#   claw_grip      → tubo de ensaio (garra fina)
+#   fingertip_grip → ampola (pinça de pontas)
+# Valores derivados:
+#   palm_grip   = {Thumb:1.10,Index:1.25,Middle:1.25,Ring:1.20,Little:1.10,Rotate:0.25}
+#               = {138, 156, 156, 150, 138, 50}
+#   claw_grip   = {Thumb:0.90,Index:1.10,Middle:1.10,Ring:1.05,Little:0.95,Rotate:0.45}
+#               = {112, 138, 138, 131, 119, 90}
+#   fingertip   = {Thumb:0.75,Index:0.70,Middle:0.65,Ring:0.05,Little:0.05,Rotate:0.82}
+#               = {94, 88, 81, 6, 6, 164}
+HAND_GRIPS = {
+    'Palm Grip (frasco)': {
+        'Thumb': 138, 'Index': 156, 'Middle': 156,
+        'Ring':  150, 'Little': 138, 'Rotate': 50,
+    },
+    'Claw Grip (tubo)': {
+        'Thumb': 112, 'Index': 138, 'Middle': 138,
+        'Ring':  131, 'Little': 119, 'Rotate': 90,
+    },
+    'Fingertip Grip (ampola)': {
+        'Thumb': 94, 'Index': 88, 'Middle': 81,
+        'Ring':   6, 'Little':  6, 'Rotate': 164,
+    },
+}
+
 # Colour palette
 BG         = '#1a1a2e'
 PANEL_BG   = '#16213e'
@@ -222,7 +270,7 @@ class CombinedControlGUI(Node):
             self.arm_sliders[j] = sl
             self.arm_labels[j]  = val_lbl
 
-        # Buttons
+        # Botões de poses básicas
         btn_row = tk.Frame(body, bg=PANEL_BG)
         btn_row.pack(fill='x', pady=(10, 2))
         for label, preset in ARM_PRESETS.items():
@@ -235,13 +283,44 @@ class CombinedControlGUI(Node):
                 command=lambda p=preset: self._arm_apply_preset(p),
             ).pack(side='left', padx=3)
 
+        # Poses de pick — verifica alinhamento antes de operar a célula.
+        # Aplica os ângulos via IK e publica imediatamente para movimento fluido.
+        sep = tk.Label(body, text='—— Poses de Pick ——',
+                       font=('Arial', 9, 'italic'),
+                       bg=PANEL_BG, fg=TEXT_DIM)
+        sep.pack(fill='x', pady=(8, 2))
+        pick_row = tk.Frame(body, bg=PANEL_BG)
+        pick_row.pack(fill='x', pady=(0, 2))
+        for label, pose in PICK_POSES.items():
+            tk.Button(
+                pick_row, text=label,
+                bg='#5d4037', fg='white',
+                activebackground='#795548', activeforeground='white',
+                relief='flat', padx=8, pady=5,
+                font=('Arial', 9, 'bold'),
+                command=lambda p=pose: self._arm_apply_preset(p),
+            ).pack(side='left', padx=3, fill='x', expand=True)
+
     def _arm_changed(self, val, lbl, _joint):
         lbl.config(text=f'{int(float(val)):5d}°')
         self._publish_arm()
 
     def _arm_apply_preset(self, preset):
+        # Atualiza os sliders SEM disparar callbacks individuais (que poderiam
+        # publicar 6 trajetórias separadas e gerar trancos). Depois publica
+        # uma única trajetória com todas as juntas → movimento suave e fluido.
         for j, deg in preset.items():
-            self.arm_sliders[j].set(deg)
+            sl = self.arm_sliders[j]
+            sl.config(command=lambda v: None)   # mute callback
+            sl.set(deg)
+            self.arm_labels[j].config(text=f'{int(deg):5d}°')
+        # Reata callbacks normais
+        for j in preset.keys():
+            sl = self.arm_sliders[j]
+            lbl = self.arm_labels[j]
+            sl.config(command=lambda v, lbl=lbl, jn=j: self._arm_changed(v, lbl, jn))
+        # Publica trajetória única
+        self._publish_arm()
 
     def _publish_arm(self):
         if not self._ready:
@@ -333,6 +412,31 @@ class CombinedControlGUI(Node):
             command=lambda: self._hand_preset(100),
         ).pack(side='left', padx=3)
 
+        # Configurações de preensão para os 3 objetos farmacêuticos.
+        # Aplica HAND_CONFIGS do projeto, idêntico ao que o executor automático
+        # usa em ciclo. Botões coloridos por classe (laranja/azul/verde =
+        # mesma palette dos bounding boxes da detecção).
+        sep = tk.Label(body, text='—— Preensões do Projeto ——',
+                       font=('Arial', 9, 'italic'),
+                       bg=PANEL_BG, fg=TEXT_DIM)
+        sep.pack(fill='x', pady=(8, 2))
+        grip_row = tk.Frame(body, bg=PANEL_BG)
+        grip_row.pack(fill='x', pady=(0, 2))
+        grip_colors = {
+            'Palm Grip (frasco)':       '#e65100',   # laranja
+            'Claw Grip (tubo)':         '#1565c0',   # azul
+            'Fingertip Grip (ampola)':  '#2e7d32',   # verde
+        }
+        for label, vals in HAND_GRIPS.items():
+            tk.Button(
+                grip_row, text=label,
+                bg=grip_colors[label], fg='white',
+                activebackground='#212121', activeforeground='white',
+                relief='flat', padx=4, pady=5,
+                font=('Arial', 8, 'bold'),
+                command=lambda v=vals: self._hand_apply_grip(v),
+            ).pack(side='left', padx=2, fill='x', expand=True)
+
     def _hand_changed(self, val, lbl, _joint):
         lbl.config(text=f'{int(float(val)):4d}')
         self._publish_hand()
@@ -340,6 +444,25 @@ class CombinedControlGUI(Node):
     def _hand_preset(self, value):
         for sl in self.hand_sliders.values():
             sl.set(value)
+
+    def _hand_apply_grip(self, vals: dict):
+        """
+        Aplica configuração de preensão (palm/claw/fingertip) em todos os
+        sliders simultaneamente, com uma única publicação no controlador da
+        mão — movimento contínuo e fluido (sem 6 trajetórias separadas).
+        """
+        for j, v in vals.items():
+            sl = self.hand_sliders[j]
+            sl.config(command=lambda val: None)         # mute callback
+            sl.set(v)
+            self.hand_labels[j].config(text=f'{int(v):4d}')
+        # Reata callbacks
+        for j in vals.keys():
+            sl = self.hand_sliders[j]
+            lbl = self.hand_labels[j]
+            sl.config(command=lambda v, lbl=lbl, jn=j: self._hand_changed(v, lbl, jn))
+        # Publica trajetória única
+        self._publish_hand()
 
     def _publish_hand(self):
         if not self._ready:
