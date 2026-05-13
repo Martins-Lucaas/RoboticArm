@@ -1,48 +1,86 @@
-# RoboticArm — Gêmeo Digital CR10 + COVVI · Célula de Manufatura Biomédica
+<div align="center">
 
-> Braço industrial + mão protética biônica + visão computacional + esteira, em simulação Gazebo, com hook para a mão real via ECI — base de treinamento para usuários de próteses de mão de múltiplos graus de liberdade.
+# 🤖 RoboticArm
+### Gêmeo Digital · CR10 + COVVI Hand · Célula de Manufatura Biomédica
 
-Integra o braço **Dobot CR10** com a mão protética **COVVI Hand** em um gêmeo digital completo no **ROS 2 Humble / Gazebo Classic 11**. O sistema simula uma célula industrial de manufatura biomédica: o robô identifica objetos farmacêuticos em uma esteira, classifica-os pelo tipo de preensão necessário e os deposita nas caixas de destino corretas. A mesma stack pode comandar a mão COVVI física via servidor ECI (`covvi_hand_driver`).
+[![ROS 2 Humble](https://img.shields.io/badge/ROS%202-Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)](https://docs.ros.org/en/humble/)
+[![Gazebo Classic 11](https://img.shields.io/badge/Gazebo-Classic%2011-FCBA28?style=for-the-badge&logo=gazebo&logoColor=white)](http://classic.gazebosim.org/)
+[![Ubuntu 22.04](https://img.shields.io/badge/Ubuntu-22.04%20LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)](https://releases.ubuntu.com/22.04/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-D22128?style=for-the-badge)](LICENSE)
 
-Este trabalho compõe o **Trabalho de Conclusão de Curso (TCC)** em Engenharia Biomédica cujo tema é o desenvolvimento de um sistema virtual de auxílio ao treinamento de usuários de próteses de mão com múltiplos graus de liberdade.
+**Braço industrial + mão protética biônica + visão computacional + esteira em simulação Gazebo,
+com canal para a mão COVVI real via ECI.**
+Base de treinamento para usuários de próteses de mão de múltiplos graus de liberdade.
+
+</div>
+
+> [!NOTE]
+> Este projeto integra o braço **Dobot CR10** com a mão protética **COVVI Hand** em um gêmeo digital completo no **ROS 2 Humble / Gazebo Classic 11**. O robô identifica objetos farmacêuticos em uma esteira, classifica-os pelo tipo de preensão necessário e os deposita nas caixas de destino corretas. A mesma stack pode comandar a mão COVVI física via servidor ECI (`covvi_hand_driver`).
+>
+> Componente do **Trabalho de Conclusão de Curso (TCC)** em Engenharia Biomédica — desenvolvimento de um sistema virtual de auxílio ao treinamento de usuários de próteses de mão com múltiplos graus de liberdade.
+
+<details>
+<summary><b>📑 Índice navegável</b> — clique para expandir</summary>
+
+- [🎬 Em ação](#-em-ação)
+- [🎓 Contexto do TCC](#-contexto-do-tcc)
+- [🧪 Objetos e tipos de preensão](#-objetos-e-tipos-de-preensão)
+- [🏗️ Arquitetura do sistema](#️-arquitetura-do-sistema)
+- [📐 Cinemática](#-cinemática)
+- [🔩 Hardware](#-hardware)
+- [📦 Requisitos](#-requisitos)
+- [⚙️ Instalação](#️-instalação)
+- [▶️ Rodando](#️-rodando)
+- [📚 Catálogo completo de comandos](#-catálogo-completo-de-comandos)
+- [📡 Tópicos principais](#-tópicos-principais)
+- [🗂️ Estrutura do projeto](#️-estrutura-do-projeto)
+- [🛠️ Comandos úteis](#️-comandos-úteis)
+- [🦾 Tutorial completo — Conectar e operar a mão COVVI real](#-tutorial-completo--conectar-e-operar-a-mão-covvi-real)
+- [🧰 Bateria completa de testes da mão real](#-bateria-completa-de-testes-da-mão-real)
+- [👁️ RViz — Visualizações da mão COVVI](#️-rviz--visualizações-da-mão-covvi)
+- [📄 Licença](#-licença)
+
+</details>
 
 ---
 
-## Em ação
+## 🎬 Em ação
 
-### Célula completa no Gazebo — visão geral
+### 🌍 Célula completa no Gazebo — visão geral
 
 | Vista lateral da célula | Vista isométrica completa |
-|---|---|
+|:---:|:---:|
 | ![Célula lateral](images/conveyor_cell_gazebo_full_scene.png) | ![Célula isométrica](images/conveyor_cell_gazebo_simulation_running.png) |
 
+> [!NOTE]
 > Esteira transportadora à direita, braço CR10 com mão COVVI ao centro, três caixas de classificação (vermelha/verde/azul) à esquerda. Coluna de câmera montada atrás da esteira.
 
-### GUI de controle + visão da câmera
+### 🖥️ GUI de controle + visão da câmera
 
 | Estado ocioso — objeto na pick station | Braço estendido em fase de grasp |
-|---|---|
+|:---:|:---:|
 | ![GUI Idle](images/conveyor_cell_gui_camera_idle.png) | ![GUI Picking](images/conveyor_cell_gui_arm_picking.png) |
 
-### Detalhe da célula — caixas de classificação
+### 🎯 Detalhe da célula — caixas de classificação
 
 | Closeup dos bins de destino | Visão de cima da célula |
-|---|---|
+|:---:|:---:|
 | ![Bins](images/conveyor_cell_gazebo_closeup_bins.png) | ![Overview](images/conveyor_cell_gazebo_overview_early.png) |
 
-### Hardware
+### 🔧 Hardware
 
 | Braço Dobot CR10 | Mão COVVI |
-|---|---|
+|:---:|:---:|
 | ![CR10](images/dobot_cr10_product_photo.jpeg) | ![COVVI](images/covvi_hand_product_photo.jpg) |
 
 | RViz — dedos abertos | RViz — dedos fechados |
-|---|---|
+|:---:|:---:|
 | ![Aberta](images/covvi_hand_rviz_joints_open.png) | ![Fechada](images/covvi_hand_rviz_joints_closed.png) |
 
 ---
 
-## Contexto do TCC
+## 🎓 Contexto do TCC
 
 Usuários de próteses de múltiplos graus de liberdade (MGL) enfrentam uma curva de aprendizado elevada: controlar individualmente cinco dedos para diferentes tipos de tarefa requer semanas de treino com terapeuta, hardware físico e objetos reais. O gêmeo digital permite que esse treinamento seja feito em simulação, antes do contato com o dispositivo físico — reduzindo custo, tempo e fadiga do usuário.
 
@@ -50,25 +88,25 @@ O diferencial é o **pipeline de grasp diferenciado por visão computacional**: 
 
 ---
 
-## Objetos e tipos de preensão
+## 🧪 Objetos e tipos de preensão
 
-| Objeto | Descrição | Tipo de Grasp | Caixa de Destino |
+| 📦 Objeto | Descrição | 🤚 Tipo de Grasp | 🎯 Caixa de Destino |
 |---|---|---|---|
-| **Frasco** | Frasco de medicamento (âmbar, ∅84 mm, h=90 mm) | Palm Grip | Box 1 — vermelha |
-| **Tubo** | Tubo de ensaio (azul, ∅24 mm, h=120 mm) | Claw Grip | Box 2 — verde |
-| **Ampola** | Ampola farmacêutica (verde, ∅10 mm, h=75 mm) | Fingertip Grip | Box 3 — azul |
+| **Frasco** | Frasco de medicamento (âmbar, ∅84 mm, h=90 mm) | Palm Grip | Box 1 — 🔴 vermelha |
+| **Tubo** | Tubo de ensaio (azul, ∅24 mm, h=120 mm) | Claw Grip | Box 2 — 🟢 verde |
+| **Ampola** | Ampola farmacêutica (verde, ∅10 mm, h=75 mm) | Fingertip Grip | Box 3 — 🔵 azul |
 
 Cada objeto tem cor específica na simulação Gazebo para a segmentação HSV:
 
-| Objeto | Cor Gazebo | Faixa HSV |
+| 📦 Objeto | 🎨 Cor Gazebo | Faixa HSV |
 |---|---|---|
-| Frasco | Âmbar/laranja | H=8-26, S>120, V>80 |
-| Tubo | Azul rico | H=100-135, S>80, V>50 |
-| Ampola | Verde brilhante | H=38-85, S>110, V>80 |
+| Frasco | Âmbar/laranja | `H=8-26, S>120, V>80` |
+| Tubo | Azul rico | `H=100-135, S>80, V>50` |
+| Ampola | Verde brilhante | `H=38-85, S>110, V>80` |
 
 ---
 
-## Arquitetura do sistema
+## 🏗️ Arquitetura do sistema
 
 Pipeline com 5 nós ROS 2 e duas GUIs alternativas:
 
@@ -114,25 +152,26 @@ Pipeline com 5 nós ROS 2 e duas GUIs alternativas:
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Ciclo de grasp — 7 fases
+### 🔄 Ciclo de grasp — 7 fases
 
 Cada chamada de `/cell/execute_grasp` executa, depois de resolver IK para todos os waypoints:
 
-```
-[F1] HOME → pick                     (articular, mão em paralelo: open → pré-grip)
-[F2] Fechar mão sobre o objeto       (cfg_closed) + attach cinemático
-[F3] Levantar com objeto             (lift_pos = pick + 22 cm)
-[F4] Transit lateral → via_box       (Cartesiano, z=1.15 m world)
-[F5] Descida → approach_box          (Cartesiano)
-[F6] Soltar acima da caixa           (detach → open hand → /conveyor/retreat)
-[F7] Retorno HOME                    (Cartesiano)
-```
+| Fase | Movimento | Tipo |
+|:---:|:---|:---:|
+| **F1** | HOME → pick (mão em paralelo: open → pré-grip) | 🔁 Articular |
+| **F2** | Fechar mão sobre o objeto (`cfg_closed`) + attach cinemático | ✊ Mão |
+| **F3** | Levantar com objeto (`lift_pos = pick + 22 cm`) | 🔁 Articular |
+| **F4** | Transit lateral → via_box (`z=1.15 m world`) | 📏 Cartesiano |
+| **F5** | Descida → approach_box | 📏 Cartesiano |
+| **F6** | Soltar acima da caixa (detach → open hand → `/conveyor/retreat`) | 📏 Cartesiano |
+| **F7** | Retorno HOME | 📏 Cartesiano |
 
-A trajetória usa **ease-in/out sinusoidal** com 8 waypoints por segmento articular e 6 waypoints Cartesianos. Validação AABB contra `_WORLD_OBSTACLES` (esteira, pedestal, paredes, prateleira de sort) é feita pelo executor antes de enviar qualquer trajetória.
+> [!TIP]
+> A trajetória usa **ease-in/out sinusoidal** com 8 waypoints por segmento articular e 6 waypoints Cartesianos. Validação **AABB** contra `_WORLD_OBSTACLES` (esteira, pedestal, paredes, prateleira de sort) é feita pelo executor antes de enviar qualquer trajetória.
 
 ---
 
-## Cinemática
+## 📐 Cinemática
 
 Implementação em `grasp_ml_pack/kinematics.py`. A convenção é **URDF nativa** (não Denavit-Hartenberg):
 
@@ -205,24 +244,24 @@ O atuador da mão tem 31 juntas no Gazebo (6 primárias + 25 mimic). Os multipli
 
 ---
 
-## Hardware
+## 🔩 Hardware
 
 | Componente | Modelo | Specs |
-|---|---|---|
-| Braço | **Dobot CR10** | 6-DOF, alcance 1375 mm, payload 10 kg |
-| Mão | **COVVI Hand** | 5 dedos + 31 juntas (6 primárias + 25 mimic), interface ECI Ethernet |
-| Câmera | RGB Gazebo | 848×480, FoV 70°, x=1.25 m, z=1.70 m, pitch=60°, yaw=180° |
+|:---:|:---|:---|
+| 🦾 Braço | **Dobot CR10** | 6-DOF, alcance 1375 mm, payload 10 kg |
+| ✋ Mão | **COVVI Hand** | 5 dedos + 31 juntas (6 primárias + 25 mimic), interface ECI Ethernet |
+| 📷 Câmera | RGB Gazebo | 848×480, FoV 70°, x=1.25 m, z=1.70 m, pitch=60°, yaw=180° |
 
 ---
 
-## Requisitos
+## 📦 Requisitos
 
-| | Versão |
-|---|---|
-| Ubuntu | 22.04 LTS |
-| ROS 2 | Humble Hawksbill |
-| Gazebo | Classic 11 |
-| Python | 3.10+ |
+| Componente | Versão |
+|:---|:---|
+| 🐧 Ubuntu | `22.04 LTS` |
+| 🤖 ROS 2 | `Humble Hawksbill` |
+| 🌍 Gazebo | `Classic 11` |
+| 🐍 Python | `3.10+` |
 
 ### Pacotes apt
 
@@ -255,16 +294,16 @@ pip install ultralytics
 
 ---
 
-## Instalação
+## ⚙️ Instalação
 
-### 1) Clonar este repositório
+### 1️⃣ Clonar este repositório
 
 ```bash
 git clone https://github.com/Martins-Lucaas/RoboticArm.git ~/RoboticArm
 cd ~/RoboticArm
 ```
 
-### 2) Clonar a interface ECI da mão COVVI
+### 2️⃣ Clonar a interface ECI da mão COVVI
 
 A stack usa `covvi_interfaces` (definições de msg/srv) e `covvi_hand_driver` (servidor que fala com a mão física via Ethernet). Ambos vêm do repo oficial COVVI:
 
@@ -275,9 +314,10 @@ git clone git@github.com:COVVI-Robotics/eci_ros.git eci_ros-main
 # git clone https://github.com/COVVI-Robotics/eci_ros.git eci_ros-main
 ```
 
+> [!IMPORTANT]
 > Mesmo em modo só-simulação, o `covvi_interfaces` precisa estar compilado — o `manual_control_node` faz `import` lazy desses tipos para enviar `SetCurrentGrip` / `SetDigitPosn` quando o toggle de "Mão Real" está ligado.
 
-### 3) Descrição URDF do CR10 — só o pacote mínimo
+### 3️⃣ Descrição URDF do CR10 — só o pacote mínimo
 
 O repositório oficial da Dobot (`DOBOT_6Axis_ROS2_V4`) contém ~15 pacotes para variantes de braço (cr3/5/7/10/12/16/20, nova2/5, me6) e MoveIt. **Este projeto usa apenas `cra_description`** (URDF do CR10). Os demais não são compilados nem usados.
 
@@ -297,9 +337,10 @@ mv DOBOT_6Axis_ROS2_V4/cra_description ./cra_description
 rm -rf DOBOT_6Axis_ROS2_V4
 ```
 
+> [!TIP]
 > `cra_description` não tem dependência de nenhum outro pacote DOBOT — é só URDF/Xacro + meshes.
 
-### 4) Compilar o workspace
+### 4️⃣ Compilar o workspace
 
 ```bash
 cd ~/RoboticArm
@@ -307,7 +348,8 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-> **Erro de symlink durante o build?** Se aparecer `symbolic link ... Is a directory`:
+> [!WARNING]
+> **Erro de symlink durante o build?** Se aparecer `symbolic link ... Is a directory`, faça uma rebuild limpa:
 > ```bash
 > rm -rf build install
 > colcon build --symlink-install
@@ -315,7 +357,7 @@ source install/setup.bash
 
 ---
 
-## Rodando
+## ▶️ Rodando
 
 ### Modo manual (default) — célula completa com GUI
 
@@ -425,9 +467,9 @@ GUI com sliders + botões `+`/`−` por junta e:
 
 ---
 
-## Catálogo completo de comandos
+## 📚 Catálogo completo de comandos
 
-### `grasp_ml_pack` — pacote principal
+### 🧠 `grasp_ml_pack` — pacote principal
 
 **Launch files:**
 
@@ -471,7 +513,7 @@ ros2 run grasp_ml_pack manual_control --ros-args -p eci_prefix:=/test/server_1
 ros2 run grasp_ml_pack test_kin
 ```
 
-### `hand_pack` — controle isolado da mão + URDF combinado
+### ✋ `hand_pack` — controle isolado da mão + URDF combinado
 
 **Launch files:**
 
@@ -500,7 +542,7 @@ ros2 run hand_pack hand_gui          # GUI Tkinter standalone só da mão (6 sli
 ros2 run hand_pack combined_gui      # GUI combinada: 6 juntas CR10 + 6 digits COVVI
 ```
 
-### `covvi_hand_driver` — servidor para a mão COVVI real
+### 🌐 `covvi_hand_driver` — servidor para a mão COVVI real
 
 ```bash
 # IP da mão + namespace/nome do servidor (cria /covvi/hand/* serviços e tópicos)
@@ -514,7 +556,7 @@ ros2 run covvi_hand_driver server 192.168.1.123 \
 
 ---
 
-## Tópicos principais
+## 📡 Tópicos principais
 
 | Tópico | Tipo | Descrição |
 |---|---|---|
@@ -539,7 +581,7 @@ ros2 run covvi_hand_driver server 192.168.1.123 \
 
 ---
 
-## Estrutura do projeto
+## 🗂️ Estrutura do projeto
 
 ```
 RoboticArm/
@@ -578,7 +620,7 @@ RoboticArm/
 
 ---
 
-## Comandos úteis
+## 🛠️ Comandos úteis
 
 ```bash
 # Rebuild só o pacote principal
@@ -614,22 +656,30 @@ python3 collision_analysis.py
 
 ---
 
-## Tutorial completo — Conectar e operar a mão COVVI real
+## 🦾 Tutorial completo — Conectar e operar a mão COVVI real
 
-Este tutorial cobre a integração da **mão COVVI física** com a stack do projeto, do desempacotamento ao espelhamento de grips em tempo real entre o gêmeo digital e o hardware. Reserve cerca de 15 minutos para a primeira execução.
+Este tutorial cobre a integração da **mão COVVI física** com a stack do projeto, do desempacotamento ao espelhamento de grips em tempo real entre o gêmeo digital e o hardware.
 
+> [!TIP]
+> **⏱️ Tempo estimado:** ~15 minutos na primeira execução.
+> **🎯 Resultado esperado:** mão real e gêmeo digital movendo-se em sincronia, comandados pela GUI `manual_control`.
+
+> [!IMPORTANT]
 > O servidor ECI (`covvi_hand_driver`) é um nó Python que abre conexão TCP/UDP com a mão e expõe ~50 serviços e ~12 tópicos ROS 2. Toda comunicação com o hardware passa por ele.
 
-### Pré-requisitos
+### 📋 Pré-requisitos
 
-**Hardware:**
-- Mão COVVI Hand com bateria carregada ou fonte de bancada conectada
-- Cabo Ethernet RJ45 direto entre o PC e a mão (ou ambos na mesma LAN)
-- IP da mão (padrão de fábrica: `192.168.1.123` — pode mudar por configuração)
+> [!IMPORTANT]
+> Confira antes de começar — pular qualquer item gera erro nos passos seguintes.
 
-**Software:**
-- Workspace já compilado com `eci_ros-main` (passos 2 e 4 da [Instalação](#instalação))
-- Pacotes ROS verificados:
+**🔌 Hardware:**
+- ✅ Mão COVVI Hand com bateria carregada **ou** fonte de bancada conectada
+- ✅ Cabo Ethernet RJ45 direto entre o PC e a mão (ou ambos na mesma LAN)
+- ✅ IP da mão (padrão de fábrica: `192.168.1.123` — pode mudar por configuração)
+
+**💻 Software:**
+- ✅ Workspace já compilado com `eci_ros-main` (passos 2 e 4 da [Instalação](#️-instalação))
+- ✅ Pacotes ROS verificados:
   ```bash
   ros2 pkg list | grep covvi
   # Deve listar:
@@ -637,10 +687,20 @@ Este tutorial cobre a integração da **mão COVVI física** com a stack do proj
   #   covvi_interfaces
   ```
 
-**Convenção de namespace:**
+**🏷️ Convenção de namespace:**
 - Este tutorial usa `__ns:=/covvi` e `__name:=hand` — todos os serviços ficam sob `/covvi/hand/*`
 - O `manual_control` espera esse prefixo por padrão (parâmetro `eci_prefix`)
 - Se quiser múltiplas mãos ou outro nome, troque `/covvi/hand` consistentemente
+
+> [!TIP]
+> **Fluxo geral do tutorial:**
+> ```
+> 1️⃣ Rede → 2️⃣ Servidor ECI → 3️⃣ Power On → 4️⃣ Telemetria → 5️⃣ CLI tests
+>                                    ↓
+> 6️⃣ Célula Gazebo → 7️⃣ manual_control → 8️⃣ Real Hand ON
+>                                    ↓
+> 9️⃣ Grips do projeto → 🔟 Monitorar → 1️⃣1️⃣ Desligar
+> ```
 
 ---
 
@@ -697,7 +757,12 @@ sudo ufw status
 sudo ufw allow from 192.168.1.0/24
 ```
 
-> **LED da mão:** azul piscando = aguardando conexão TCP do ECI; azul fixo = conectada e energizada; vermelho = erro/proteção térmica; apagado = sem energia.
+> [!TIP]
+> **💡 LED da mão:**
+> - 🔵 **Azul piscando** — aguardando conexão TCP do ECI
+> - 🔷 **Azul fixo** — conectada e energizada
+> - 🔴 **Vermelho** — erro / proteção térmica
+> - ⚫ **Apagado** — sem energia
 
 ---
 
@@ -738,7 +803,8 @@ ros2 service list | grep /covvi/hand | head -10
 # ...
 ```
 
-**Se o servidor travar em `Connecting...`:** o IP está errado, a mão está desligada, ou alguma firewall/route está bloqueando. Volte ao Passo 1.
+> [!WARNING]
+> **Se o servidor travar em `Connecting...`:** o IP está errado, a mão está desligada, ou alguma firewall/route está bloqueando. Volte ao [Passo 1](#passo-1--configurar-a-rede).
 
 ---
 
@@ -1020,7 +1086,8 @@ ros2 service call /covvi/hand/SetHandPowerOff covvi_interfaces/srv/SetHandPowerO
 3. `Ctrl+C` no Terminal A (covvi_hand_driver server)
 4. Desligar a bateria/fonte da mão física
 
-> Se você desligar a fonte com a mão fechada e os motores energizados, o firmware pode entrar em estado de proteção — sempre passe pelo `SetHandPowerOff` antes.
+> [!CAUTION]
+> Se você desligar a fonte com a mão fechada e os motores energizados, o firmware pode entrar em estado de proteção — **sempre passe pelo `SetHandPowerOff` antes**.
 
 ---
 
@@ -1062,9 +1129,17 @@ Daí você só precisa subir a célula + manual_control nos outros terminais.
 
 ---
 
-### Bateria completa de testes da mão real
+---
 
-Cole o bloco abaixo em qualquer terminal com `source ~/RoboticArm/install/setup.bash` e o servidor ECI rodando. Cada seção é independente — execute uma por vez para isolar problemas.
+## 🧰 Bateria completa de testes da mão real
+
+> [!NOTE]
+> Cole os blocos com `source ~/RoboticArm/install/setup.bash` ativo e o servidor ECI rodando. Cada seção é independente — execute uma por vez para isolar problemas.
+
+<details>
+<summary><b>📋 Mostrar/ocultar 11 grupos de testes</b> — Identificação · Telemetria · Streams · Status · Movimento · Grips · Direct Control · Stress · Integração · Limpeza</summary>
+
+<br>
 
 #### Teste 1 — Identificação e firmware
 
@@ -1378,13 +1453,21 @@ chmod +x ~/test_hand.sh
 ~/test_hand.sh
 ```
 
+> [!TIP]
 > O catálogo completo de ~50 serviços ECI está em `src/eci_ros-main/README.md` (incluindo grips de usuário `SendUserGrip`/`RemoveUserGrip`/`ResetUserGrips`, configurações de pinch, limites de motor etc.).
+
+</details>
 
 ---
 
-### Problemas comuns
+## 🆘 Problemas comuns
 
-| Sintoma | Causa | Ação |
+<details>
+<summary><b>🔧 Tabela de diagnóstico</b> — sintomas mais frequentes ao operar a mão real e a célula</summary>
+
+<br>
+
+| ⚠️ Sintoma | 🔍 Causa | ✅ Ação |
 |---|---|---|
 | `ping 192.168.1.123` não responde | IP do PC fora da sub-rede, cabo solto, ou IP da mão diferente | Repetir Passo 1; `sudo nmap -sn 192.168.1.0/24` para descobrir IP real |
 | Servidor ECI trava em `Connecting...` | Mão desligada, firewall, ou outro processo já conectado | Reiniciar a mão (desligar/ligar fonte); `pkill -f covvi_hand_driver` |
@@ -1392,15 +1475,17 @@ chmod +x ~/test_hand.sh
 | LED da mão fica vermelho | Proteção térmica ou erro de hardware | `GetDigitError`; aguardar resfriamento; consultar manual COVVI |
 | Mão treme ou range ao receber grip | Motor sem energia ou stuck | `SetHandPowerOn` antes do primeiro comando; `SetDirectControlStop` se já enrolou |
 | `Real Hand: ON` mas grips não chegam à mão | Servidor não está em `/covvi/hand` | Conferir `ros2 service list \| grep covvi`; passar `eci_prefix:=...` no manual_control |
-| `ModuleNotFoundError: covvi_interfaces` no manual_control | `eci_ros-main` não compilado/sourceado | Passos 2 e 4 da [Instalação](#instalação); novo terminal após `source install/setup.bash` |
+| `ModuleNotFoundError: covvi_interfaces` no manual_control | `eci_ros-main` não compilado/sourceado | Passos 2 e 4 da [Instalação](#️-instalação); novo terminal após `source install/setup.bash` |
 | Sliders engolem updates | Debounce de 150 ms no `SetDigitPosn` | Mover o slider mais devagar; comportamento esperado para evitar saturar o servidor |
 | Mão desincronizada do gêmeo digital | Sliders e posição real divergiram | `GetDigitPosnAll` para ler e ajustar sliders manualmente |
 | Segfault ao abrir manual_control | Bug Tcl/Tk 8.6 com emoji astral | Já corrigido — `rm -rf build/grasp_ml_pack install/grasp_ml_pack && colcon build --packages-select grasp_ml_pack --symlink-install` |
 | Gazebo trava ao enviar trajetória | Controller não ativo | `ros2 control list_controllers` deve mostrar `cr10_group_controller active` e `hand_position_controller active` |
 
+</details>
+
 ---
 
-## RViz — Visualizações da mão COVVI
+## 👁️ RViz — Visualizações da mão COVVI
 
 | Malha visual completa | Malha de colisão |
 |---|---|
@@ -1412,9 +1497,14 @@ chmod +x ~/test_hand.sh
 
 ---
 
-## Licença
+## 📄 Licença
 
-Apache-2.0
+<div align="center">
 
-Desenvolvido por **Lucas Martins** — [lucaspmartins14@gmail.com](mailto:lucaspmartins14@gmail.com)
-TCC — Engenharia Biomédica
+**Apache-2.0**
+
+Desenvolvido por **Lucas Martins** · [![Email](https://img.shields.io/badge/lucaspmartins14%40gmail.com-D14836?style=flat&logo=gmail&logoColor=white)](mailto:lucaspmartins14@gmail.com)
+
+**TCC — Engenharia Biomédica**
+
+</div>
