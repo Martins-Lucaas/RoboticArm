@@ -548,7 +548,7 @@ class ManualControlNode(Node):
         tk.Label(recipe_row, text='   ·   ', font=('Arial', 11),
                  bg=BG, fg=TEXT_DIM).pack(side='left')
         self._btn_entrega = tk.Button(
-            recipe_row, text='📦  ENTREGA',
+            recipe_row, text='[BOX]  ENTREGA',
             bg='#7e57c2', fg='white',
             activebackground='#5e35b1', activeforeground='white',
             relief='flat', padx=14, pady=5, font=('Arial', 10, 'bold'),
@@ -585,7 +585,7 @@ class ManualControlNode(Node):
 
         header = tk.Frame(outer, bg=HEADER_BG)
         header.pack(fill='x')
-        tk.Label(header, text='🦾  Braço CR10', font=('Arial', 12, 'bold'),
+        tk.Label(header, text='[ARM]  Braço CR10', font=('Arial', 12, 'bold'),
                  bg=HEADER_BG, fg=ACCENT_ARM, pady=7, padx=10
                  ).pack(side='left')
 
@@ -842,7 +842,7 @@ class ManualControlNode(Node):
             return
         box_color = {'frasco': 'vermelha', 'tubo': 'verde', 'ampola': 'azul'}[obj]
         self._apply_arm(DELIVERY_POSES_DEG[obj])
-        self._set_status(f'📦 Entrega: {obj} → caixa {box_color}', _CLR=ACCENT_HND)
+        self._set_status(f'Entrega: {obj} -> caixa {box_color}', _CLR=ACCENT_HND)
 
     # ──────────────────────────────────────────────────────── PUBLISH
     def _publish_arm(self):
