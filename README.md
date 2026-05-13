@@ -614,18 +614,789 @@ python3 collision_analysis.py
 
 ---
 
-## Diagnóstico rápido
+## Tutorial completo — Conectar e operar a mão COVVI real
 
-| Sintoma | Causa provável | Solução |
+Este tutorial cobre a integração da **mão COVVI física** com a stack do projeto, do desempacotamento ao espelhamento de grips em tempo real entre o gêmeo digital e o hardware. Reserve cerca de 15 minutos para a primeira execução.
+
+> O servidor ECI (`covvi_hand_driver`) é um nó Python que abre conexão TCP/UDP com a mão e expõe ~50 serviços e ~12 tópicos ROS 2. Toda comunicação com o hardware passa por ele.
+
+### Pré-requisitos
+
+**Hardware:**
+- Mão COVVI Hand com bateria carregada ou fonte de bancada conectada
+- Cabo Ethernet RJ45 direto entre o PC e a mão (ou ambos na mesma LAN)
+- IP da mão (padrão de fábrica: `192.168.1.123` — pode mudar por configuração)
+
+**Software:**
+- Workspace já compilado com `eci_ros-main` (passos 2 e 4 da [Instalação](#instalação))
+- Pacotes ROS verificados:
+  ```bash
+  ros2 pkg list | grep covvi
+  # Deve listar:
+  #   covvi_hand_driver
+  #   covvi_interfaces
+  ```
+
+**Convenção de namespace:**
+- Este tutorial usa `__ns:=/covvi` e `__name:=hand` — todos os serviços ficam sob `/covvi/hand/*`
+- O `manual_control` espera esse prefixo por padrão (parâmetro `eci_prefix`)
+- Se quiser múltiplas mãos ou outro nome, troque `/covvi/hand` consistentemente
+
+---
+
+### Passo 1 — Configurar a rede
+
+A mão COVVI fala apenas com o IP atribuído de fábrica (`192.168.1.123` por padrão). Configure o PC para a mesma sub-rede.
+
+**1.1 — Identifique a interface Ethernet**
+```bash
+ip -br link
+# Saída típica:
+#   lo               UNKNOWN  00:00:00:00:00:00
+#   eno1             UP       a0:b1:c2:d3:e4:f5
+#   wlp3s0           UP       11:22:33:44:55:66
+```
+
+**1.2 — Atribua um IP na sub-rede da mão**
+
+Substitua `eno1` pelo nome da sua interface Ethernet:
+
+```bash
+sudo ip addr add 192.168.1.10/24 dev eno1
+sudo ip link set eno1 up
+```
+
+Para tornar permanente (Ubuntu 22.04 com NetworkManager):
+
+```bash
+nmcli con add type ethernet ifname eno1 con-name covvi-direct \
+    ipv4.addresses 192.168.1.10/24 ipv4.method manual
+nmcli con up covvi-direct
+```
+
+**1.3 — Teste a conectividade**
+
+```bash
+ping -c 3 192.168.1.123
+```
+
+Esperado: 3/3 pacotes recebidos com latência < 5 ms.
+
+**1.4 — Se o ping falhar**
+
+```bash
+# Veja a tabela ARP — se a mão aparecer, ela está na rede mas o IP pode estar errado
+arp -a | grep -i "192.168.1"
+
+# Descubra o IP real da mão por scan da sub-rede
+sudo nmap -sn 192.168.1.0/24
+
+# Confira o firewall do PC
+sudo ufw status
+# Se estiver ativo, libere a sub-rede:
+sudo ufw allow from 192.168.1.0/24
+```
+
+> **LED da mão:** azul piscando = aguardando conexão TCP do ECI; azul fixo = conectada e energizada; vermelho = erro/proteção térmica; apagado = sem energia.
+
+---
+
+### Passo 2 — Subir o servidor ECI
+
+O `covvi_hand_driver server <IP>` abre uma conexão TCP com a mão e expõe a API ECI como serviços ROS 2. Esse processo deve ficar rodando o tempo todo.
+
+**Terminal A — servidor ECI:**
+
+```bash
+source ~/RoboticArm/install/setup.bash
+
+ros2 run covvi_hand_driver server 192.168.1.123 \
+    --ros-args --remap __ns:=/covvi --remap __name:=hand
+```
+
+Saída esperada:
+```
+[INFO] [covvi_hand_driver]: Connecting to 192.168.1.123:1234...
+[INFO] [covvi_hand_driver]: Connection established
+[INFO] [covvi_hand_driver]: Server node ready at /covvi/hand
+```
+
+**Verificar do outro lado** (terminal qualquer, com o source do workspace):
+
+```bash
+ros2 node list | grep hand
+# /covvi/hand
+
+ros2 service list | grep /covvi/hand | head -10
+# /covvi/hand/SetHandPowerOn
+# /covvi/hand/SetHandPowerOff
+# /covvi/hand/SetCurrentGrip
+# /covvi/hand/SetDigitPosn
+# /covvi/hand/SetDigitMove
+# /covvi/hand/GetHello
+# /covvi/hand/GetDeviceIdentity
+# ...
+```
+
+**Se o servidor travar em `Connecting...`:** o IP está errado, a mão está desligada, ou alguma firewall/route está bloqueando. Volte ao Passo 1.
+
+---
+
+### Passo 3 — Ligar a energia dos motores
+
+Por segurança, a mão sobe sem energia nos motores. Ligue manualmente:
+
+**Terminal B:**
+
+```bash
+source ~/RoboticArm/install/setup.bash
+
+# Acende o LED azul fixo — motores energizados
+ros2 service call /covvi/hand/SetHandPowerOn covvi_interfaces/srv/SetHandPowerOn
+
+# Confirma comunicação básica
+ros2 service call /covvi/hand/GetHello covvi_interfaces/srv/GetHello
+# Esperado: response: covvi_interfaces.srv.GetHello_Response(...) com hello: true
+
+# Identidade do dispositivo
+ros2 service call /covvi/hand/GetDeviceIdentity covvi_interfaces/srv/GetDeviceIdentity
+# Imprime serial, modelo, lado (esquerda/direita), versão hardware
+
+# Firmware do PIC
+ros2 service call /covvi/hand/GetFirmwarePICECI  covvi_interfaces/srv/GetFirmwarePICECI
+ros2 service call /covvi/hand/GetFirmwarePICHAND covvi_interfaces/srv/GetFirmwarePICHAND
+```
+
+---
+
+### Passo 4 — Habilitar streams de telemetria (opcional mas recomendado)
+
+A mão pode publicar streams periódicos com posições, correntes, status, orientação etc. Ative tudo:
+
+```bash
+ros2 service call /covvi/hand/EnableAllRealtimeCfg \
+    covvi_interfaces/srv/EnableAllRealtimeCfg
+
+# Ou ative só o que interessa:
+ros2 service call /covvi/hand/SetRealtimeCfg covvi_interfaces/srv/SetRealtimeCfg \
+"{
+  digit_status: false, digit_posn: true,  current_grip: true,
+  electrode_value: false, input_status: false, motor_current: true,
+  digit_touch: false, digit_error: true, environmental: true,
+  orientation: false, motor_limits: false
+}"
+```
+
+Tópicos publicados:
+```bash
+ros2 topic list | grep covvi
+# /covvi/hand/CurrentGripMsg       — grip ativo (id + nome)
+# /covvi/hand/DigitPosnAllMsg      — posições reais dos 6 dígitos (0–255)
+# /covvi/hand/MotorCurrentAllMsg   — corrente dos motores
+# /covvi/hand/DigitErrorMsg        — flags de erro por digito
+# /covvi/hand/EnvironmentalMsg     — temperatura, umidade, bateria
+```
+
+---
+
+### Passo 5 — Teste manual rápido por linha de comando
+
+Antes de subir o gêmeo digital, valide que a mão obedece comandos diretos.
+
+**5.1 — Abrir totalmente** (todos os dígitos em posição 40 — ECI):
+
+```bash
+ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+"{speed: {value: 100}, thumb: 40, index: 40, middle: 40, ring: 40, little: 40, rotate: 40}"
+```
+
+**5.2 — Fechar totalmente** (posição 200):
+
+```bash
+ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+"{speed: {value: 50}, thumb: 200, index: 200, middle: 200, ring: 200, little: 200, rotate: 200}"
+```
+
+**5.3 — Testar grips nativos do firmware** (14 grips ECI):
+
+```bash
+# IDs ECI: 1=Tripod, 2=Power, 3=Trigger, 4=Prec.Open, 5=Prec.Closed,
+#          6=Key, 7=Finger, 8=Cylinder, 9=Column, 10=Relaxed,
+#          11=Glove, 12=Tap, 13=Grab, 14=Tripod Open
+for id in 2 1 4 10; do
+  ros2 service call /covvi/hand/SetCurrentGrip \
+      covvi_interfaces/srv/SetCurrentGrip "{grip_id: {value: $id}}"
+  sleep 2
+done
+```
+
+**5.4 — Mover dígitos individualmente:**
+
+```bash
+# Move só o índex para 200 (fechado), velocidade 100, sem limite de torque
+ros2 service call /covvi/hand/SetDigitMove covvi_interfaces/srv/SetDigitMove \
+"{digit: {value: 1}, position: 200, speed: {value: 100}, power: {value: 20}, limit: {value: 0}}"
+```
+
+> IDs dos dígitos: `0=Thumb, 1=Index, 2=Middle, 3=Ring, 4=Little, 5=Rotate`.
+
+**5.5 — Parar tudo (emergência):**
+
+```bash
+ros2 service call /covvi/hand/SetDirectControlStop covvi_interfaces/srv/SetDirectControlStop
+```
+
+Se todos os comandos acima funcionarem, a integração de baixo nível está OK.
+
+---
+
+### Passo 6 — Subir a célula em paralelo
+
+Agora levante o gêmeo digital sem a GUI padrão (vamos usar a `manual_control` que tem o toggle de Real Hand):
+
+**Terminal C:**
+
+```bash
+source ~/RoboticArm/install/setup.bash
+ros2 launch grasp_ml_pack conveyor_cell.launch.py no_gui:=true
+```
+
+Aguarde:
+```
+[conveyor_controller] ConveyorController pronto | sequência: ['frasco', 'tubo', 'ampola']
+[grasp_executor]      GraspExecutor pronto.
+[object_detector]     ObjectDetector pronto — modo: HSV-simulação | objetos: frasco / tubo / ampola
+```
+
+Se quiser ver a câmera, abra em outro terminal:
+
+```bash
+ros2 run rqt_image_view rqt_image_view /detector/debug_image
+```
+
+---
+
+### Passo 7 — Abrir a GUI `manual_control`
+
+**Terminal D:**
+
+```bash
+source ~/RoboticArm/install/setup.bash
+ros2 run grasp_ml_pack manual_control
+```
+
+A janela tem 5 áreas:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  HEADER: [Real Hand: OFF ✗]  Status: Pronto.                     │
+├──────────────────────────────────────────────────────────────────┤
+│  PRESETS:  [Pick Frasco] [Pick Tubo] [Pick Ampola] [BOX] ENTREGA │
+├──────────────────────────────────────────────────────────────────┤
+│  [ARM] Braço CR10              │  ✋ Mão COVVI                    │
+│  ────────────────────────────  │  ─────────────────────────────  │
+│  joint1  ●───────●  ──── 0°    │  Thumb   ●───●──────  40/200    │
+│  joint2  ●───────●  ──── 0°    │  Index   ●───●──────  40/200    │
+│  joint3  ●───────●  ──── 90°   │  Middle  ●───●──────  40/200    │
+│  joint4  ●───────●  ──── −90°  │  Ring    ●───●──────  40/200    │
+│  joint5  ●───────●  ──── −90°  │  Little  ●───●──────  40/200    │
+│  joint6  ●───────●  ──── 0°    │  Rotate  ●───●──────  40/200    │
+│                                │                                 │
+│  [Go HOME]                     │  Project Grips:                 │
+│                                │   [Palm] [Claw] [Fingertip]     │
+│                                │  ECI Grips (14):                │
+│                                │   [Tripod] [Power] [Trigger]    │
+│                                │   [Prec.Open] [Prec.Closed]     │
+│                                │   [Key] [Finger] [Cylinder]     │
+│                                │   [Column] [Relaxed] [Glove]    │
+│                                │   [Tap] [Grab] [Tripod Open]    │
+├──────────────────────────────────────────────────────────────────┤
+│  CONVEYOR: [Spawn Frasco] [Spawn Tubo] [Spawn Ampola] [Reset]    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+> Se o servidor ECI estiver em outro namespace, passe `eci_prefix`:
+> ```bash
+> ros2 run grasp_ml_pack manual_control --ros-args -p eci_prefix:=/test/server_1
+> ```
+
+---
+
+### Passo 8 — Ativar o espelhamento Real Hand
+
+Clique no botão **`Real Hand: OFF ✗`** no canto superior direito do header. Ele deve mudar para **`Real Hand: ON ✔`** em verde.
+
+> Na primeira ativação, o `manual_control` faz import lazy do módulo `covvi_interfaces` e cria os clientes de `SetCurrentGrip` e `SetDigitPosn`. Isso pode demorar 1–2 s — é normal.
+
+A partir deste ponto, o comportamento dos controles muda:
+
+| Controle | Real Hand OFF | Real Hand ON |
 |---|---|---|
-| `[ros2run]: Segmentation fault` ao iniciar `manual_control` | Emoji astral no Tcl/Tk 8.6 | Já corrigido — rebuild se voltar a aparecer |
-| Objeto não aparece na câmera | Objeto ainda caindo / HSV errado | Aguardar 2-3 s após spawn |
-| `AGARRAR` retorna "Nenhum objeto válido" | Detector sem detecção ativa | Re-avançar a esteira; conferir janela da câmera |
-| `Goal rejeitado` no terminal | Controller não ativo | `ros2 control list_controllers` |
-| Braço para no meio do ciclo | IK falhou em alguma pose | Conferir logs `[FALHA]` do `grasp_executor` |
-| Objeto cai fora da pick station | `spawn_z` muito baixo | `spawn_z: 2.0` em `pipeline_params.yaml` |
-| `ModuleNotFoundError: covvi_interfaces` | `eci_ros-main` não clonado/compilado | Passos 2 e 4 da instalação |
-| `Real Hand: ON` falha em conectar | Servidor `covvi_hand_driver` não rodando | Subir o servidor com IP correto |
+| Sliders dos 6 dígitos | só Gazebo | Gazebo + `SetDigitPosn` (debounce 150 ms) |
+| Botões Palm / Claw / Fingertip | só Gazebo (config do projeto) | só Gazebo — *grips do projeto não têm equivalente ECI nativo* |
+| Botões dos 14 grips ECI | Gazebo (aprox.) + log | Gazebo (aprox.) + `SetCurrentGrip` na mão real |
+| Botões Pick Frasco/Tubo/Ampola | só braço (Gazebo) | só braço — não tocam na mão |
+| Botões da esteira | só Gazebo | só Gazebo |
+
+> **Importante:** o estado dos sliders é dessincronizado da mão real até você mexer. Se quiser sincronizar (puxar a posição atual da mão para os sliders), chame:
+> ```bash
+> ros2 service call /covvi/hand/GetDigitPosnAll covvi_interfaces/srv/GetDigitPosnAll
+> ```
+
+---
+
+### Passo 9 — Disparar grips do projeto com mão real
+
+Os botões **Palm/Claw/Fingertip** acionam só o gêmeo digital porque são configurações próprias (palm_grip, claw_grip, fingertip_grip de `HAND_CONFIGS`). Para usar a mão real durante o ciclo de pick-and-place do projeto, há duas estratégias:
+
+**Estratégia A — Pré-grip ECI antes do AGARRAR:**
+
+Antes de clicar no botão de pick, escolha manualmente um grip ECI análogo:
+- `frasco` → use **Cylinder** (id 8) ou **Power** (id 2)
+- `tubo` → use **Tripod** (id 1) ou **Trigger** (id 3)
+- `ampola` → use **Prec. Closed** (id 5) ou **Key** (id 6)
+
+Depois acione o pipeline:
+```bash
+ros2 service call /cell/execute_grasp std_srvs/srv/Trigger {}
+```
+A mão real vai manter o grip ECI; o Gazebo executa a trajetória do braço normalmente.
+
+**Estratégia B — Adicionar grip ECI ao executor (avançado):**
+
+Editar `grasp_executor.py::_OBJECT_MAP` para incluir um `eci_grip_id` adicional, e nas fases F1/F6 enviar `SetCurrentGrip` em paralelo com o `/hand_position_controller/joint_trajectory`. Não está implementado por padrão.
+
+---
+
+### Passo 10 — Monitorar a operação
+
+Em terminais auxiliares:
+
+```bash
+# Grip ativo na mão real (atualiza a cada SetCurrentGrip)
+ros2 topic echo /covvi/hand/CurrentGripMsg
+
+# Posições reais dos 6 dígitos (0–255), publicado a ~30 Hz se EnableAllRealtimeCfg
+ros2 topic echo /covvi/hand/DigitPosnAllMsg
+
+# Corrente dos motores (detecta force-closure / contato)
+ros2 topic echo /covvi/hand/MotorCurrentAllMsg
+
+# Erros (overcurrent, stall, sensor offline)
+ros2 topic echo /covvi/hand/DigitErrorMsg
+
+# Estado interno (uma vez)
+ros2 service call /covvi/hand/GetSystemStatus covvi_interfaces/srv/GetSystemStatus
+ros2 service call /covvi/hand/GetEnvironmental covvi_interfaces/srv/GetEnvironmental
+```
+
+Combinado com o `cell/status` do gêmeo digital:
+
+```bash
+ros2 topic echo /cell/status   # estado do executor: APPROACH_PICK, GRASPING, ...
+```
+
+---
+
+### Passo 11 — Desligar com segurança
+
+Sempre desligue na ordem inversa:
+
+```bash
+# 11.1 — Relaxar a mão (grip Relaxed = id 10) — abre devagar sem força
+ros2 service call /covvi/hand/SetCurrentGrip \
+    covvi_interfaces/srv/SetCurrentGrip "{grip_id: {value: 10}}"
+
+# 11.2 — Parar quaisquer streams de telemetria
+ros2 service call /covvi/hand/ResetRealtimeCfg covvi_interfaces/srv/ResetRealtimeCfg
+
+# 11.3 — Cortar energia dos motores (LED apaga)
+ros2 service call /covvi/hand/SetHandPowerOff covvi_interfaces/srv/SetHandPowerOff
+```
+
+**Depois:**
+1. `Ctrl+C` no Terminal D (manual_control)
+2. `Ctrl+C` no Terminal C (conveyor_cell launch) — Gazebo fecha
+3. `Ctrl+C` no Terminal A (covvi_hand_driver server)
+4. Desligar a bateria/fonte da mão física
+
+> Se você desligar a fonte com a mão fechada e os motores energizados, o firmware pode entrar em estado de proteção — sempre passe pelo `SetHandPowerOff` antes.
+
+---
+
+### Setup de bancada — script único
+
+Crie `~/start_covvi.sh` para automatizar Terminal A + B:
+
+```bash
+#!/usr/bin/env bash
+set -e
+source ~/RoboticArm/install/setup.bash
+
+# Inicia o servidor ECI em background
+ros2 run covvi_hand_driver server 192.168.1.123 \
+    --ros-args --remap __ns:=/covvi --remap __name:=hand &
+SERVER_PID=$!
+echo "[setup] ECI server PID=$SERVER_PID"
+
+# Espera o servidor publicar os serviços
+until ros2 service list 2>/dev/null | grep -q /covvi/hand/SetHandPowerOn; do
+  sleep 0.5
+done
+
+# Liga energia + telemetria
+ros2 service call /covvi/hand/SetHandPowerOn covvi_interfaces/srv/SetHandPowerOn
+ros2 service call /covvi/hand/EnableAllRealtimeCfg covvi_interfaces/srv/EnableAllRealtimeCfg
+
+echo "[setup] Mão pronta. Ctrl+C aqui para parar tudo."
+trap "ros2 service call /covvi/hand/SetHandPowerOff covvi_interfaces/srv/SetHandPowerOff; kill $SERVER_PID" EXIT
+wait $SERVER_PID
+```
+
+```bash
+chmod +x ~/start_covvi.sh
+~/start_covvi.sh
+```
+
+Daí você só precisa subir a célula + manual_control nos outros terminais.
+
+---
+
+### Bateria completa de testes da mão real
+
+Cole o bloco abaixo em qualquer terminal com `source ~/RoboticArm/install/setup.bash` e o servidor ECI rodando. Cada seção é independente — execute uma por vez para isolar problemas.
+
+#### Teste 1 — Identificação e firmware
+
+```bash
+# Olá — confirma comunicação básica
+ros2 service call /covvi/hand/GetHello covvi_interfaces/srv/GetHello
+
+# Identidade do dispositivo (serial, modelo, lado L/R)
+ros2 service call /covvi/hand/GetDeviceIdentity covvi_interfaces/srv/GetDeviceIdentity
+
+# Produto
+ros2 service call /covvi/hand/GetDeviceProduct covvi_interfaces/srv/GetDeviceProduct
+
+# Versões de firmware do PIC
+ros2 service call /covvi/hand/GetFirmwarePICECI  covvi_interfaces/srv/GetFirmwarePICECI
+ros2 service call /covvi/hand/GetFirmwarePICHAND covvi_interfaces/srv/GetFirmwarePICHAND
+
+# Status do sistema
+ros2 service call /covvi/hand/GetSystemStatus covvi_interfaces/srv/GetSystemStatus
+```
+
+#### Teste 2 — Telemetria ambiental e orientação
+
+```bash
+# Temperatura, umidade, tensão da bateria
+ros2 service call /covvi/hand/GetEnvironmental covvi_interfaces/srv/GetEnvironmental
+
+# Orientação (acelerômetro/giroscópio interno)
+ros2 service call /covvi/hand/GetOrientation covvi_interfaces/srv/GetOrientation
+```
+
+#### Teste 3 — Streams em tempo real
+
+```bash
+# Ativa todos os streams (publica em /covvi/hand/*Msg a ~30 Hz)
+ros2 service call /covvi/hand/EnableAllRealtimeCfg covvi_interfaces/srv/EnableAllRealtimeCfg
+
+# Ativar somente o que interessa
+ros2 service call /covvi/hand/SetRealtimeCfg covvi_interfaces/srv/SetRealtimeCfg \
+"{
+  digit_status: true, digit_posn: true, current_grip: true,
+  electrode_value: false, input_status: false, motor_current: true,
+  digit_touch: true, digit_error: true, environmental: true,
+  orientation: false, motor_limits: false
+}"
+
+# Listar tópicos publicados
+ros2 topic list | grep covvi
+
+# Monitorar (em terminais separados)
+ros2 topic echo /covvi/hand/DigitPosnAllMsg     # posições reais 0–255
+ros2 topic echo /covvi/hand/CurrentGripMsg      # grip ativo
+ros2 topic echo /covvi/hand/MotorCurrentAllMsg  # corrente dos motores
+ros2 topic echo /covvi/hand/DigitErrorMsg       # erros por digito
+ros2 topic echo /covvi/hand/EnvironmentalMsg    # ambiente
+
+# Desativar todos os streams
+ros2 service call /covvi/hand/DisableAllRealtimeCfg covvi_interfaces/srv/DisableAllRealtimeCfg
+
+# Resetar configuração (para o servidor parar de publicar)
+ros2 service call /covvi/hand/ResetRealtimeCfg covvi_interfaces/srv/ResetRealtimeCfg
+```
+
+#### Teste 4 — Status e posição dos dígitos (snapshots)
+
+```bash
+# Status de todos os 6 dígitos (homing, moving, calibrated, fault)
+ros2 service call /covvi/hand/GetDigitStatusAll covvi_interfaces/srv/GetDigitStatusAll
+
+# Posição de todos os 6 dígitos (0–255)
+ros2 service call /covvi/hand/GetDigitPosnAll covvi_interfaces/srv/GetDigitPosnAll
+
+# Corrente de todos os motores (A)
+ros2 service call /covvi/hand/GetMotorCurrentAll covvi_interfaces/srv/GetMotorCurrentAll
+
+# Loop individual por dígito (0=Thumb, 1=Index, 2=Middle, 3=Ring, 4=Little, 5=Rotate)
+for i in 0 1 2 3 4 5; do
+  echo "--- Dígito $i ---"
+  ros2 service call /covvi/hand/GetDigitStatus  covvi_interfaces/srv/GetDigitStatus  "{digit: {value: $i}}"
+  ros2 service call /covvi/hand/GetDigitPosn    covvi_interfaces/srv/GetDigitPosn    "{digit: {value: $i}}"
+  ros2 service call /covvi/hand/GetMotorCurrent covvi_interfaces/srv/GetMotorCurrent "{digit: {value: $i}}"
+  ros2 service call /covvi/hand/GetDigitError   covvi_interfaces/srv/GetDigitError   "{digit: {value: $i}}"
+done
+
+# Configuração de cada dígito (limites, modo, calibração)
+for i in 0 1 2 3 4 5; do
+  ros2 service call /covvi/hand/GetDigitConfig covvi_interfaces/srv/GetDigitConfig "{digit: {value: $i}}"
+done
+
+# Pontos de pinch configurados
+ros2 service call /covvi/hand/GetPinchConfig covvi_interfaces/srv/GetPinchConfig
+```
+
+#### Teste 5 — Movimento dos dígitos (`SetDigitPosn`)
+
+```bash
+# Abrir totalmente (posição 40 ≈ ângulo mínimo)
+ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+"{speed: {value: 100}, thumb: 40, index: 40, middle: 40, ring: 40, little: 40, rotate: 40}"
+
+# Fechar totalmente (posição 200)
+ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+"{speed: {value: 50}, thumb: 200, index: 200, middle: 200, ring: 200, little: 200, rotate: 200}"
+
+# Polegar pra cima (👍): todos fechados + thumb estendido
+ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+"{speed: {value: 100}, thumb: 0, index: 200, middle: 200, ring: 200, little: 200, rotate: 0}"
+
+# Pinça (thumb + index fechados, resto aberto)
+ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+"{speed: {value: 100}, thumb: 180, index: 180, middle: 40, ring: 40, little: 40, rotate: 180}"
+
+# Saudação ROCK (👌 só thumb e index estendidos)
+ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+"{speed: {value: 100}, thumb: 40, index: 40, middle: 200, ring: 200, little: 200, rotate: 100}"
+
+# Aleatório (sanity check de range)
+for i in 1 2 3; do
+  T=$((40 + RANDOM % 160))
+  I=$((40 + RANDOM % 160))
+  M=$((40 + RANDOM % 160))
+  R=$((40 + RANDOM % 160))
+  L=$((40 + RANDOM % 160))
+  Ro=$((40 + RANDOM % 160))
+  ros2 service call /covvi/hand/SetDigitPosn covvi_interfaces/srv/SetDigitPosn \
+  "{speed: {value: 80}, thumb: $T, index: $I, middle: $M, ring: $R, little: $L, rotate: $Ro}"
+  sleep 1.5
+done
+```
+
+#### Teste 6 — Movimento individual (`SetDigitMove`)
+
+```bash
+# Fecha só o índex (digit=1), com limite de torque baixo (power=20)
+ros2 service call /covvi/hand/SetDigitMove covvi_interfaces/srv/SetDigitMove \
+"{digit: {value: 1}, position: 200, speed: {value: 100}, power: {value: 20}, limit: {value: 0}}"
+
+# Abre só o índex
+ros2 service call /covvi/hand/SetDigitMove covvi_interfaces/srv/SetDigitMove \
+"{digit: {value: 1}, position: 40, speed: {value: 100}, power: {value: 20}, limit: {value: 0}}"
+
+# Fechar dedos sequencialmente (efeito "onda")
+for i in 0 1 2 3 4 5; do
+  ros2 service call /covvi/hand/SetDigitMove covvi_interfaces/srv/SetDigitMove \
+  "{digit: {value: $i}, position: 200, speed: {value: 80}, power: {value: 0}, limit: {value: 0}}"
+  sleep 0.4
+done
+
+# Abrir dedos sequencialmente (onda inversa)
+for i in 5 4 3 2 1 0; do
+  ros2 service call /covvi/hand/SetDigitMove covvi_interfaces/srv/SetDigitMove \
+  "{digit: {value: $i}, position: 40, speed: {value: 80}, power: {value: 0}, limit: {value: 0}}"
+  sleep 0.4
+done
+```
+
+#### Teste 7 — Os 14 grips ECI nativos
+
+```bash
+# IDs ECI: 1=Tripod, 2=Power, 3=Trigger, 4=Prec.Open, 5=Prec.Closed,
+#          6=Key, 7=Finger, 8=Cylinder, 9=Column, 10=Relaxed,
+#          11=Glove, 12=Tap, 13=Grab, 14=Tripod Open
+
+# Grip ativo (atual)
+ros2 service call /covvi/hand/GetCurrentGrip covvi_interfaces/srv/GetCurrentGrip
+
+# Disparar um grip específico (ex.: Power)
+ros2 service call /covvi/hand/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+"{grip_id: {value: 2}}"
+
+# Passear por todos os 14 grips com pausa de 2 s
+for id in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+  echo "--- Grip ID $id ---"
+  ros2 service call /covvi/hand/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+  "{grip_id: {value: $id}}"
+  sleep 2
+done
+
+# Voltar para Relaxed (id 10)
+ros2 service call /covvi/hand/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+"{grip_id: {value: 10}}"
+
+# Nome dos grips configurados nos 6 slots de usuário (GN0–GN5)
+for i in 0 1 2 3 4 5; do
+  ros2 service call /covvi/hand/GetGripName covvi_interfaces/srv/GetGripName \
+  "{grip_name_index: {value: $i}}"
+done
+```
+
+#### Teste 8 — Direct Control (abrir/fechar contínuo, sem destino)
+
+```bash
+# Fecha a mão inteira em velocidade controlada
+ros2 service call /covvi/hand/SetDirectControlClose covvi_interfaces/srv/SetDirectControlClose \
+"{speed: {value: 100}}"
+
+# Pausa 2 s
+sleep 2
+
+# Abre a mão inteira
+ros2 service call /covvi/hand/SetDirectControlOpen covvi_interfaces/srv/SetDirectControlOpen \
+"{speed: {value: 100}}"
+
+# Parada de emergência — interrompe qualquer movimento em andamento
+ros2 service call /covvi/hand/SetDirectControlStop covvi_interfaces/srv/SetDirectControlStop
+```
+
+#### Teste 9 — Stress test (resposta + estabilidade)
+
+```bash
+# Sequência rápida — 20 trocas de grip em 40 s
+# Útil para validar throughput TCP e ausência de drift no firmware
+for i in $(seq 1 20); do
+  grip=$((1 + RANDOM % 14))
+  ros2 service call /covvi/hand/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+  "{grip_id: {value: $grip}}" > /dev/null
+  echo "[$i/20] grip=$grip"
+  sleep 2
+done
+ros2 service call /covvi/hand/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+"{grip_id: {value: 10}}"
+
+# Pinging contínuo de posição (≈10 Hz) por 30 s — checa drift dos dígitos parados
+end=$((SECONDS + 30))
+while [ $SECONDS -lt $end ]; do
+  ros2 service call /covvi/hand/GetDigitPosnAll covvi_interfaces/srv/GetDigitPosnAll \
+  > /dev/null
+  sleep 0.1
+done
+echo "Stress test concluído"
+```
+
+#### Teste 10 — Integração com o gêmeo digital
+
+Com o `conveyor_cell.launch.py no_gui:=true` e o `manual_control` rodando (Passos 6–8):
+
+```bash
+# Comparar posição comandada (Gazebo) com posição real (COVVI)
+ros2 topic echo /hand_position_controller/joint_trajectory  # comandos enviados
+ros2 topic echo /covvi/hand/DigitPosnAllMsg                  # posição real
+
+# Ver as juntas do Gazebo (todas as 31 mimic)
+ros2 topic echo /joint_states --once
+
+# Disparar um grip do projeto e ver os efeitos
+ros2 service call /cell/execute_grasp std_srvs/srv/Trigger {}
+
+# Ver estado do executor
+ros2 topic echo /cell/status
+```
+
+#### Teste 11 — Limpeza e desligamento
+
+```bash
+# Postura segura
+ros2 service call /covvi/hand/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+"{grip_id: {value: 10}}"
+
+# Parar telemetria
+ros2 service call /covvi/hand/ResetRealtimeCfg covvi_interfaces/srv/ResetRealtimeCfg
+
+# Cortar energia dos motores
+ros2 service call /covvi/hand/SetHandPowerOff covvi_interfaces/srv/SetHandPowerOff
+
+# Confirmar
+ros2 service call /covvi/hand/GetSystemStatus covvi_interfaces/srv/GetSystemStatus
+# power deve aparecer como off
+```
+
+#### Script `test_hand.sh` — bateria automatizada
+
+Para rodar testes 1, 4 e 7 em sequência:
+
+```bash
+cat > ~/test_hand.sh <<'EOF'
+#!/usr/bin/env bash
+set -e
+source ~/RoboticArm/install/setup.bash
+
+PRE=/covvi/hand
+echo "=== 1. Identificação ==="
+ros2 service call $PRE/GetHello          covvi_interfaces/srv/GetHello
+ros2 service call $PRE/GetDeviceIdentity covvi_interfaces/srv/GetDeviceIdentity
+
+echo "=== 2. Energia ==="
+ros2 service call $PRE/SetHandPowerOn covvi_interfaces/srv/SetHandPowerOn
+sleep 1
+
+echo "=== 3. Status snapshot ==="
+ros2 service call $PRE/GetDigitStatusAll covvi_interfaces/srv/GetDigitStatusAll
+ros2 service call $PRE/GetDigitPosnAll   covvi_interfaces/srv/GetDigitPosnAll
+ros2 service call $PRE/GetEnvironmental  covvi_interfaces/srv/GetEnvironmental
+
+echo "=== 4. Sweep grips 1..14 ==="
+for id in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+  echo "[grip $id]"
+  ros2 service call $PRE/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+  "{grip_id: {value: $id}}"
+  sleep 1.5
+done
+
+echo "=== 5. Relaxed + power off ==="
+ros2 service call $PRE/SetCurrentGrip covvi_interfaces/srv/SetCurrentGrip \
+"{grip_id: {value: 10}}"
+sleep 1
+ros2 service call $PRE/SetHandPowerOff covvi_interfaces/srv/SetHandPowerOff
+
+echo "OK"
+EOF
+chmod +x ~/test_hand.sh
+~/test_hand.sh
+```
+
+> O catálogo completo de ~50 serviços ECI está em `src/eci_ros-main/README.md` (incluindo grips de usuário `SendUserGrip`/`RemoveUserGrip`/`ResetUserGrips`, configurações de pinch, limites de motor etc.).
+
+---
+
+### Problemas comuns
+
+| Sintoma | Causa | Ação |
+|---|---|---|
+| `ping 192.168.1.123` não responde | IP do PC fora da sub-rede, cabo solto, ou IP da mão diferente | Repetir Passo 1; `sudo nmap -sn 192.168.1.0/24` para descobrir IP real |
+| Servidor ECI trava em `Connecting...` | Mão desligada, firewall, ou outro processo já conectado | Reiniciar a mão (desligar/ligar fonte); `pkill -f covvi_hand_driver` |
+| `GetHello` retorna `success: false` | Conexão TCP estabelecida mas firmware não respondeu | Aguardar 5 s e tentar de novo; checar LED |
+| LED da mão fica vermelho | Proteção térmica ou erro de hardware | `GetDigitError`; aguardar resfriamento; consultar manual COVVI |
+| Mão treme ou range ao receber grip | Motor sem energia ou stuck | `SetHandPowerOn` antes do primeiro comando; `SetDirectControlStop` se já enrolou |
+| `Real Hand: ON` mas grips não chegam à mão | Servidor não está em `/covvi/hand` | Conferir `ros2 service list \| grep covvi`; passar `eci_prefix:=...` no manual_control |
+| `ModuleNotFoundError: covvi_interfaces` no manual_control | `eci_ros-main` não compilado/sourceado | Passos 2 e 4 da [Instalação](#instalação); novo terminal após `source install/setup.bash` |
+| Sliders engolem updates | Debounce de 150 ms no `SetDigitPosn` | Mover o slider mais devagar; comportamento esperado para evitar saturar o servidor |
+| Mão desincronizada do gêmeo digital | Sliders e posição real divergiram | `GetDigitPosnAll` para ler e ajustar sliders manualmente |
+| Segfault ao abrir manual_control | Bug Tcl/Tk 8.6 com emoji astral | Já corrigido — `rm -rf build/grasp_ml_pack install/grasp_ml_pack && colcon build --packages-select grasp_ml_pack --symlink-install` |
+| Gazebo trava ao enviar trajetória | Controller não ativo | `ros2 control list_controllers` deve mostrar `cr10_group_controller active` e `hand_position_controller active` |
 
 ---
 
