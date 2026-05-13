@@ -1,23 +1,32 @@
 """
-Controle manual da célula de manufatura — CR10 + COVVI + Esteira.
+Controle manual da célula de manufatura — CR10 + COVVI + Esteira + Mão Real.
 
 GUI Tkinter que combina:
   • Sliders por junta do braço (6 sliders, em graus)
   • Sliders por junta da mão  (6 sliders 0..200, mapeados para rad)
   • Botões de pose pré-calculada do braço (Pick Frasco/Tubo/Ampola)
-  • Botões de preensão da mão (Palm/Claw/Fingertip Grip)
-  • Controles da esteira (Próximo Objeto / Anterior / Reset)
+  • Botões de preensão do projeto (Palm/Claw/Fingertip Grip) → Gazebo
+  • Botões de preensão ECI nativa (14 grips COVVI) → Gazebo + Mão Real
+  • Controles da esteira (spawn / remover / reset)
+  • Toggle de mão real: habilita/desabilita envio ao controlador ECI
 
-Diferente do `gui_control` automático (que dispara o ciclo `/cell/execute_grasp`
-de uma vez só), este nó publica DIRETAMENTE nas trajetórias de junta — o
-operador alinha visualmente o braço sobre o objeto, fecha a mão na preensão
-correta e levanta, junta por junta.
+Parâmetros ROS:
+  eci_prefix  (string, default '/covvi/hand')
+      Prefixo do servidor ECI: /{namespace}/{server_name}
+      Exemplo: servidor iniciado com --remap __ns:=/covvi --remap __name:=hand
 
 Uso:
-  ros2 launch grasp_ml_pack conveyor_cell.launch.py no_gui:=true   # sem a GUI auto
-  ros2 run   grasp_ml_pack manual_control                          # GUI manual
+  ros2 launch grasp_ml_pack conveyor_cell.launch.py no_gui:=true
+  ros2 run   grasp_ml_pack manual_control
 
-(Pode rodar lado-a-lado com o `gui_control` automático também — os tópicos
+  # ou com prefixo ECI customizado:
+  ros2 run grasp_ml_pack manual_control --ros-args -p eci_prefix:=/test/server_1
+
+Verificar comandos enviados à mão real:
+  ros2 topic echo /covvi/hand/CurrentGripMsg
+  ros2 topic echo /covvi/hand/DigitPosnAllMsg
+
+(Pode rodar lado-a-lado com o `gui_control` automático — os tópicos
 de junta aceitam múltiplos publishers.)
 """
 
@@ -38,6 +47,57 @@ from builtin_interfaces.msg import Duration
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from vision_msgs.msg import Detection2DArray
+
+# ECI modules are loaded lazily inside _toggle_eci() so that importing
+# covvi_interfaces (which loads FastDDS C extensions) never happens at
+# module-load time — those extensions corrupt Tcl's internal state before
+# tk.Tk() is called and cause a segfault on startup.
+
+
+# ── ECI built-in grip IDs (CurrentGripID.value) ───────────────────────
+ECI_GRIP_IDS: dict[str, int] = {
+    'Tripod':       1,
+    'Power':        2,
+    'Trigger':      3,
+    'Prec. Open':   4,
+    'Prec. Closed': 5,
+    'Key':          6,
+    'Finger':       7,
+    'Cylinder':     8,
+    'Column':       9,
+    'Relaxed':     10,
+    'Glove':       11,
+    'Tap':         12,
+    'Grab':        13,
+    'Tripod Open': 14,
+}
+ECI_GRIP_NAMES: dict[int, str] = {v: k for k, v in ECI_GRIP_IDS.items()}
+
+# Approximate Gazebo joint configs for each ECI grip (0..200 slider scale).
+# Values derived from COVVI grip geometry documentation + IK fitting.
+ECI_GRIP_GAZEBO: dict[str, dict[str, int]] = {
+    'Tripod':       {'Thumb': 125, 'Index': 115, 'Middle': 115, 'Ring':   0, 'Little':  0, 'Rotate': 145},
+    'Power':        {'Thumb': 155, 'Index': 165, 'Middle': 165, 'Ring': 160, 'Little': 155, 'Rotate':  40},
+    'Trigger':      {'Thumb': 100, 'Index':   0, 'Middle': 140, 'Ring': 140, 'Little': 140, 'Rotate':  70},
+    'Prec. Open':   {'Thumb':  50, 'Index':  50, 'Middle':   0, 'Ring':   0, 'Little':   0, 'Rotate': 155},
+    'Prec. Closed': {'Thumb': 105, 'Index': 100, 'Middle':   0, 'Ring':   0, 'Little':   0, 'Rotate': 155},
+    'Key':          {'Thumb': 115, 'Index': 130, 'Middle': 130, 'Ring': 125, 'Little': 115, 'Rotate':  10},
+    'Finger':       {'Thumb':  60, 'Index':   0, 'Middle': 100, 'Ring': 100, 'Little': 100, 'Rotate':  60},
+    'Cylinder':     {'Thumb': 130, 'Index': 150, 'Middle': 155, 'Ring': 150, 'Little': 140, 'Rotate':  35},
+    'Column':       {'Thumb': 100, 'Index': 140, 'Middle': 140, 'Ring': 140, 'Little': 140, 'Rotate':  80},
+    'Relaxed':      {'Thumb':  20, 'Index':  20, 'Middle':  20, 'Ring':  20, 'Little':  20, 'Rotate':   5},
+    'Glove':        {'Thumb':   0, 'Index':   0, 'Middle':   0, 'Ring':   0, 'Little':   0, 'Rotate':   0},
+    'Tap':          {'Thumb':   0, 'Index':   0, 'Middle': 160, 'Ring': 160, 'Little': 160, 'Rotate':  50},
+    'Grab':         {'Thumb': 165, 'Index': 175, 'Middle': 175, 'Ring': 175, 'Little': 170, 'Rotate':  45},
+    'Tripod Open':  {'Thumb':  60, 'Index':  50, 'Middle':  50, 'Ring':   0, 'Little':   0, 'Rotate': 145},
+}
+
+# Closest ECI grip for each project preset (sent to real hand when ECI enabled)
+PROJECT_GRIP_ECI: dict[str, int] = {
+    'Palm Grip (frasco)':      8,   # Cylinder — full wrap
+    'Claw Grip (tubo)':        1,   # Tripod   — 3-finger partial
+    'Fingertip Grip (ampola)': 5,   # Prec. Closed — fingertip precision
+}
 
 
 # ── Mimic map COVVI (extraído do URDF combinado) ──────────────────────
@@ -91,9 +151,6 @@ ARM_PRESETS_BASE = {
                   'joint4':   0, 'joint5':   0, 'joint6':   0},
 }
 
-# Poses de pick (graus) — calculadas via IK do projeto para os 3 objetos
-# na estação de pick (x=0.75, y=0). Convergem para o mesmo ramo IK
-# (cotovelo abaixado, alcance frontal).
 PICK_POSES_DEG = {
     'Pick Frasco': {
         'joint1': +30.0, 'joint2': -19.0, 'joint3': -82.0,
@@ -109,21 +166,11 @@ PICK_POSES_DEG = {
     },
 }
 
-# Pose intermediária acima da estação (Approach 15 cm) — gera transição
-# segura quando o braço está em HOME. Convergem todos para mesmo branch.
 APPROACH_POSE_DEG = {
     'joint1': +23.5, 'joint2': -16.5, 'joint3': -82.0,
     'joint4': -81.0, 'joint5': +23.5, 'joint6':  +0.0,
 }
 
-# Poses de entrega — TCP a 15 cm acima da abertura da caixa correspondente.
-# Calculadas via IK para approach_box em world frame:
-#   box1 (vermelha, frasco) → (-0.05, 0.65, 0.75)
-#   box2 (verde,    tubo)   → ( 0.25, 0.65, 0.75)
-#   box3 (azul,     ampola) → ( 0.55, 0.65, 0.75)
-# frasco e tubo convergem para o mesmo ramo (cotovelo abaixado); ampola usa
-# um ramo distinto (cotovelo retraído) devido à geometria de alcance — ambas
-# soluções têm `_arm_clears_world=True` e erro de IK < 2 mm.
 DELIVERY_POSES_DEG = {
     'frasco': {
         'joint1': +108.1, 'joint2': -20.5, 'joint3': -90.1,
@@ -139,8 +186,6 @@ DELIVERY_POSES_DEG = {
     },
 }
 
-# Configurações de preensão (valor 0..200 de cada slider). Idênticas às
-# HAND_CONFIGS do kinematics.py do executor automático.
 HAND_GRIPS = {
     'Open':                     {j: 0 for j in HAND_JOINTS},
     'Palm Grip (frasco)': {
@@ -157,15 +202,13 @@ HAND_GRIPS = {
     },
 }
 
-# Associação didática objeto → preset de braço + preset de mão.
-# Permite executar o pick passo-a-passo: HOME → APPROACH → PICK → GRIP.
 OBJ_RECIPE = {
     'frasco': ('Pick Frasco', 'Palm Grip (frasco)'),
     'tubo':   ('Pick Tubo',   'Claw Grip (tubo)'),
     'ampola': ('Pick Ampola', 'Fingertip Grip (ampola)'),
 }
 
-# Paleta — alinhada com o tema escuro do projeto
+# ── Palette ───────────────────────────────────────────────────────────
 BG, PANEL_BG, HEADER_BG = '#1a1a2e', '#16213e', '#0f3460'
 ACCENT_ARM, ACCENT_HND  = '#4fc3f7', '#69f0ae'
 TEXT_MAIN, TEXT_DIM, TEXT_VAL = '#e0e0e0', '#9e9e9e', '#ffd54f'
@@ -173,32 +216,35 @@ BTN_PRESET, TROUGH       = '#37474f', '#2a2a4a'
 BTN_CONV_FWD, BTN_CONV_RV, BTN_CONV_RST = '#388e3c', '#c62828', '#5d4037'
 COLOR_FRASCO, COLOR_TUBO, COLOR_AMPOLA = '#e65100', '#1565c0', '#2e7d32'
 
+# ECI grip button colours — grouped by grip family
+_ECI_CLR: dict[str, str] = {
+    'Tripod':       '#6a1b9a', 'Tripod Open':  '#8e24aa',
+    'Power':        '#b71c1c', 'Grab':         '#c62828',
+    'Trigger':      '#e65100', 'Tap':          '#bf360c',
+    'Prec. Open':   '#0277bd', 'Prec. Closed': '#01579b',
+    'Key':          '#00695c', 'Cylinder':     '#2e7d32',
+    'Column':       '#4e342e', 'Finger':       '#37474f',
+    'Relaxed':      '#37474f', 'Glove':        '#455a64',
+}
+
 
 class ManualControlNode(Node):
     """Nó ROS 2 + GUI Tkinter para controle manual da célula."""
 
-    def __init__(self):
+    def __init__(self, root: tk.Tk):
         super().__init__('manual_control')
         self._ready = False
-        # Flag para suprimir publishes durante atualizações em lote de
-        # sliders (substitui o antigo padrão de "mute lambda" que causava
-        # `Tcl_Release couldn't find reference` por double-delete de
-        # comandos Tcl quando o GC liberava lambdas já desregistradas).
         self._suppressing = False
-        # Token do `after` pendente para fechar a mão depois do braço —
-        # evita empilhar fechamentos se o usuário clica várias vezes.
         self._pending_hand_after: str | None = None
+        self.root = root   # Created in main() before rclpy.init()
+
         cb = ReentrantCallbackGroup()
 
-        # Publishers de trajetória (chega aos joint_trajectory_controllers)
         self.arm_pub = self.create_publisher(
             JointTrajectory, '/cr10_group_controller/joint_trajectory', 10)
         self.hand_pub = self.create_publisher(
             JointTrajectory, '/hand_position_controller/joint_trajectory', 10)
 
-        # Clientes de serviço (esteira). Cada objeto tem seu próprio spawn
-        # dedicado: o operador escolhe diretamente qual peça aparece na pick
-        # station, em vez de avançar ciclicamente.
         self._cli = {
             'retreat':       self.create_client(
                 Trigger, '/conveyor/retreat',       callback_group=cb),
@@ -212,14 +258,8 @@ class ManualControlNode(Node):
                 Trigger, '/conveyor/spawn_ampola',  callback_group=cb),
         }
 
-        # Estado da esteira + última detecção da câmera
         self._conveyor_state: dict = {}
         self._last_detection: str | None = None
-        # Fila thread-safe: callbacks ROS (rodando na thread do rclpy executor)
-        # NUNCA podem tocar widgets Tk diretamente nem chamar `root.after()` —
-        # o Tcl não é thread-safe e gera `Tcl_Release couldn't find reference`
-        # seguido de SIGABRT. Em vez disso, callbacks empilham mensagens aqui
-        # e o `_poll_status` (que roda na thread do Tk) drena a fila.
         self._status_q: queue.Queue = queue.Queue()
 
         self.create_subscription(
@@ -229,16 +269,27 @@ class ManualControlNode(Node):
             Detection2DArray, '/detected_objects', self._cb_detection, 10,
             callback_group=cb)
 
+        # ── ECI real-hand setup (lazy — clients created on first toggle) ──
+        self._eci_enabled = False
+        eci_prefix = self.declare_parameter('eci_prefix', '/covvi/hand').value
+        self._eci_prefix: str = eci_prefix
+        self._eci_grip_id: int | None = None      # last received from CurrentGripMsg
+        self._eci_posn: dict[str, int] = {}        # last received from DigitPosnAllMsg
+        self._eci_last_sent: str | None = None     # name of last sent ECI grip
+        self._eci_posn_after: str | None = None    # debounce token for SetDigitPosn
+        self._eci_srv = None                       # covvi_interfaces.srv (loaded lazily)
+        self._eci_msg = None                       # covvi_interfaces.msg (loaded lazily)
+        self._cli_eci = None
+        self._cli_eci_posn = None
+
         self._build_ui()
+        self.root.deiconify()   # show window now that it's fully built
         self._ready = True
-        # Loop ROS executado dentro da thread do Tk via spin_once periódico.
-        # Garante que TODOS os callbacks (subs, futures de service) rodem na
-        # mesma thread que mexe nos widgets — elimina o `Tcl_Release` que
-        # ocorre quando o rclpy executor em outra thread mexe em estado
-        # compartilhado com o Tcl.
         self._spin_ros()
         self._poll_status()
 
+    # ──────────────────────────────────────────────────────────────────
+    # Conveyor & detection callbacks
     # ──────────────────────────────────────────────────────────────────
     def _cb_conveyor(self, msg: String):
         try:
@@ -247,7 +298,6 @@ class ManualControlNode(Node):
             pass
 
     def _cb_detection(self, msg: Detection2DArray):
-        """Armazena a classe do objeto detectado pela câmera (visão HSV/YOLO)."""
         if msg.detections:
             try:
                 cls = msg.detections[0].results[0].hypothesis.class_id
@@ -267,8 +317,6 @@ class ManualControlNode(Node):
         future = cli.call_async(Trigger.Request())
 
         def _done(f):
-            # Roda na thread do rclpy — NÃO toca em widgets Tk. Empurra o
-            # resultado para a fila; _poll_status drena na thread certa.
             try:
                 res = f.result()
                 color = ACCENT_HND if res.success else '#f38ba8'
@@ -279,28 +327,160 @@ class ManualControlNode(Node):
         future.add_done_callback(_done)
 
     # ──────────────────────────────────────────────────────────────────
+    # ECI callbacks
+    # ──────────────────────────────────────────────────────────────────
+    def _cb_eci_grip(self, msg) -> None:
+        self._eci_grip_id = int(msg.grip_id.value)
+
+    def _cb_eci_posn(self, msg) -> None:
+        self._eci_posn = {
+            'Thumb':  msg.thumb_pos,
+            'Index':  msg.index_pos,
+            'Middle': msg.middle_pos,
+            'Ring':   msg.ring_pos,
+            'Little': msg.little_pos,
+            'Rotate': msg.rotate_pos,
+        }
+
+    def _send_eci_grip(self, grip_id: int, label: str) -> None:
+        """Call SetCurrentGrip on the ECI server (non-blocking)."""
+        if not self._eci_enabled or self._cli_eci is None:
+            return
+        if not self._cli_eci.service_is_ready():
+            self._status_q.put(
+                (f'ECI SetCurrentGrip indisponível ({self._eci_prefix})', '#f38ba8'))
+            return
+        req = self._eci_srv.SetCurrentGrip.Request()
+        req.grip_id = self._eci_msg.CurrentGripID()
+        req.grip_id.value = grip_id
+        self._eci_last_sent = label
+        future = self._cli_eci.call_async(req)
+
+        def _done(f):
+            try:
+                f.result()
+                self._status_q.put(
+                    (f'ECI → {label} (id={grip_id}) enviado', ACCENT_HND))
+            except Exception as exc:
+                self._status_q.put((f'ECI erro: {exc}', '#f38ba8'))
+
+        future.add_done_callback(_done)
+
+    def _schedule_eci_posn(self, vals: dict) -> None:
+        """Debounce digit-position sends (60 ms): cancels any pending call and
+        reschedules so rapid slider drags collapse into one service call."""
+        if not self._eci_enabled or self._cli_eci_posn is None:
+            return
+        if self._eci_posn_after is not None:
+            try:
+                self.root.after_cancel(self._eci_posn_after)
+            except Exception:
+                pass
+        self._eci_posn_after = self.root.after(
+            60, lambda v=dict(vals): self._send_eci_posn_now(v))
+
+    def _send_eci_posn_now(self, vals: dict) -> None:
+        """Fire SetDigitPosn to the real hand (0-200 scale, speed=50)."""
+        self._eci_posn_after = None
+        if not self._eci_enabled or self._cli_eci_posn is None:
+            return
+        if not self._cli_eci_posn.service_is_ready():
+            self._status_q.put(
+                (f'ECI SetDigitPosn indisponível ({self._eci_prefix})', '#f38ba8'))
+            return
+        req = self._eci_srv.SetDigitPosn.Request()
+        req.speed = self._eci_msg.Speed()
+        req.speed.value = 50          # mid-range (MIN=15, MAX=100)
+        req.thumb  = int(vals.get('Thumb',  0))
+        req.index  = int(vals.get('Index',  0))
+        req.middle = int(vals.get('Middle', 0))
+        req.ring   = int(vals.get('Ring',   0))
+        req.little = int(vals.get('Little', 0))
+        req.rotate = int(vals.get('Rotate', 0))
+        self._eci_last_sent = (
+            f"T:{req.thumb} I:{req.index} M:{req.middle} "
+            f"R:{req.ring} L:{req.little} Rot:{req.rotate}"
+        )
+        future = self._cli_eci_posn.call_async(req)
+        future.add_done_callback(lambda f: None)   # fire-and-forget
+
+    def _toggle_eci(self) -> None:
+        if self._eci_enabled:
+            # Turn OFF
+            self._eci_enabled = False
+            self._eci_toggle_btn.config(text='Real Hand: OFF ✗', fg=TEXT_DIM)
+            self._set_status('Mão real desativada', _CLR=TEXT_DIM)
+            return
+
+        # Turn ON — lazy-load covvi_interfaces and create clients/subs
+        if self._cli_eci is None:
+            try:
+                import covvi_interfaces.srv as _eci_srv
+                import covvi_interfaces.msg as _eci_msg
+            except ImportError:
+                self._set_status(
+                    'covvi_interfaces não instalado — instale e recompile o workspace.',
+                    _CLR='#f38ba8')
+                return
+            self._eci_srv = _eci_srv
+            self._eci_msg = _eci_msg
+            cb = ReentrantCallbackGroup()
+            self._cli_eci = self.create_client(
+                _eci_srv.SetCurrentGrip,
+                f'{self._eci_prefix}/SetCurrentGrip',
+                callback_group=cb)
+            self._cli_eci_posn = self.create_client(
+                _eci_srv.SetDigitPosn,
+                f'{self._eci_prefix}/SetDigitPosn',
+                callback_group=cb)
+            self.create_subscription(
+                _eci_msg.CurrentGripMsg,
+                f'{self._eci_prefix}/CurrentGripMsg',
+                self._cb_eci_grip, 10, callback_group=cb)
+            self.create_subscription(
+                _eci_msg.DigitPosnAllMsg,
+                f'{self._eci_prefix}/DigitPosnAllMsg',
+                self._cb_eci_posn, 10, callback_group=cb)
+
+        self._eci_enabled = True
+        self._eci_toggle_btn.config(text='Real Hand: ON  ✔', fg=ACCENT_HND)
+        self._set_status(
+            f'Mão real ativada ({self._eci_prefix}/SetCurrentGrip)',
+            _CLR=ACCENT_HND)
+
+    # ──────────────────────────────────────────────────────────────────
+    # UI construction
+    # ──────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        self.root = tk.Tk()
         self.root.title('Célula de Manufatura — Controle Manual')
         self.root.configure(bg=BG)
-        self.root.minsize(960, 640)
+        self.root.minsize(1060, 700)
 
         style = ttk.Style()
         style.theme_use('clam')
 
-        # Cabeçalho
+        # ── Cabeçalho ────────────────────────────────────────────────
         hdr = tk.Frame(self.root, bg=HEADER_BG)
         hdr.pack(fill='x')
         tk.Label(hdr, text='CR10 + COVVI  —  Modo Manual da Célula',
                  font=('Arial', 14, 'bold'), bg=HEADER_BG, fg=TEXT_MAIN,
                  pady=10).pack(side='left', padx=18)
+
+        # ECI toggle (right side of header)
+        self._eci_toggle_btn = tk.Button(
+            hdr, text='Real Hand: OFF ✗',
+            font=('Courier', 10, 'bold'), bg=HEADER_BG, fg=TEXT_DIM,
+            activebackground=HEADER_BG, activeforeground=ACCENT_HND,
+            relief='flat', padx=10, pady=4,
+            command=self._toggle_eci)
+        self._eci_toggle_btn.pack(side='right', padx=10)
+
         self.obj_lbl = tk.Label(
             hdr, text='○ esteira vazia',
             font=('Courier', 11, 'bold'), bg=HEADER_BG, fg=TEXT_DIM)
         self.obj_lbl.pack(side='right', padx=16)
 
-        # Barra da esteira — escolha direta do objeto (botões coloridos
-        # por classe, mesma palette dos bounding boxes da visão)
+        # ── Barra da esteira ─────────────────────────────────────────
         bar = tk.Frame(self.root, bg=BG)
         bar.pack(fill='x', padx=12, pady=8)
 
@@ -308,12 +488,11 @@ class ManualControlNode(Node):
         conv.pack(side='left')
         tk.Label(conv, text='Spawn: ', font=('Arial', 10),
                  bg=BG, fg=TEXT_DIM).pack(side='left', padx=(0, 6))
-        spawn_specs = [
+        for label, color, srv_key in [
             ('Frasco', COLOR_FRASCO, 'spawn_frasco'),
             ('Tubo',   COLOR_TUBO,   'spawn_tubo'),
             ('Ampola', COLOR_AMPOLA, 'spawn_ampola'),
-        ]
-        for label, color, srv_key in spawn_specs:
+        ]:
             tk.Button(
                 conv, text=label, bg=color, fg='white',
                 activebackground='#212121', activeforeground='white',
@@ -349,10 +528,7 @@ class ManualControlNode(Node):
         self.time_sl.set(2.0)
         self.time_sl.pack(side='left')
 
-        # Atalhos por objeto (recipe pick = pose do braço + preensão).
-        # A mão SÓ fecha depois que a trajetória do braço termina (espera
-        # `duration_slider` + 250 ms) — garante que os dedos só se fecham
-        # quando a palma já está sobre o objeto.
+        # ── Recipe row ───────────────────────────────────────────────
         recipe_row = tk.Frame(self.root, bg=BG)
         recipe_row.pack(fill='x', padx=12, pady=(0, 6))
         tk.Label(recipe_row, text='Pick (braço → mão):',
@@ -369,10 +545,6 @@ class ManualControlNode(Node):
                 command=lambda a=arm_key, g=grip_key: self._apply_recipe(a, g),
             ).pack(side='left', padx=4)
 
-        # Botão ENTREGA — lê a classe detectada pela câmera (/detected_objects)
-        # e leva o braço à caixa correspondente (frasco→vermelha, tubo→verde,
-        # ampola→azul). A mão NÃO é tocada — o operador deve abrir a mão
-        # manualmente após o braço chegar para soltar o objeto na caixa.
         tk.Label(recipe_row, text='   ·   ', font=('Arial', 11),
                  bg=BG, fg=TEXT_DIM).pack(side='left')
         self._btn_entrega = tk.Button(
@@ -388,7 +560,7 @@ class ManualControlNode(Node):
             font=('Arial', 8, 'italic'), bg=BG, fg=TEXT_DIM)
         self._entrega_hint.pack(side='left', padx=(4, 0))
 
-        # Colunas — Braço | Mão
+        # ── Colunas — Braço | Mão ────────────────────────────────────
         cols = tk.Frame(self.root, bg=BG)
         cols.pack(fill='both', expand=True, padx=10, pady=(0, 6))
         cols.columnconfigure(0, weight=1)
@@ -397,7 +569,7 @@ class ManualControlNode(Node):
         self._build_arm_panel(cols)
         self._build_hand_panel(cols)
 
-        # Status bar
+        # ── Status bar ───────────────────────────────────────────────
         self.status_var = tk.StringVar(value='Pronto.')
         sb = tk.Frame(self.root, bg=PANEL_BG)
         sb.pack(fill='x')
@@ -406,7 +578,7 @@ class ManualControlNode(Node):
                                     fg=TEXT_MAIN, anchor='w', padx=10, pady=6)
         self.status_lbl.pack(fill='x')
 
-    # ────────────────────────────────────────────── PAINEL BRAÇO ─
+    # ──────────────────────────────────────────────────────────── BRAÇO
     def _build_arm_panel(self, parent):
         outer = tk.Frame(parent, bg=BG)
         outer.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
@@ -440,7 +612,6 @@ class ManualControlNode(Node):
             sl.pack(side='left', fill='x', expand=True)
             self.arm_sliders[j], self.arm_labels[j] = sl, val
 
-        # Botões de pose básica
         b1 = tk.Frame(body, bg=PANEL_BG); b1.pack(fill='x', pady=(10, 2))
         for label, preset in ARM_PRESETS_BASE.items():
             tk.Button(b1, text=label, bg=BTN_PRESET, fg=TEXT_MAIN,
@@ -449,7 +620,6 @@ class ManualControlNode(Node):
                       command=lambda p=preset: self._apply_arm(p)
                       ).pack(side='left', padx=3, fill='x', expand=True)
 
-        # Approach + poses de pick
         tk.Label(body, text='—— Aproximação e Captura ——',
                  font=('Arial', 9, 'italic'), bg=PANEL_BG, fg=TEXT_DIM
                  ).pack(fill='x', pady=(8, 2))
@@ -470,7 +640,7 @@ class ManualControlNode(Node):
                       command=lambda p=pose: self._apply_arm(p)
                       ).pack(side='left', padx=3, fill='x', expand=True)
 
-    # ────────────────────────────────────────────── PAINEL MÃO ─
+    # ──────────────────────────────────────────────────────────── MÃO
     def _build_hand_panel(self, parent):
         outer = tk.Frame(parent, bg=BG)
         outer.grid(row=0, column=1, sticky='nsew', padx=(5, 0))
@@ -487,6 +657,7 @@ class ManualControlNode(Node):
         body = tk.Frame(outer, bg=PANEL_BG, padx=10, pady=8)
         body.pack(fill='both', expand=True)
 
+        # ── Sliders ──────────────────────────────────────────────────
         self.hand_sliders, self.hand_labels = {}, {}
         for j in HAND_JOINTS:
             row = tk.Frame(body, bg=PANEL_BG)
@@ -506,7 +677,7 @@ class ManualControlNode(Node):
             sl.pack(side='left', fill='x', expand=True)
             self.hand_sliders[j], self.hand_labels[j] = sl, val
 
-        # Abrir / Fechar / Pinça
+        # ── Abrir / Fechar / Pinça ───────────────────────────────────
         b1 = tk.Frame(body, bg=PANEL_BG); b1.pack(fill='x', pady=(10, 2))
         for label, val in (('Abrir', 0), ('Pinça (50%)', 100), ('Fechar', 200)):
             tk.Button(b1, text=label, bg=BTN_PRESET, fg=TEXT_MAIN,
@@ -515,7 +686,7 @@ class ManualControlNode(Node):
                       command=lambda v=val: self._apply_hand_uniform(v)
                       ).pack(side='left', padx=3, fill='x', expand=True)
 
-        # Preensões do projeto
+        # ── Preensões do projeto ──────────────────────────────────────
         tk.Label(body, text='—— Preensões do Projeto ——',
                  font=('Arial', 9, 'italic'), bg=PANEL_BG, fg=TEXT_DIM
                  ).pack(fill='x', pady=(8, 2))
@@ -531,10 +702,62 @@ class ManualControlNode(Node):
             tk.Button(b2, text=label, bg=grip_colors[label], fg='white',
                       activebackground='#212121', activeforeground='white',
                       relief='flat', padx=4, pady=5, font=('Arial', 8, 'bold'),
-                      command=lambda v=vals: self._apply_hand(v)
+                      command=lambda v=vals, l=label: self._apply_hand(v, project_label=l)
                       ).pack(side='left', padx=2, fill='x', expand=True)
 
-    # ────────────────────────────────────────────── HANDLERS ─
+        # ── COVVI Built-in Grips (ECI) ────────────────────────────────
+        tk.Label(body, text='—— COVVI Built-in Grips (ECI) ——',
+                 font=('Arial', 9, 'italic'), bg=PANEL_BG, fg=TEXT_DIM
+                 ).pack(fill='x', pady=(10, 2))
+
+        grip_names = list(ECI_GRIP_IDS.keys())
+        for row_names in (grip_names[:7], grip_names[7:]):
+            row = tk.Frame(body, bg=PANEL_BG)
+            row.pack(fill='x', pady=2)
+            for name in row_names:
+                clr = _ECI_CLR.get(name, BTN_PRESET)
+                tk.Button(
+                    row, text=name, bg=clr, fg='white',
+                    activebackground='#212121', activeforeground='white',
+                    relief='flat', padx=4, pady=5, font=('Arial', 8, 'bold'),
+                    command=lambda n=name: self._apply_eci_grip(n),
+                ).pack(side='left', padx=2, fill='x', expand=True)
+
+        # ── ECI feedback panel ────────────────────────────────────────
+        fb = tk.Frame(body, bg='#0d1117', relief='sunken', bd=1)
+        fb.pack(fill='x', pady=(10, 0))
+        tk.Label(fb, text='ECI feedback', font=('Arial', 8, 'bold'),
+                 bg='#0d1117', fg=TEXT_DIM, anchor='w', padx=6
+                 ).pack(fill='x')
+
+        row_grip = tk.Frame(fb, bg='#0d1117'); row_grip.pack(fill='x', padx=6)
+        tk.Label(row_grip, text='grip atual:', font=('Courier', 8),
+                 bg='#0d1117', fg=TEXT_DIM, width=12, anchor='w'
+                 ).pack(side='left')
+        self._eci_grip_lbl = tk.Label(
+            row_grip, text='—', font=('Courier', 8, 'bold'),
+            bg='#0d1117', fg=TEXT_VAL, anchor='w')
+        self._eci_grip_lbl.pack(side='left', fill='x', expand=True)
+
+        row_sent = tk.Frame(fb, bg='#0d1117'); row_sent.pack(fill='x', padx=6)
+        tk.Label(row_sent, text='último env.:', font=('Courier', 8),
+                 bg='#0d1117', fg=TEXT_DIM, width=12, anchor='w'
+                 ).pack(side='left')
+        self._eci_sent_lbl = tk.Label(
+            row_sent, text='—', font=('Courier', 8, 'bold'),
+            bg='#0d1117', fg=ACCENT_HND, anchor='w')
+        self._eci_sent_lbl.pack(side='left', fill='x', expand=True)
+
+        row_posn = tk.Frame(fb, bg='#0d1117'); row_posn.pack(fill='x', padx=6, pady=(0, 4))
+        tk.Label(row_posn, text='posições:', font=('Courier', 8),
+                 bg='#0d1117', fg=TEXT_DIM, width=12, anchor='w'
+                 ).pack(side='left')
+        self._eci_posn_lbl = tk.Label(
+            row_posn, text='T:- I:- M:- R:- L:- Rot:-',
+            font=('Courier', 8), bg='#0d1117', fg=TEXT_VAL, anchor='w')
+        self._eci_posn_lbl.pack(side='left', fill='x', expand=True)
+
+    # ──────────────────────────────────────────────────────── HANDLERS
     def _arm_changed(self, val, lbl, _joint):
         lbl.config(text=f'{int(float(val)):4d}°')
         if not self._suppressing:
@@ -546,18 +769,8 @@ class ManualControlNode(Node):
             self._publish_hand()
 
     def _apply_arm(self, preset_deg: dict):
-        """Aplica pose ao braço.
-
-        IMPORTANTE: publica a trajetória ANTES de mexer nos sliders, lendo
-        os valores do próprio `preset_deg`. Tocar nos sliders dentro de um
-        botão Tk + chamar `publish` (que entra no DDS, libera o GIL e pode
-        rodar GC) na mesma callstack vinha causando `Tcl_Release couldn't
-        find reference …` → SIGABRT. Desacoplar resolve.
-        """
         positions_rad = [math.radians(preset_deg[j]) for j in ARM_JOINTS]
         self._publish_arm_positions(positions_rad)
-        # Atualização visual diferida — roda quando o Tk estiver ocioso,
-        # depois do publish ter concluído.
         self.root.after_idle(self._update_arm_sliders, preset_deg)
 
     def _update_arm_sliders(self, preset_deg: dict):
@@ -572,11 +785,26 @@ class ManualControlNode(Node):
     def _apply_hand_uniform(self, value: int):
         vals = {j: value for j in HAND_JOINTS}
         self._publish_hand_values(vals)
+        self._schedule_eci_posn(vals)
         self.root.after_idle(self._update_hand_sliders, vals)
 
-    def _apply_hand(self, vals: dict):
+    def _apply_hand(self, vals: dict, project_label: str | None = None):
+        """Apply a project grip (Gazebo + optionally ECI real hand)."""
         self._publish_hand_values(vals)
         self.root.after_idle(self._update_hand_sliders, dict(vals))
+        if project_label and self._eci_enabled:
+            eci_id = PROJECT_GRIP_ECI.get(project_label)
+            if eci_id is not None:
+                eci_name = ECI_GRIP_NAMES.get(eci_id, str(eci_id))
+                self._send_eci_grip(eci_id, f'{project_label} → {eci_name}')
+
+    def _apply_eci_grip(self, name: str):
+        """Apply a COVVI built-in grip: Gazebo simulation + real hand via ECI."""
+        gazebo_vals = ECI_GRIP_GAZEBO[name]
+        self._publish_hand_values(gazebo_vals)
+        self.root.after_idle(self._update_hand_sliders, dict(gazebo_vals))
+        self._send_eci_grip(ECI_GRIP_IDS[name], name)
+        self._set_status(f'ECI grip: {name}', _CLR=ACCENT_HND)
 
     def _update_hand_sliders(self, vals: dict):
         self._suppressing = True
@@ -588,62 +816,36 @@ class ManualControlNode(Node):
             self._suppressing = False
 
     def _apply_recipe(self, arm_key: str, grip_key: str):
-        """
-        Atalho pick: aplica pose do braço, ESPERA o braço chegar à posição
-        e SÓ ENTÃO fecha a mão na preensão correspondente.
-
-        A espera é `duration_slider + 250 ms` (margem para a trajetória ser
-        recebida e completada pelo controlador). Sem essa sincronização, a
-        mão fechava no meio do caminho e o objeto não era pego.
-        """
-        # 1. Despacha o braço imediatamente
         self._apply_arm(PICK_POSES_DEG[arm_key])
         self._set_status(f'⏳ Braço indo para {arm_key}...', _CLR='#fab387')
-
-        # 2. Programa o fechamento da mão para depois do braço terminar
         duration_ms = int(float(self.time_sl.get()) * 1000) + 250
 
         def _close_hand_after_arm():
             self._pending_hand_after = None
-            self._apply_hand(HAND_GRIPS[grip_key])
+            self._apply_hand(HAND_GRIPS[grip_key], project_label=grip_key)
             self._set_status(
                 f'✓ Pick aplicado: {arm_key} + {grip_key}', _CLR=ACCENT_HND)
 
-        # Cancela fechamento pendente (clique anterior) para não sobrepor
         if self._pending_hand_after is not None:
             try:
                 self.root.after_cancel(self._pending_hand_after)
             except Exception:
                 pass
-        self._pending_hand_after = self.root.after(
-            duration_ms, _close_hand_after_arm)
+        self._pending_hand_after = self.root.after(duration_ms, _close_hand_after_arm)
 
     def _do_delivery(self):
-        """
-        Entrega — move o braço para a caixa correspondente ao objeto
-        atualmente detectado pela câmera (`/detected_objects`):
-          frasco → caixa vermelha  (box1, x=-0.05)
-          tubo   → caixa verde     (box2, x= 0.25)
-          ampola → caixa azul      (box3, x= 0.55)
-
-        A mão NÃO é movida: o operador decide quando abrir a mão para
-        soltar o objeto na caixa (botão "Abrir" do painel da mão).
-        """
         obj = self._last_detection
         if obj is None or obj not in DELIVERY_POSES_DEG:
             self._set_status(
-                '⚠ Nenhum objeto detectado pela câmera — '
-                'spawne um objeto antes de entregar.',
+                '⚠ Nenhum objeto detectado — spawne um objeto antes de entregar.',
                 _CLR='#f38ba8')
             return
-        box_color = {'frasco':'vermelha','tubo':'verde','ampola':'azul'}[obj]
+        box_color = {'frasco': 'vermelha', 'tubo': 'verde', 'ampola': 'azul'}[obj]
         self._apply_arm(DELIVERY_POSES_DEG[obj])
-        self._set_status(
-            f'📦 Entrega: {obj} → caixa {box_color}', _CLR=ACCENT_HND)
+        self._set_status(f'📦 Entrega: {obj} → caixa {box_color}', _CLR=ACCENT_HND)
 
-    # ────────────────────────────────────────────── PUBLISH ─
+    # ──────────────────────────────────────────────────────── PUBLISH
     def _publish_arm(self):
-        """Publica posição corrente dos sliders (callback de slider arrastado)."""
         if not self._ready:
             return
         positions = [math.radians(self.arm_sliders[j].get()) for j in ARM_JOINTS]
@@ -667,6 +869,7 @@ class ManualControlNode(Node):
             return
         vals = {j: self.hand_sliders[j].get() for j in HAND_JOINTS}
         self._publish_hand_values(vals)
+        self._schedule_eci_posn(vals)
 
     def _publish_hand_values(self, vals: dict):
         if not self._ready:
@@ -682,31 +885,23 @@ class ManualControlNode(Node):
         msg.joint_names = names
         pt = JointTrajectoryPoint()
         pt.positions = positions
-        # Mão é rápida: 0.8 s é suficiente, evita pausa entre dedos
         pt.time_from_start = Duration(sec=0, nanosec=800_000_000)
         msg.points.append(pt)
         self.hand_pub.publish(msg)
 
-    # ────────────────────────────────────────────── STATUS ─
+    # ──────────────────────────────────────────────────────── STATUS
     def _set_status(self, msg: str, _CLR=TEXT_MAIN):
         self.status_var.set(msg)
         self.status_lbl.configure(fg=_CLR)
 
     def _spin_ros(self):
-        """Tick ROS rodando NA THREAD DO TK (via root.after). Drena callbacks
-        de subs/services num único passo e reagenda. Mantém todo o trabalho
-        ROS+Tk em uma única thread → sem corrupção do interpretador Tcl."""
         try:
             rclpy.spin_once(self, timeout_sec=0.0)
         except Exception:
-            # rclpy pode estar em shutdown — não derruba a UI
             return
-        self.root.after(20, self._spin_ros)   # ~50 Hz
+        self.root.after(20, self._spin_ros)
 
     def _poll_status(self):
-        # Drena resultados de chamadas de serviço enfileiradas por callbacks
-        # do rclpy (que agora rodam na mesma thread, mas mantemos a fila para
-        # desacoplar a ordem de execução).
         try:
             while True:
                 msg, color = self._status_q.get_nowait()
@@ -714,20 +909,22 @@ class ManualControlNode(Node):
         except queue.Empty:
             pass
 
+        # Conveyor state
         cs = self._conveyor_state
         if cs:
-            obj  = cs.get('current_obj', 'none')
-            has  = '✔' if cs.get('has_object') else '○'
+            obj = cs.get('current_obj', 'none')
+            has = '✔' if cs.get('has_object') else '○'
             self.obj_lbl.config(
                 text=f'{has}  esteira: {obj}',
                 fg=ACCENT_HND if cs.get('has_object') else TEXT_DIM)
 
-        # Atualiza o hint do botão ENTREGA com a detecção atual da câmera
+        # Entrega hint
         det = self._last_detection
         if hasattr(self, '_entrega_hint'):
             if det in DELIVERY_POSES_DEG:
-                box_color = {'frasco':'vermelha','tubo':'verde','ampola':'azul'}[det]
-                color = {'frasco':COLOR_FRASCO,'tubo':COLOR_TUBO,'ampola':COLOR_AMPOLA}[det]
+                box_color = {'frasco': 'vermelha', 'tubo': 'verde', 'ampola': 'azul'}[det]
+                color = {'frasco': COLOR_FRASCO, 'tubo': COLOR_TUBO,
+                         'ampola': COLOR_AMPOLA}[det]
                 self._entrega_hint.config(
                     text=f'→ {det} para caixa {box_color}', fg=color)
                 self._btn_entrega.config(state='normal')
@@ -735,16 +932,39 @@ class ManualControlNode(Node):
                 self._entrega_hint.config(
                     text='(aguardando detecção da câmera)', fg=TEXT_DIM)
                 self._btn_entrega.config(state='disabled')
+
+        # ECI feedback panel
+        if hasattr(self, '_eci_grip_lbl'):
+            grip_id = self._eci_grip_id
+            grip_name = ECI_GRIP_NAMES.get(grip_id, f'id={grip_id}') if grip_id else '—'
+            self._eci_grip_lbl.config(text=grip_name)
+
+            sent = self._eci_last_sent or '—'
+            self._eci_sent_lbl.config(text=sent)
+
+            p = self._eci_posn
+            if p:
+                posn_str = (
+                    f"T:{p.get('Thumb','-'):3}  I:{p.get('Index','-'):3}  "
+                    f"M:{p.get('Middle','-'):3}  R:{p.get('Ring','-'):3}  "
+                    f"L:{p.get('Little','-'):3}  Rot:{p.get('Rotate','-'):3}"
+                )
+                self._eci_posn_lbl.config(text=posn_str)
+
         self.root.after(400, self._poll_status)
 
 
 def main(args=None):
+    # tk.Tk() MUST be called before rclpy.init() — rclpy.init() starts
+    # FastDDS background threads whose C extensions corrupt Tcl's allocator
+    # when Tcl is initialised afterwards, causing a segfault.
+    root = tk.Tk()
+    root.withdraw()
+
     rclpy.init(args=args)
-    node = ManualControlNode()
+    node = ManualControlNode(root=root)
     try:
-        # Tk mainloop é o loop principal; ROS spin_once é chamado dentro
-        # dele a cada 20 ms via root.after — tudo em uma thread só.
-        node.root.mainloop()
+        root.mainloop()
     finally:
         try:
             node.destroy_node()

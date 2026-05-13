@@ -30,7 +30,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            # ── Nós da célula de manufatura (novos / refatorados) ──
             'object_detector      = grasp_ml_pack.object_detector:main',
             'grasp_executor       = grasp_ml_pack.grasp_executor:main',
             'conveyor_controller  = grasp_ml_pack.conveyor_controller:main',
@@ -38,12 +37,6 @@ setup(
             'manual_control       = grasp_ml_pack.manual_control_node:main',
             'teach_pendant        = grasp_ml_pack.teach_pendant:main',
             'pipeline             = grasp_ml_pack.pipeline:main',
-            # ── Módulos originais preservados (não usados no novo pipeline) ──
-            'pose_estimator       = grasp_ml_pack.pose_estimator:main',
-            'grasp_planner        = grasp_ml_pack.grasp_planner:main',
-            # ── Scripts utilitários ────────────────────────────────
-            'generate_data        = grasp_ml_pack.scripts.generate_training_data:main',
-            'train_model          = grasp_ml_pack.scripts.train_grasp_model:main',
             'test_kin             = grasp_ml_pack.scripts.test_kinematics:main',
         ],
     },
