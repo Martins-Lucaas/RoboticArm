@@ -52,6 +52,10 @@ try:
     from .kinematics import (
         fk_partial as _gx_fk_partial,
         finger_fk as _gx_finger_fk,
+        forward_kinematics as _gx_forward_kinematics,
+        inverse_kinematics as _gx_inverse_kinematics,
+        approach_to_Rtcp as _gx_approach_to_Rtcp,
+        _ik_refine as _gx_ik_refine,
         T_HAND_ATTACH as _GX_T_HAND_ATTACH,
         _K_P_FINGER as _GX_K_P_FINGER,
         _K_D_FINGER as _GX_K_D_FINGER,
@@ -65,6 +69,8 @@ except Exception:
     _gx_bbox_overlap = None
     _gx_fk_partial = None
     _gx_finger_fk = None
+    _gx_forward_kinematics = None
+    _gx_inverse_kinematics = None
     _GX_OBSTACLES = {}
     _GX_PICK_BBOX = {}
     _GX_T_HAND_ATTACH = None
@@ -330,65 +336,178 @@ ARM_PRESETS_BASE = {
                   'joint4':   0, 'joint5':   0, 'joint6':   0},
 }
 
-# Poses de pick recalculadas com T_HAND_ATTACH corrigido (acoplamento flush).
-# Cada pose posiciona o TCP no ponto apropriado ao tipo de grasp:
-#   • Palm grip (frasco): TCP no eixo central do cilindro, palma acima envolve
-#   • Claw grip (tubo):   TCP no eixo central do tubo, garra de 3 dedos fecha
-#   • Fingertip (ampola): TCP no topo da ampola, pinça polegar+indicador
-# IK convergiu com erro <2mm para todos os três (computado offline).
-PICK_POSES_DEG = {
-    # frasco: TCP world Z = 0.851 (centro do cilindro r=42mm h=90mm)
-    'Pick Frasco': {'joint1': +26.3, 'joint2':  -7.5, 'joint3': -96.0,
-                    'joint4': -76.5, 'joint5': +26.3, 'joint6':  +0.0},
-    # tubo: TCP world Z = 0.866 (centro do cilindro r=12mm h=120mm)
-    'Pick Tubo':   {'joint1': +26.3, 'joint2':  -6.9, 'joint3': -95.1,
-                    'joint4': -78.0, 'joint5': +26.2, 'joint6':  +0.0},
-    # ampola: TCP world Z = 0.881 (topo do cilindro r=5mm h=75mm)
-    'Pick Ampola': {'joint1': +26.3, 'joint2':  -7.0, 'joint3': -93.5,
-                    'joint4': -79.5, 'joint5': +26.3, 'joint6':  +0.0},
+# ── Geometria do ciclo de pick (world frame, metros) — LATERAL APPROACH ─
+# Pick station em (0.75, 0.0). Belt top em z=0.806.
+#
+# Approach LATERAL: mão se aproxima horizontalmente do lado do operador
+# (-Y) com a palma virada para a frente (+Y), dedos extendidos no eixo
+# +Y. Esse é o grasp natural da COVVI: cilindro deita perpendicular aos
+# dedos, hand_x (largura da palma) fica vertical, e os 4 dedos longos
+# se espalham ao longo do eixo do cilindro (eixo Z mundo). O polegar fica
+# no lado oposto (operador) — power grasp clássico.
+#
+# Eixos com approach_vec=(0,1,0):
+#   hand_x_world = (0, 0,+1)   thumb sobe (acima), little desce (abaixo)
+#   hand_y_world = (0,+1, 0)   dedos apontam +Y (em direção ao objeto)
+#   hand_z_world = (-1,0, 0)   palma normal -X (encara o operador)
+#
+# IK targets por objeto: hand_origin_X escolhido para que os fingertips
+# ENCOSTEM a superfície do cilindro (radius-aware), sem penetração.
+_PICK_XY_WORLD: tuple[float, float] = (0.75, 0.00)
+_APPROACH_VEC = (0.0, 1.0, 0.0)              # lateral, de -Y para +Y
+_APPROACH_TCP_WORLD: tuple = (0.75, -0.135, 0.85)  # 20 cm antes do grasp
+_PICK_TCP_WORLD: dict[str, tuple] = {
+    # (target_X, target_Y, target_Z) do TCP. Derivado de hand_fk:
+    # • target_X = obj_X + curl_offset (≈ hand_z do fingertip mais próximo)
+    # • target_Y = obj_Y + (0.115 - grasp_y_in_hand) ≈ 0.065
+    # • target_Z = obj_center_Z   (hand_x vertical → spread sobre o cilindro)
+    'frasco': (0.748, 0.065, 0.851),  # r=42mm, h=90mm — palm wrap front face
+    'tubo':   (0.770, 0.065, 0.866),  # r=12mm, h=120mm — full cylindrical wrap
+    'ampola': (0.770, 0.065, 0.844),  # r=5mm, h=75mm  — tight wrap, thin object
 }
 
-# Approach: TCP world Z = 1.05 (~17 cm acima do topo da ampola),
-# mesmo branch dos picks (j6=0, ombro fechado).
-APPROACH_POSE_DEG = {
-    'joint1': +26.3, 'joint2':  -6.1, 'joint3': -77.3,
-    'joint4': -96.6, 'joint5': +26.3, 'joint6':  +0.0,
-}
 
-# Poses de entrega — TCP world Z = 0.75 (15 cm acima do topo das caixas).
-# Recalculadas com T_HAND_ATTACH flush. Box3 (ampola) agora usa branch normal
-# (q4 negativo, q6 = 0) em vez do antigo flipped-wrist.
-DELIVERY_POSES_DEG = {
-    # box1 frasco — pose (-0.05, 0.65, 0.75) world
+def _solve_pose(p_world: tuple[float, float, float],
+                q_seed_deg: dict,
+                approach_vec: tuple = _APPROACH_VEC) -> dict | None:
+    """Resolve IK para TCP em `p_world` com abordagem `approach_vec` (lateral
+    +Y por padrão), travando o ramo a partir da semente `q_seed_deg`.
+
+    Se o IK global devolver um ramo diferente da semente (|Δj2|>60° ou
+    |Δj1|>60°), recorre-se ao `_ik_refine` direto da semente para manter
+    a coerência geométrica e evitar wrist-flipped/shoulder-back.
+    """
+    if not _COLLISION_OK or _gx_inverse_kinematics is None:
+        return None
+    p_base = _np.array([p_world[0], p_world[1], p_world[2] - _GX_BASE_Z])
+    approach = _np.array(approach_vec, dtype=float)
+    q_seed = _np.array([math.radians(q_seed_deg[j]) for j in ARM_JOINTS])
+
+    q_global, ok_global = _gx_inverse_kinematics(
+        p_base, approach, q_seed=q_seed, elbow_up=True)
+    branch_ok = (ok_global
+                 and abs(math.degrees(q_global[1]) - math.degrees(q_seed[1])) < 60.0
+                 and abs(math.degrees(q_global[0]) - math.degrees(q_seed[0])) < 60.0)
+
+    if branch_ok:
+        q_final = q_global
+    else:
+        R_tcp = _gx_approach_to_Rtcp(approach)
+        q_final, _ = _gx_ik_refine(p_base, R_tcp, q_seed)
+
+    T = _gx_forward_kinematics(q_final)
+    err_mm = float(_np.linalg.norm(T[:3, 3] - p_base)) * 1000.0
+    if err_mm > 5.0:
+        return None
+    return {j: float(math.degrees(q_final[i])) for i, j in enumerate(ARM_JOINTS)}
+
+
+# Fallbacks (graus) para approach LATERAL — sementes do IK e poses-finais
+# caso o IK não esteja disponível. Calibrados com T_HAND_ATTACH atual e
+# `approach_vec = (0, 1, 0)` (dedos apontando para +Y world):
+_FALLBACK_APPROACH_DEG = {
+    'joint1': -12.3, 'joint2': -25.5, 'joint3': -80.4,
+    'joint4': -74.1, 'joint5': +167.7, 'joint6': +90.0,
+}
+_FALLBACK_PICK_DEG = {
+    # frasco: j5≈+178, j6≈-90 — palm encara o operador, fingers wrap front
+    'frasco': {'joint1':  +2.5, 'joint2': -31.2, 'joint3': -100.1,
+               'joint4': +131.3, 'joint5': +177.5, 'joint6': -90.0},
+    # tubo: j5≈-178, j6≈+90 — branch alternativo, equivalente em TCP
+    'tubo':   {'joint1':  +2.5, 'joint2': -21.0, 'joint3':  -84.9,
+               'joint4':  -74.1, 'joint5': -177.5, 'joint6': +90.0},
+    # ampola: mesmo branch do frasco
+    'ampola': {'joint1':  +2.4, 'joint2': -33.1, 'joint3':  -97.7,
+               'joint4': +130.7, 'joint5': +177.6, 'joint6': -90.0},
+}
+_FALLBACK_DELIVERY_DEG = {
     'frasco': {'joint1': +108.4, 'joint2': -19.6, 'joint3': -91.3,
                'joint4':  -69.1, 'joint5': +108.4, 'joint6':  +0.0},
-    # box2 tubo — pose (0.25, 0.65, 0.75) world
     'tubo':   {'joint1':  +85.6, 'joint2': -23.2, 'joint3': -86.3,
                'joint4':  -70.5, 'joint5':  +85.6, 'joint6':  +0.0},
-    # box3 ampola — pose (0.55, 0.65, 0.75) world
     'ampola': {'joint1':  +65.8, 'joint2': -36.5, 'joint3': -65.6,
                'joint4':  -77.9, 'joint5':  +65.8, 'joint6':  +0.0},
 }
 
+# Caixas de entrega — mesma altura e XY que as poses originais (acima do topo).
+_DELIVERY_XY_WORLD = {
+    'frasco': (-0.05, 0.65),
+    'tubo':   ( 0.25, 0.65),
+    'ampola': ( 0.55, 0.65),
+}
+_DELIVERY_Z_WORLD = 0.75   # 15 cm acima do topo das caixas
+
+
+def _compute_pick_targets():
+    """Computa via IK as poses de approach (lateral, -Y → +Y), grasp por
+    objeto e entrega por objeto. Roda uma vez no carregamento do módulo.
+
+    Cadeia de seeds:  approach → frasco → tubo, ampola.  Cada pose usa a
+    anterior como warm-start para garantir branch coerente.
+    """
+    approach_deg = (_solve_pose(_APPROACH_TCP_WORLD,
+                                 q_seed_deg=_FALLBACK_APPROACH_DEG)
+                    or _FALLBACK_APPROACH_DEG)
+
+    pick_deg: dict[str, dict] = {}
+    # Frasco (semeado do approach).
+    pick_deg['frasco'] = (_solve_pose(_PICK_TCP_WORLD['frasco'],
+                                       q_seed_deg=_FALLBACK_PICK_DEG['frasco'])
+                          or _FALLBACK_PICK_DEG['frasco'])
+    # Tubo e ampola — seeds fallback dedicados (cada um pode estar num
+    # branch diferente do frasco, o que é OK).
+    for obj in ('tubo', 'ampola'):
+        pick_deg[obj] = (_solve_pose(_PICK_TCP_WORLD[obj],
+                                      q_seed_deg=_FALLBACK_PICK_DEG[obj])
+                         or _FALLBACK_PICK_DEG[obj])
+
+    delivery_deg: dict[str, dict] = {}
+    for obj in ('frasco', 'tubo', 'ampola'):
+        dx, dy = _DELIVERY_XY_WORLD[obj]
+        # Entrega ainda usa approach top-down (depositar nas caixas).
+        delivery_deg[obj] = (_solve_pose(
+                                  (dx, dy, _DELIVERY_Z_WORLD),
+                                  q_seed_deg=_FALLBACK_DELIVERY_DEG[obj],
+                                  approach_vec=(0.0, 0.0, -1.0))
+                             or _FALLBACK_DELIVERY_DEG[obj])
+    return approach_deg, pick_deg, delivery_deg
+
+
+APPROACH_POSE_DEG, PICK_POSES_DEG, DELIVERY_POSES_DEG = _compute_pick_targets()
+
+
+HAND_OPEN = {j: 0 for j in HAND_JOINTS}
+
+# Grips por objeto — derivados de HAND_CONFIGS (kinematics.py) e
+# convertidos para sliders (0–200). Com T_HAND_ATTACH alinhada com a
+# direção dos dedos, é a CURL TOTAL que aproxima as pontas do objeto:
+#   slider = rad / max_rad * 200, com max_rad=1.6 (dedos) e 1.0 (Rotate).
+#
+# Para os 4 dedos longos (Index/Middle/Ring/Little), curl ≥ 1.10 rad
+# (slider ≥ 138) faz o tip "passar" da vertical e voltar em direção à
+# palma — aperta cilindros até r~40mm. Para r<15mm a geometria da palma
+# (5cm de espalhamento em hand_x) limita a precisão do contato; o grasp
+# real é por fricção em vez de pinch cirúrgico.
 HAND_GRIPS = {
-    'Open':                     {j: 0 for j in HAND_JOINTS},
-    # Valores calibrados para envolver o objeto sem ejetá-lo no Gazebo.
-    # frasco r=42mm: dedos chegam à parede da garrafa sem prensar.
-    'Palm Grip (frasco)':       {'Thumb':  95, 'Index': 110, 'Middle': 110,
-                                 'Ring':  105, 'Little':  95, 'Rotate':  55},
-    # tubo r=12mm: dedos formam garra parcial ao redor do cilindro.
-    'Claw Grip (tubo)':         {'Thumb':  80, 'Index': 100, 'Middle': 100,
-                                 'Ring':   95, 'Little':  85, 'Rotate':  90},
-    # Fingertip: pinça de precisão — apenas polegar + indicador.
-    # Médio/anelar/mínimo permanecem abertos para não competir com a pinça.
-    'Fingertip Grip (ampola)':  {'Thumb':  78, 'Index':  78, 'Middle':   0,
-                                 'Ring':    0, 'Little':   0, 'Rotate': 164},
+    'Open':                     HAND_OPEN,
+    # frasco r=42mm: palm grip — 4 dedos longos abraçam a frente do
+    # cilindro, polegar pressiona pelo lado oposto (operador).
+    'Palm Grip (frasco)':       {'Thumb': 138, 'Index': 156, 'Middle': 156,
+                                 'Ring':  150, 'Little': 138, 'Rotate':  50},
+    # tubo r=12mm: fechamento mais apertado, dedos curvam past o cilindro
+    # para realmente "abraçar" o tubo fino.
+    'Claw Grip (tubo)':         {'Thumb': 180, 'Index': 200, 'Middle': 200,
+                                 'Ring':  190, 'Little': 180, 'Rotate': 140},
+    # ampola r=5mm: máximo fechamento + Rotate máximo. Cylinder muito
+    # fino → o grasp é por fricção lateral, não pinch exato.
+    'Fingertip Grip (ampola)':  {'Thumb': 200, 'Index': 200, 'Middle': 200,
+                                 'Ring':  190, 'Little': 180, 'Rotate': 200},
 }
 
-OBJ_RECIPE = {
-    'frasco': ('Pick Frasco', 'Palm Grip (frasco)'),
-    'tubo':   ('Pick Tubo',   'Claw Grip (tubo)'),
-    'ampola': ('Pick Ampola', 'Fingertip Grip (ampola)'),
+OBJ_GRIP = {
+    'frasco': 'Palm Grip (frasco)',
+    'tubo':   'Claw Grip (tubo)',
+    'ampola': 'Fingertip Grip (ampola)',
 }
 
 
@@ -548,6 +667,8 @@ class ManualControlNode(Node):
 
         # Estado do fechamento incremental (smart close)
         self._smart_after: str | None = None
+        # Sequenciador do ciclo de pick / entrega
+        self._pick_cycle_after: str | None = None
 
         # Sistema de colisão: rastreia a última configuração seguramente
         # publicada para usar como ponto de partida do sweep do braço.
@@ -1174,41 +1295,18 @@ class ManualControlNode(Node):
                           bg=PANEL, padx=12, pady=7, font=FONT_BODY)
             b.pack(fill='x', pady=2)
 
-        tk.Label(pad, text='APROXIMAÇÃO E CAPTURA', font=FONT_SMALL,
+        tk.Label(pad, text='APROXIMAÇÃO MANUAL', font=FONT_SMALL,
                  bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(14, 4))
-        _flat_btn(pad, 'Approach  (15 cm acima)',
+        _flat_btn(pad, 'Approach  (15 cm acima da estação de pick)',
                   command=lambda: self._apply_arm(APPROACH_POSE_DEG),
                   bg=PANEL, padx=12, pady=7, font=FONT_BODY
                   ).pack(fill='x', pady=2)
-
-        pick_colors = {'Pick Frasco': COLOR_FRASCO,
-                       'Pick Tubo':   COLOR_TUBO,
-                       'Pick Ampola': COLOR_AMPOLA}
-        for label, pose in PICK_POSES_DEG.items():
-            clr = pick_colors[label]
-            b = tk.Button(pad, text=label, bg=clr, fg='white',
-                          activebackground=_shade(clr, -0.15),
-                          activeforeground='white',
-                          relief='flat', bd=0, padx=12, pady=7,
-                          font=FONT_BODY, cursor='hand2',
-                          command=lambda p=pose: self._apply_arm(p))
-            b.pack(fill='x', pady=2)
-
-        tk.Label(pad, text='ENTREGA', font=FONT_SMALL,
-                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(14, 4))
-        self._btn_entrega = tk.Button(
-            pad, text='Entregar na caixa correspondente',
-            bg=PRIMARY, fg='white',
-            activebackground=PRIMARY_HV, activeforeground='white',
-            relief='flat', bd=0, padx=12, pady=8,
-            font=FONT_BODY, cursor='hand2',
-            command=self._do_delivery)
-        self._btn_entrega.pack(fill='x', pady=2)
-        self._entrega_hint = tk.Label(
-            pad, text='Aguardando detecção da câmera…',
-            font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED,
-            anchor='w', justify='left')
-        self._entrega_hint.pack(fill='x', pady=(4, 0))
+        tk.Label(pad,
+                 text='Ciclos completos de pick e entrega estão na aba '
+                      'Célula.',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED,
+                 wraplength=380, justify='left'
+                 ).pack(anchor='w', pady=(8, 0))
 
     # ──────────────────────────────────────────────────────── HAND TAB
     def _build_hand_tab(self, parent):
@@ -1396,20 +1494,21 @@ class ManualControlNode(Node):
                   bg=PANEL, padx=10, pady=6, font=FONT_BODY
                   ).pack(side='left', padx=2, fill='x', expand=True)
 
-        # Cartão 2: receitas
-        card_r, r_body = _card(parent, 'Receitas (braço + mão em sequência)')
+        # Cartão 2: ciclo de pick + entrega
+        card_r, r_body = _card(parent, 'Ciclo completo de pick e entrega')
         card_r.grid(row=0, column=1, sticky='nsew', padx=(8, 0), pady=(0, 8))
 
         pad2 = tk.Frame(r_body, bg=PANEL, padx=14, pady=12)
         pad2.pack(fill='both', expand=True)
 
-        tk.Label(pad2, text='Move o braço até a pose de pick e fecha a mão '
-                            'na preensão correspondente.',
+        tk.Label(pad2,
+                 text='1) Aproximação vertical · 2) Descida até o objeto · '
+                      '3) Fechamento da mão · 4) Subida com o objeto.',
                  font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM,
                  justify='left', wraplength=380
                  ).pack(anchor='w', pady=(0, 10))
 
-        for obj, (arm_key, grip_key) in OBJ_RECIPE.items():
+        for obj in ('frasco', 'tubo', 'ampola'):
             clr = {'frasco': COLOR_FRASCO, 'tubo': COLOR_TUBO,
                    'ampola': COLOR_AMPOLA}[obj]
             b = tk.Button(
@@ -1419,9 +1518,26 @@ class ManualControlNode(Node):
                 activeforeground='white',
                 relief='flat', bd=0, padx=12, pady=8,
                 font=FONT_BODY, cursor='hand2',
-                command=lambda a=arm_key, g=grip_key:
-                        self._apply_recipe(a, g))
+                command=lambda o=obj: self._do_pick_cycle(o))
             b.pack(fill='x', pady=3)
+
+        tk.Frame(pad2, bg=BORDER, height=1).pack(fill='x', pady=10)
+
+        tk.Label(pad2, text='ENTREGA', font=FONT_SMALL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(0, 4))
+        self._btn_entrega = tk.Button(
+            pad2, text='Entregar na caixa correspondente',
+            bg=PRIMARY, fg='white',
+            activebackground=PRIMARY_HV, activeforeground='white',
+            relief='flat', bd=0, padx=12, pady=8,
+            font=FONT_BODY, cursor='hand2',
+            command=self._do_delivery)
+        self._btn_entrega.pack(fill='x', pady=3)
+        self._entrega_hint = tk.Label(
+            pad2, text='Aguardando detecção da câmera…',
+            font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED,
+            anchor='w', justify='left')
+        self._entrega_hint.pack(fill='x', pady=(4, 0))
 
         # Cartão 3: monitor
         card_m, m_body = _card(parent, 'Monitor da célula')
@@ -1672,26 +1788,73 @@ class ManualControlNode(Node):
         finally:
             self._suppressing = False
 
-    def _apply_recipe(self, arm_key: str, grip_key: str):
-        self._apply_arm(PICK_POSES_DEG[arm_key])
-        self._set_status(f'Braço indo para {arm_key}…', _CLR=WARN)
-        duration_ms = int(float(self.time_sl.get()) * 1000) + 250
-
-        def _close_hand_after_arm():
-            self._pending_hand_after = None
-            self._smart_close(HAND_GRIPS[grip_key],
-                              project_label=grip_key, label=grip_key)
-            self._set_status(
-                f'Pick aplicado: {arm_key} + {grip_key} (fechamento incremental)',
-                _CLR=OK)
-
-        if self._pending_hand_after is not None:
+    # ──────────────────────────────────────────────────────── PICK CYCLE
+    def _cancel_pick_cycle(self):
+        after_id = getattr(self, '_pick_cycle_after', None)
+        if after_id is not None:
             try:
-                self.root.after_cancel(self._pending_hand_after)
+                self.root.after_cancel(after_id)
             except Exception:
                 pass
-        self._pending_hand_after = self.root.after(
-            duration_ms, _close_hand_after_arm)
+        self._pick_cycle_after = None
+
+    def _do_pick_cycle(self, obj_class: str):
+        """Ciclo completo de pick em 4 fases:
+          1. Mão abre + braço vai para approach (TCP em (0.75, 0, 1.05))
+          2. Braço desce verticalmente até a pose de grasp do objeto
+          3. Mão fecha na preensão correta (smart_close com detecção de toque)
+          4. Braço sobe de volta à approach (com o objeto)
+        """
+        if obj_class not in PICK_POSES_DEG:
+            self._set_status(f'Objeto desconhecido: {obj_class}',
+                              _CLR=DANGER)
+            return
+        grip_key = OBJ_GRIP[obj_class]
+        approach_pose = APPROACH_POSE_DEG
+        grasp_pose    = PICK_POSES_DEG[obj_class]
+        grip_target   = HAND_GRIPS[grip_key]
+
+        move_ms     = int(float(self.time_sl.get()) * 1000) + 250
+        descend_ms  = max(1200, move_ms)
+        close_ms    = 12 * 80 + 400   # smart_close n_steps*step_ms + buffer
+
+        self._cancel_pick_cycle()
+
+        # Fase 1: abre a mão (sincrono) e inicia approach do braço
+        self._apply_hand(HAND_OPEN)
+        self._apply_arm(approach_pose)
+        self._set_status(
+            f'[1/4] {obj_class}: mão aberta, aproximando…', _CLR=WARN)
+
+        def _phase_descend():
+            self._set_status(
+                f'[2/4] {obj_class}: descendo até a pose de grasp…',
+                _CLR=WARN)
+            self._apply_arm(grasp_pose)
+            self._pick_cycle_after = self.root.after(
+                descend_ms, _phase_close)
+
+        def _phase_close():
+            self._set_status(
+                f'[3/4] {obj_class}: fechando {grip_key}…', _CLR=WARN)
+            self._smart_close(grip_target, label=grip_key,
+                              project_label=grip_key)
+            self._pick_cycle_after = self.root.after(
+                close_ms, _phase_lift)
+
+        def _phase_lift():
+            self._set_status(
+                f'[4/4] {obj_class}: subindo com o objeto…', _CLR=WARN)
+            self._apply_arm(approach_pose)
+            self._pick_cycle_after = self.root.after(
+                move_ms, _phase_done)
+
+        def _phase_done():
+            self._pick_cycle_after = None
+            self._set_status(
+                f'Pick completo: {obj_class} ({grip_key}).', _CLR=OK)
+
+        self._pick_cycle_after = self.root.after(move_ms, _phase_descend)
 
     def _do_delivery(self):
         obj = self._last_detection
@@ -1702,8 +1865,35 @@ class ManualControlNode(Node):
             return
         box_color = {'frasco': 'vermelha', 'tubo': 'verde',
                      'ampola': 'azul'}[obj]
+        move_ms = int(float(self.time_sl.get()) * 1000) + 250
+
+        self._cancel_pick_cycle()
+        self._set_status(
+            f'[1/3] Levando {obj} → caixa {box_color}…', _CLR=WARN)
         self._apply_arm(DELIVERY_POSES_DEG[obj])
-        self._set_status(f'Entrega: {obj} → caixa {box_color}', _CLR=OK)
+
+        def _phase_release():
+            self._set_status(
+                f'[2/3] Liberando {obj} na caixa {box_color}.',
+                _CLR=WARN)
+            self._apply_hand(HAND_OPEN)
+            self._pick_cycle_after = self.root.after(
+                900, _phase_retreat)
+
+        def _phase_retreat():
+            self._set_status(
+                '[3/3] Retornando à aproximação…', _CLR=WARN)
+            self._apply_arm(APPROACH_POSE_DEG)
+            self._pick_cycle_after = self.root.after(
+                move_ms, _phase_done)
+
+        def _phase_done():
+            self._pick_cycle_after = None
+            self._set_status(
+                f'Entrega completa: {obj} → caixa {box_color}.',
+                _CLR=OK)
+
+        self._pick_cycle_after = self.root.after(move_ms, _phase_release)
 
     # ──────────────────────────────────────────────────────── PUBLISH
     def _publish_arm(self):

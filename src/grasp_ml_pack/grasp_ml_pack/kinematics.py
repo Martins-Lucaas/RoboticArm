@@ -46,18 +46,26 @@ _A3 = 0.5680   # joint3 → joint4 link length
 # Transformação fixa flange → ponto de preensão (TCP efetivo) na palma COVVI.
 #
 # Acoplamento URDF Link6 → hand_base_link: xyz="0 0 0" rpy="π/2 0 0" (flush).
-# Em configuração palm-down (q_pick padrão), Link6_y aponta para +world_Z.
+# A rotação Rx(π/2) deixa:
+#   hand_x = +Link6_x   (largura da palma — polegar↔mínimo)
+#   hand_y = +Link6_z   (DIREÇÃO DOS DEDOS quando estendidos)
+#   hand_z = −Link6_y   (espessura da palma — frente↔trás)
 #
-# O TCP coincide com a região onde os dedos fecham em torno do objeto.
-# Geometria COVVI (verificada por FK):
-#   • hand_base_link world Z ≈ Link6 world Z (acoplamento flush)
-#   • Index MCP world Z = Link6 world Z + 0.015   (dedo nasce 15 mm acima)
-#   • Fingertip fechado world Z = MCP − 0.067     (curl efetivo)
-#                              = Link6 world Z − 0.052
+# Para um grasp top-down, queremos o eixo de approach (TCP_z) ALINHADO com a
+# direção dos dedos (hand_y), para que a mão se aproxime do objeto "pela
+# ponta dos dedos" — caso contrário a IK orienta Link6_y para cima e os
+# dedos saem horizontais, sem alcançar o objeto.
+#
+# Logo TCP_z = +hand_y = +Link6_z. TCP_y = +Link6_y (palm-front), TCP_x =
+# +Link6_x. O resultado é uma identidade de rotação + translação ao longo
+# do eixo de approach até o ponto de convergência dos fingertips.
+#
+# Distância 115 mm = `_FINGER_TIP_ALONG_Y` (hand_y dos MCPs ≈ 0.091 m +
+# alcance médio dos dedos curvados ≈ 0.024 m, calibrado pela FK da mão).
 T_HAND_ATTACH = np.array([
     [1.0,  0.0,  0.0,  0.000],
-    [0.0,  0.0, -1.0, -0.075],   # 75 mm — TCP entre palma e fingertips
     [0.0,  1.0,  0.0,  0.000],
+    [0.0,  0.0,  1.0,  0.115],   # 115 mm — TCP no fingertip convergence
     [0.0,  0.0,  0.0,  1.000],
 ], dtype=float)
 
@@ -68,10 +76,10 @@ JOINT_MIN = np.deg2rad([-180., -260., -135., -260., -135., -360.])
 JOINT_MAX = np.deg2rad([ 180.,   80.,  135.,   80.,  135.,  360.])
 
 # Distância efetiva WC→TCP ao longo do vetor de abordagem (m).
-# WC→hand_base_link ≈ 0.260; novo offset palma→TCP = 0.075 → soma = 0.335.
+# WC→hand_base_link ≈ 0.260; offset palma→TCP = 0.115 → soma = 0.375.
 # Apenas heurística inicial: o refinamento numérico do IK (DLS) absorve
 # diferenças residuais.
-_D_WC_TCP = 0.335
+_D_WC_TCP = 0.375
 
 # ──────────────────────────────────────────────────────────────────────
 # Origens URDF das juntas: (xyz, rpy)
@@ -537,6 +545,129 @@ HAND_LIMITS: dict[str, float] = {
     'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
     'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0,
 }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# FK 3D completa da mão COVVI
+# ──────────────────────────────────────────────────────────────────────
+# Origens dos MCPs em hand_base_link, extraídas direto do URDF
+# (joints `*_proximal_j_input_joint`).
+_HAND_MCP: dict[str, tuple] = {
+    'Index':  (+0.02310, +0.09136, -0.01476),
+    'Middle': (+0.00336, +0.09438, -0.01554),
+    'Ring':   (-0.01620, +0.09438, -0.01089),
+    'Little': (-0.03292, +0.08433, -0.00395),
+    # thumb_proximal_j_input em thumb_chassis (rotacionado por Rotate)
+    # — não diretamente em hand_base_link, ver _thumb_tip_hand abaixo.
+}
+
+# Thumb chassis pivot (Rotate joint) — URDF: parent=base_link.
+_THUMB_CHASSIS_PIVOT = np.array([0.02424, 0.02292, 0.01255])
+_THUMB_CHASSIS_AXIS  = np.array([0.0, -1.0, 0.0])     # rotação ≈ -hand_y
+_THUMB_CHASSIS_MULT  = 1.53339618                      # mimic Rotate
+
+# Em thumb_chassis (frame após Rotate): origem do MCP do polegar.
+_THUMB_MCP_IN_CHASSIS = np.array([0.04595, 0.02166, 0.01041])
+# Eixo de curl do thumb_proximal no frame thumb_chassis.
+_THUMB_PROX_AXIS = np.array([0.14867, -0.13053, 0.98024])
+
+
+def _rotate_axis_angle(v: np.ndarray, axis: np.ndarray, theta: float) -> np.ndarray:
+    """Fórmula de Rodrigues — rotaciona v em torno de axis por theta (rad)."""
+    k = axis / (np.linalg.norm(axis) + 1e-12)
+    c, s = math.cos(theta), math.sin(theta)
+    return v * c + np.cross(k, v) * s + k * (k @ v) * (1.0 - c)
+
+
+def _finger_tip_in_hand_long(finger: str, primary: float) -> np.ndarray:
+    """Ponta dos 4 dedos longos (Index/Middle/Ring/Little) em hand_base_link.
+
+    Modelo planar 2-link: o dedo nasce no MCP e estende ao longo de +hand_y
+    quando aberto; curl move o tip em +hand_z (em direção à palma).
+    """
+    mx, my, mz = _HAND_MCP[finger]
+    tip = finger_fk(primary, k_p=_K_P_FINGER, k_d=_K_D_FINGER)
+    fx, _fy, fz = float(tip[0]), 0.0, float(tip[2])
+    return np.array([mx, my + fx, mz + fz])
+
+
+def _thumb_tip_in_hand(thumb_primary: float, rotate_primary: float) -> np.ndarray:
+    """Ponta do polegar em hand_base_link, considerando o Rotate (que gira
+    o chassis do polegar) e em seguida o curl do thumb_proximal/distal.
+
+    Aproximações: o curl 3D do polegar é tratado como planar 2-link no
+    plano do chassis, alinhado com `_THUMB_PROX_AXIS` (referência URDF).
+    """
+    # 1) Curl planar do polegar relativo ao MCP, no plano do chassis.
+    tip_planar = finger_fk(thumb_primary, k_p=_K_P_THUMB, k_d=_K_D_FINGER)
+    fx, _, fz = float(tip_planar[0]), 0.0, float(tip_planar[2])
+    # No frame chassis, o MCP está em _THUMB_MCP_IN_CHASSIS; o dedo
+    # estende ao longo de +y_chassis e curla em +z_chassis (aproximação).
+    tip_in_chassis = _THUMB_MCP_IN_CHASSIS + np.array([0.0, fx, fz])
+
+    # 2) Rotaciona o resultado pelo ângulo Rotate em torno do pivô do chassis.
+    theta = _THUMB_CHASSIS_MULT * rotate_primary
+    v = tip_in_chassis - _THUMB_CHASSIS_PIVOT
+    v_rot = _rotate_axis_angle(v, _THUMB_CHASSIS_AXIS, theta)
+    return _THUMB_CHASSIS_PIVOT + v_rot
+
+
+def hand_fk(hand_state: dict) -> dict[str, np.ndarray]:
+    """FK completa da mão COVVI para um estado de juntas.
+
+    Args:
+        hand_state: dict com chaves 'Thumb','Index','Middle','Ring','Little'
+                    em rad (ângulo do driver, 0=aberto), opcionalmente 'Rotate'.
+
+    Returns:
+        Dict com:
+          fingertip positions: 'tip_<finger>' → (3,) em hand_base_link
+          MCP positions:        'mcp_<finger>' → (3,) em hand_base_link
+          'palm_center':        (3,) — centroide dos MCPs (ponto da palma)
+        Todos em metros, frame hand_base_link.
+    """
+    out: dict[str, np.ndarray] = {}
+    rotate = float(hand_state.get('Rotate', 0.0))
+
+    for finger in ('Index', 'Middle', 'Ring', 'Little'):
+        primary = float(hand_state.get(finger, 0.0))
+        out['mcp_' + finger] = np.array(_HAND_MCP[finger])
+        out['tip_' + finger] = _finger_tip_in_hand_long(finger, primary)
+
+    thumb_primary = float(hand_state.get('Thumb', 0.0))
+    # MCP do polegar em hand_base_link já considera o Rotate (girar pivô).
+    v_mcp = _THUMB_MCP_IN_CHASSIS - _THUMB_CHASSIS_PIVOT
+    theta = _THUMB_CHASSIS_MULT * rotate
+    out['mcp_Thumb'] = (_THUMB_CHASSIS_PIVOT
+                        + _rotate_axis_angle(v_mcp, _THUMB_CHASSIS_AXIS, theta))
+    out['tip_Thumb'] = _thumb_tip_in_hand(thumb_primary, rotate)
+
+    out['palm_center'] = np.mean(
+        [out[f'mcp_{f}'] for f in ('Thumb', 'Index', 'Middle', 'Ring', 'Little')],
+        axis=0)
+    return out
+
+
+def grasp_center_in_hand(hand_state: dict, grip_type: str) -> np.ndarray:
+    """Centro do grasp (ponto de contato com o objeto) em hand_base_link.
+
+    Para cada tipo de grasp escolhemos o aglomerado de fingertips que de
+    fato encosta no objeto:
+      - fingertip: centróide de Thumb+Index (pinch).
+      - palm:     centróide dos 5 fingertips + palm_center (envelope).
+      - claw:     centróide de Thumb+Index+Middle.
+    """
+    fks = hand_fk(hand_state)
+    grip_type = grip_type.lower()
+    if 'fingertip' in grip_type or 'pinch' in grip_type:
+        pts = [fks['tip_Thumb'], fks['tip_Index']]
+    elif 'claw' in grip_type or 'tripod' in grip_type:
+        pts = [fks['tip_Thumb'], fks['tip_Index'], fks['tip_Middle']]
+    else:  # palm / cylindrical / default
+        pts = [fks[f'tip_{f}'] for f in
+               ('Thumb', 'Index', 'Middle', 'Ring', 'Little')]
+        pts.append(fks['palm_center'])
+    return np.mean(pts, axis=0)
 
 
 def hand_ik(grasp_type: str, obj_diameter: float = 0.0) -> dict[str, float]:

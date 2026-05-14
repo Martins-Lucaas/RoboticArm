@@ -523,3 +523,336 @@ HARDWARE / SOFTWARE
     é um conflito benigno de dois plugins de controle que compartilham o param
   - Trajetória do executor: ease-in/out sinusoidal para movimentos suaves
   - Score de área HSV: min(area_px / 5000.0, 1.0) — score=1.00 = área ≥ 5000 px²
+
+
+================================================================================
+  ATUALIZAÇÕES MAIS RECENTES DO CÓDIGO (POSTERIOR À PROPOSTA DE TCC)
+================================================================================
+  Alterações posteriores à versão original da proposta, todas validadas em
+  simulação e relevantes para o texto final do TCC.
+
+  1) T_HAND_ATTACH redefinida — fingers-along-approach
+     • Antes: Rx(π/2) com translação (0, -0.075, 0.010) em frame Link6, TCP
+       definido como "ponto onde os dedos se fechariam" 75 mm abaixo do flange.
+       Resultado: a IK posicionava o flange certo, mas o eixo do approach (TCP_z)
+       ficava perpendicular à direção dos dedos COVVI (que crescem ao longo de
+       +hand_y). Em approach vertical (0,0,-1), os dedos saíam HORIZONTAIS e
+       NÃO alcançavam o objeto.
+     • Agora: rotação identidade em Link6 + translação (0, 0, 0.115). TCP_z
+       coincide com +hand_y (direção real dos fingertips). A IK orienta o
+       Link6_z direto na direção do approach, garantindo que os dedos apontem
+       sempre para o objeto.
+
+  2) Hand FK 3D completa — `hand_fk(hand_state)` em kinematics.py
+     • Devolve em SI (metros) e em frame `hand_base_link`:
+         tip_<finger>     (3,) — pontas dos 5 dedos
+         mcp_<finger>     (3,) — origens dos 5 metacarpofalanges
+         palm_center      (3,) — centróide dos 5 MCPs
+     • Para o polegar, modela a rotação do `thumb_chassis` via Rodrigues sobre
+       eixo −hand_y (multiplicador mimic = 1.534 da junta Rotate). Antes o
+       polegar ficava estático em (0.07, 0.045, 0.023).
+     • Dedos longos: modelo planar 2-link (proximal 45 mm, distal 30 mm) com
+       k_p=1.516, k_d=0.718 (extraídos das mimics do URDF).
+     • Função companheira `grasp_center_in_hand(hand_state, grip_type)` —
+       centróide dos fingertips relevantes por tipo de preensão.
+
+  3) Approach LATERAL substitui o top-down em todos os picks
+     • Razão geométrica: a COVVI tem 5 cm de envergadura em hand_x (palma
+       polegar↔mínimo). Em top-down (dedos para baixo), os 5 dedos se
+       espalham ao longo de world_X e não pinçam cilindros finos.
+     • Em LATERAL (approach_vec = (0, 1, 0)):
+         hand_x_world  =  (0, 0, +1)   — thumb sobe, little desce
+         hand_y_world  =  (0,+1,  0)   — dedos extendem em +Y (para o objeto)
+         hand_z_world  =  (-1, 0, 0)   — palma encara o operador
+       Resultado: cilindro deita perpendicular aos dedos, polegar do lado
+       oposto (operador), 4 dedos longos abraçam pelo lado do objeto.
+     • Validado por hand_fk + IK (erro < 3 mm) em todos os 3 alvos.
+
+  4) Sistema de IK com branch-locking
+     • `_solve_pose` em manual_control_node.py tenta inverse_kinematics global,
+       depois rejeita o resultado se |Δj1|>60° ou |Δj2|>60° em relação à
+       semente fallback. Nesse caso usa `_ik_refine` direto da semente para
+       não trocar de ramo (wrist-flipped, shoulder-back).
+     • Sementes fallback (_FALLBACK_*_DEG) em ramo coerente: j5 ≈ ±178°,
+       j6 ≈ ±90° (palma encara operador).
+
+  5) GUI Manual Control reescrita (CRStudio-style, tema claro)
+     • Três abas: Jog (Braço), Mão COVVI, Célula.
+     • Aba Célula tem o CICLO COMPLETO de pick em 4 fases (botões por objeto):
+         1/4  approach lateral + mão aberta
+         2/4  desce ao objeto
+         3/4  smart-close incremental no grip do objeto
+         4/4  sobe ao approach (com o objeto)
+       O smart-close detecta contato pelas pontas via FK comparada com AABB
+       do objeto na esteira (evita prensar demais).
+     • Botão Entregar move o braço à caixa correspondente, abre a mão e
+       retorna ao approach lateral.
+     • Sistema de prevenção de colisão: rastreia última config segura
+       publicada e bloqueia movimentos que penetrariam world_obstacles
+       (paredes, esteira, prateleira) com margem AABB.
+
+  6) Alvos de pick calibrados por hand_fk (não chutados):
+         frasco: TCP target = (0.748, +0.065, 0.851)   [r=42 mm, palm wrap]
+         tubo:   TCP target = (0.770, +0.065, 0.866)   [r=12 mm, cylindrical]
+         ampola: TCP target = (0.770, +0.065, 0.844)   [r=5 mm, tight wrap]
+         approach: TCP target = (0.75, -0.135, 0.85)   [shared]
+
+
+================================================================================
+  GUIA DE EDIÇÃO DO TCC — O QUE ATUALIZAR NO DOCUMENTO
+================================================================================
+  Roteiro do que precisa ser revisado/adicionado em cada capítulo do PDF
+  "TCC_Lucas_Martins_UFU_1.pdf". Os pontos abaixo refletem o estado atual do
+  código (não a versão da Proposta).
+
+  ────────────────────────────────────────────────────────────────────────
+  A) REFERENCIAL TEÓRICO — pontos a acrescentar ou rever
+  ────────────────────────────────────────────────────────────────────────
+
+  A1) Convenção URDF vs Denavit-Hartenberg
+      Substituir a apresentação puramente DH por uma seção que apresente
+      AMBAS as convenções e a relação entre elas:
+        T_joint(URDF) = T_origin · Rz(q)
+        T_origin = Translation(xyz) · R_rpy(roll, pitch, yaw)
+      Justificar a escolha da convenção URDF: ela é a convenção nativa
+      do ROS 2 e elimina a necessidade de offsets ad-hoc nas juntas 2 e 4.
+
+  A2) Cinemática inversa por DLS (Damped Least Squares)
+      Acrescentar a fundamentação teórica do método DLS com λ adaptativo
+      (Wampler 1986, Chiaverini 1994). Atualmente o TCC fala só de IK
+      analítica — o sistema usa também refinamento numérico DLS:
+        Δq = J^T (J J^T + λ² I)^(-1) Δx
+      Com decay exponencial 0.06 → 0.003 para escapar de regiões singulares
+      sem oscilar perto da solução.
+
+  A3) Decomposição de pulso (wrist) por extração de Euler
+      Apresentar a fórmula analítica:
+        q4 = atan2(-r12/s5, -r02/s5) + π/2     (offset URDF)
+        q5 = atan2(s5, r22)
+        q6 = atan2(-r21/s5, r20/s5)
+      e a estratégia de testar ambos os sinais de q5 escolhendo a solução
+      de menor erro angular — base do refinamento desacoplado.
+
+  A4) Acoplamento mão↔flange e definição de TCP
+      Seção nova: o TCP de um manipulador antropomórfico não é o flange,
+      mas o ponto onde os dedos efetivamente fecham. Formalizar:
+        T_world_TCP = T_world_Link6 · T_HAND_ATTACH
+      Onde T_HAND_ATTACH é projetado de modo que:
+        (i)  o eixo z do TCP coincida com a direção principal dos dedos
+             (no caso COVVI: hand_y, após o acoplamento Rx(π/2)),
+        (ii) a origem do TCP fique no PONTO DE CONVERGÊNCIA dos fingertips
+             em configuração fechada (calibrado pela hand_fk).
+      Discutir a importância dessa escolha: simplifica a parametrização do
+      grasp e garante que a IK trabalha com o ponto real de captura.
+
+  A5) Rotação de Rodrigues (junta Rotate do polegar)
+      O polegar da COVVI possui acoplamento composto: um chassis que rotaciona
+      sobre eixo arbitrário (~ -hand_y) por mimic_factor=1.534·Rotate, e em
+      seguida a cadeia 2-link do dedo. Apresentar a fórmula de Rodrigues:
+        v' = v·cos(θ) + (k × v)·sin(θ) + k·(k·v)·(1−cos(θ))
+      e mostrar que sem ela o polegar fica estático em FK aproximada — o que
+      mascara o oposicionamento real necessário para grasps de precisão.
+
+  A6) Tipos de preensão antropomórficos
+      Acrescentar referência à taxonomia de Cutkosky (1989) e classificar
+      os três grasps usados:
+        - palm_grip (cilíndrico de força)  →  frasco r=42 mm
+        - claw_grip (precisão lateral)     →  tubo r=12 mm
+        - fingertip_grip (precisão fina)   →  ampola r=5 mm
+      Discutir limitação geométrica: a envergadura `hand_x` da COVVI (~50 mm)
+      define o menor diâmetro pinçável de modo cirúrgico.
+
+  A7) Estratégia de approach lateral vs top-down
+      Discutir as duas estratégias e justificar a escolha do lateral para
+      este sistema. Vantagem geométrica: o eixo da COVVI alinha-se ao do
+      cilindro, permitindo wrap-around com palma oposta ao polegar (power
+      grasp clássico). Citar Cutkosky (1989) para classificação e Mason
+      & Salisbury (1985) para fundamentos de pinça de precisão.
+
+  ────────────────────────────────────────────────────────────────────────
+  B) METODOLOGIA — alterações e adições
+  ────────────────────────────────────────────────────────────────────────
+
+  B1) Atualizar arquitetura de software
+      Diagrama de blocos: 5 nós ROS 2 + duas GUIs (gui_control automática e
+      manual_control com sliders + ciclo de pick em 4 fases). Atualizar o
+      texto que ainda menciona apenas 7 fases — descrever os dois caminhos
+      (autônomo via /cell/execute_grasp e manual via aba Célula).
+
+  B2) Substituir a seção de IK ao incluir DLS
+      Onde o texto fala apenas em "IK geométrica", reescrever:
+        - Palpite inicial geométrico (14 candidatos: q1±0.7 rad × 2 ramos)
+        - Decomposição analítica do pulso URDF (offset −π/2 em joint 4)
+        - Refinamento DLS desacoplado: 4 ciclos de (DLS 3-DOF braço +
+          recálculo do pulso) seguidos de 100 iterações 6-DOF
+        - Critério de aceitação: |Δp|<3 mm e |Δθ|<0.05 rad
+        - Branch-locking: rejeição se |Δj1|>60° ou |Δj2|>60° vs semente.
+
+  B3) Substituir/expandir a seção de Cinemática da Mão
+      Sub-seção "FK 3D da mão COVVI": apresentar a função hand_fk e como ela
+      é usada para CALIBRAR pick_z (não chutado). Mostrar a equação de
+      mapeamento (xh, yh, zh)_hand → (xL, -zh, yh)_Link6 (consequência do
+      Rx(π/2)). Incluir a tabela de MCPs em hand_base_link e a fórmula de
+      Rodrigues para o thumb_chassis.
+
+  B4) Adicionar seção "Definição do ponto de captura"
+      Para cada objeto, derivar geometricamente o TCP target a partir de:
+        - posição XYZ do centro do objeto na esteira (world frame)
+        - hand_fk em configuração fechada → grasp_center em hand_y
+        - hand_z deslocamento de curl → ajuste em hand_origin_X
+        - raio do cilindro → offset para encostar superfície
+      Mostrar a fórmula final:
+        target = (Ox + curl_z, Oy + (0.115 − grasp_y), Oz)
+      e a tabela com os três alvos calibrados.
+
+  B5) Atualizar seção do "ciclo de execução"
+      Acrescentar o ciclo manual de 4 fases (approach lateral → desce → fecha
+      → sobe) com diagrama de estados. Para cada fase, descrever:
+        - waypoint do TCP (em SI)
+        - tempo previsto (parametrizável pelo slider duração)
+        - gatilho de transição (timer, contato, fim de trajetória).
+
+  B6) Atualizar seção de "Detecção de colisão"
+      Documentar o sistema de prevenção: AABB de cada link do braço + AABB
+      da palma e fingertips, varredura linear no espaço articular, parada
+      antes do obstáculo com margem AABB (20 mm braço / 10 mm dedos). Citar
+      Khatib (1986) para fundamentos de campos potenciais artificiais como
+      referência.
+
+  B7) Atualizar URDF de acoplamento
+      Mencionar que o acoplamento `hand_attach_joint` foi alterado de
+      xyz="0 0 0.01" para xyz="0 0 0" (flush). T_HAND_ATTACH foi
+      redefinida para alinhar TCP_z com a direção dos dedos.
+
+  ────────────────────────────────────────────────────────────────────────
+  C) RESULTADOS — pontos a documentar
+  ────────────────────────────────────────────────────────────────────────
+
+  C1) Convergência da IK (com gráfico)
+      Apresentar tabela com erro de posição (mm) por pose calibrada:
+        approach lateral        — err ≈ 1.9 mm
+        pick frasco             — err ≈ 0.5 mm
+        pick tubo               — err ≈ 2.5 mm
+        pick ampola             — err ≈ 1.0 mm
+        delivery box1/2/3       — err < 3 mm cada
+      Gráfico recomendado: histograma de erros em N=100 chamadas de IK
+      randomizadas no workspace alcançável.
+
+  C2) Tabela de contato dos fingertips por objeto
+      Coluna por dedo, linha por objeto, valor = distância do fingertip à
+      superfície do cilindro (mm) extraída de hand_fk + pose IK:
+        Frasco (r=42 mm): Index/Middle/Ring em contato (±6 mm), Little
+                          a 19 mm, Thumb opondo (~50 mm operador)
+        Tubo   (r=12 mm): Ring em contato (3 mm), 3 outros a 10-15 mm
+        Ampola (r=5 mm):  4 longs a 10-21 mm, Thumb opondo (~80 mm)
+      Discutir limitação geométrica para r<10 mm com palm grip top-down.
+
+  C3) Tempo de ciclo manual (4 fases) e autônomo (7 fases)
+      Medir empiricamente a duração total de cada ciclo com slider em
+      2.0 s. Comparar com baseline de operação manual humana de prótese
+      MGL (citações se disponíveis).
+
+  C4) Taxa de sucesso por objeto em N tentativas
+      Para cada objeto, executar 20+ ciclos com pequena perturbação na
+      pose de spawn (±5 mm em X, ±3 mm em Y) e reportar:
+        - frasco: % de grasps com objeto deslocado < 10 mm da pose final
+        - tubo:   % idem (mais sensível)
+        - ampola: % idem (mais sensível ainda)
+      Comparar com hipótese: grasp por fricção em objetos finos
+      (tubo/ampola) tem variância maior que grasp por wrap (frasco).
+
+  C5) Validação visual da hand_fk vs Gazebo
+      Sobrepor pontos de fingertip retornados por hand_fk às imagens RViz
+      do Gazebo nas três configurações de grasp. Mostrar a coerência do
+      modelo cinemático com o estado físico simulado.
+
+  C6) Sistema de prevenção de colisão — eficácia
+      Reportar incidentes evitados em N execuções: contagem de comandos
+      bloqueados, tipo de obstáculo previsto, tempo médio do braço
+      bloqueado antes do recolhimento.
+
+  C7) Resultado do experimento — três imagens lado-a-lado
+      Recomendar: figura única com frasco, tubo e ampola sendo agarrados
+      em close-up no Gazebo, com o ciclo manual completo da GUI ao lado
+      indicando a fase atual. Referenciar as imagens já renomeadas em
+      images/:
+         gui_cell_tab_with_gazebo.png
+         gazebo_hand_lateral_approach_a.png
+         gazebo_hand_lateral_approach_b.png
+
+  ────────────────────────────────────────────────────────────────────────
+  D) DISCUSSÃO / CONCLUSÃO — pontos a destacar
+  ────────────────────────────────────────────────────────────────────────
+
+  D1) Validade do gêmeo digital como apoio ao treinamento MGL
+      Argumentar que o ambiente reproduz com precisão sub-3 mm o
+      comportamento cinemático real da mão+braço e portanto é adequado
+      para o aprendizado da associação objeto↔preensão SEM o dispositivo
+      físico — alvo central do TCC. Reforçar a integração com a mão
+      COVVI real via ECI (mesma camada de comando).
+
+  D2) Trade-off entre genericidade da IK e qualidade do grasp
+      O método multi-start + branch-locking garante convergência sub-3 mm
+      em todos os alvos testados, mas exige semente de pose conhecida
+      para cada ramo. Discutir alternativas futuras (RRT-Connect,
+      Bi-RRT*) para automatização sem semente em workspace mais amplo.
+
+  D3) Limitação geométrica da COVVI para objetos finos
+      Documentar honestamente: a envergadura hand_x ≈ 50 mm limita o
+      fingertip pinch top-down em cilindros com diâmetro << 50 mm. A
+      solução adotada (approach lateral + wrap-around) recupera o grasp
+      por wrap-around com palma oposta ao polegar (power grasp), mas o
+      contato em objetos < 12 mm de raio é por FRICÇÃO, não pinch
+      cirúrgico. Mencionar trabalhos futuros: trocar de configuração de
+      grasp por análise de superfície (machine learning sobre nuvem de
+      pontos), ou customizar a mão COVVI para inserir polegar em
+      oposição direta.
+
+  D4) Pipeline de transferência sim-to-real
+      Demonstrar que o mesmo `manual_control_node` envia comandos
+      simultâneos ao Gazebo e à mão física via ECI (covvi_hand_driver).
+      Citar como evidência de validade do gêmeo digital — não há "salto"
+      de modelo entre simulação e prática.
+
+  D5) Adequação ao usuário-fim (treinamento)
+      Concluir destacando a aba "Célula" da GUI como interface DIDÁTICA
+      para o terapeuta operando o treinamento: botões claros por objeto,
+      fases anunciadas em texto, indicadores de contato visíveis. O
+      sistema pode evoluir para um protocolo experimental com usuários
+      reais (próxima fase do TCC).
+
+  D6) Próximos passos sugeridos
+      - Integração com IMU/EMG do usuário (decisão de grasp por intenção)
+      - Variação de objetos via spawn paramétrico (já parcialmente em
+        place no conveyor_controller — basta expor diâmetros como param)
+      - Validação experimental com usuários protetizados (IRB/Comitê de
+        Ética)
+      - Métrica objetiva de "qualidade de aprendizado": número de
+        tentativas até primeiro grasp bem-sucedido, tempo de
+        decisão objeto↔preensão.
+
+  ────────────────────────────────────────────────────────────────────────
+  E) FIGURAS RECOMENDADAS NO TEXTO DO TCC (referências por nome de arquivo)
+  ────────────────────────────────────────────────────────────────────────
+
+      images/conveyor_cell_gazebo_full_scene.png        — visão geral
+      images/conveyor_cell_gazebo_closeup_bins.png      — caixas de destino
+      images/gui_jog_tab_full.png                       — aba Jog (Braço)
+      images/gui_hand_tab_full.png                      — aba Mão COVVI
+      images/gui_cell_tab_with_gazebo.png               — aba Célula + sim
+      images/gui_cell_tab_with_pick_camera.png          — Célula + câmera
+      images/gui_hand_tab_with_gazebo_ampola.png        — mão posicionada
+      images/gui_hand_tab_with_rviz.png                 — mão + RViz
+      images/gazebo_arm_above_pick_station.png          — braço em approach
+      images/gazebo_arm_descending_to_object.png        — desce ao objeto
+      images/gazebo_hand_lateral_approach_a.png         — close lateral A
+      images/gazebo_hand_lateral_approach_b.png         — close lateral B
+      images/covvi_hand_cad_fingers_extended.png        — CAD do dedo
+      images/covvi_hand_3d_design_internal.png          — anatomia interna
+      images/covvi_hand_rviz_joints_open.png            — RViz aberto
+      images/covvi_hand_rviz_joints_closed.png          — RViz fechado
+      images/palmGrip.png                               — palm grip (gif/png)
+      images/claw.png                                   — claw grip
+      images/fingertip.png                              — fingertip grip
+      images/legacy_gui_dark_theme.png                  — versão antiga (hist.)
+      images/legacy_gui_dark_theme_with_frasco.png      — versão antiga (hist.)

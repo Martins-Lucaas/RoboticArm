@@ -206,15 +206,15 @@ _WORLD_OBSTACLES: dict[str, tuple] = {
 }
 
 # Offset vertical entre TCP e centro do objeto preso (TCP_world − obj_center).
-# Calculado a partir de `pick_z − obj_center` para cada classe — o objeto
-# fica logo abaixo do TCP, em torno do qual os dedos se fecham.
-#   frasco: 0.866 − 0.851 = 0.015 m
-#   tubo:   0.896 − 0.866 = 0.030 m
-#   ampola: 0.851 − 0.844 = 0.007 m
+# Com T_HAND_ATTACH alinhado ao fingertip fechado, o TCP fica exatamente onde
+# os dedos envolvem o objeto, então:
+#   frasco: pick_z (0.851) = obj_center → 0.000 m
+#   tubo:   pick_z (0.866) = obj_center → 0.000 m
+#   ampola: pick_z (0.881) = obj_top    → +0.038 m (centro 38 mm abaixo do TCP)
 _HELD_OFFSET_Z: dict[str, float] = {
-    'frasco': 0.015,
-    'tubo':   0.030,
-    'ampola': 0.007,
+    'frasco': 0.000,
+    'tubo':   0.000,
+    'ampola': 0.038,
 }
 
 

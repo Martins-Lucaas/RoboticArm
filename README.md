@@ -56,11 +56,40 @@ Base de treinamento para usuários de próteses de mão de múltiplos graus de l
 > [!NOTE]
 > Esteira transportadora à direita, braço CR10 com mão COVVI ao centro, três caixas de classificação (vermelha/verde/azul) à esquerda. Coluna de câmera montada atrás da esteira.
 
-### 🖥️ GUI de controle + visão da câmera
+### 🖥️ GUI Manual Control (tema claro CRStudio)
 
-| Estado ocioso — objeto na pick station | Braço estendido em fase de grasp |
+A GUI foi reescrita em **três abas**: jogger articular do braço, controle individual da mão COVVI e células completas de pick/entrega.
+
+| Aba **Jog (Braço)** — sliders + presets + approach manual | Aba **Mão COVVI** — sliders + grips projeto/ECI |
 |:---:|:---:|
-| ![GUI Idle](images/conveyor_cell_gui_camera_idle.png) | ![GUI Picking](images/conveyor_cell_gui_arm_picking.png) |
+| ![GUI Jog](images/gui_jog_tab_full.png) | ![GUI Hand](images/gui_hand_tab_full.png) |
+
+| Aba **Célula** — spawn + ciclo completo + entrega | Aba Mão com Gazebo lado-a-lado |
+|:---:|:---:|
+| ![GUI Cell](images/gui_cell_tab_with_gazebo.png) | ![GUI Hand + Gazebo](images/gui_hand_tab_with_gazebo_ampola.png) |
+
+| Aba Mão com câmera RViz | Aba Célula com câmera de pick |
+|:---:|:---:|
+| ![GUI Hand + RViz](images/gui_hand_tab_with_rviz.png) | ![GUI Cell + Camera](images/gui_cell_tab_with_pick_camera.png) |
+
+> [!TIP]
+> O ciclo completo de pick é executado pelos botões coloridos da aba **Célula** (`Pick: Frasco/Tubo/Ampola`). Cada um executa 4 fases — *approach lateral → desce até o objeto → fecha a mão → sobe* — usando IK e FK calibradas via `hand_fk` da `kinematics.py`. O botão **Entregar** completa o ciclo levando o objeto à caixa correspondente, abrindo a mão e voltando à pose de aproximação.
+
+### 🤖 Approach lateral e grasp por geometria de mão
+
+Para que os 5 dedos da COVVI **abracem efetivamente** os cilindros da esteira, o approach do TCP foi configurado **lateral** (de −Y para +Y), com:
+
+- `hand_x` vertical → polegar acima, dedo mínimo abaixo (envergadura ≈ 50 mm)
+- `hand_y` apontando ao objeto → dedos estendidos +Y
+- `hand_z` virado ao operador → palma "encara" −X, dedos curvam *atrás* do cilindro
+
+| Approach lateral em close | Hand curvando atrás do tubo |
+|:---:|:---:|
+| ![Lateral A](images/gazebo_hand_lateral_approach_a.png) | ![Lateral B](images/gazebo_hand_lateral_approach_b.png) |
+
+| Braço acima da pick station | Aproximação do objeto |
+|:---:|:---:|
+| ![Above](images/gazebo_arm_above_pick_station.png) | ![Descending](images/gazebo_arm_descending_to_object.png) |
 
 ### 🎯 Detalhe da célula — caixas de classificação
 
@@ -77,6 +106,14 @@ Base de treinamento para usuários de próteses de mão de múltiplos graus de l
 | RViz — dedos abertos | RViz — dedos fechados |
 |:---:|:---:|
 | ![Aberta](images/covvi_hand_rviz_joints_open.png) | ![Fechada](images/covvi_hand_rviz_joints_closed.png) |
+
+### 🕰️ Versão anterior da GUI (tema escuro)
+
+> Mantida apenas como referência histórica — a interface atual segue o estilo CRStudio em tema claro.
+
+| Versão antiga (dark) — picks manuais | Versão antiga com frasco preso |
+|:---:|:---:|
+| ![Legacy GUI](images/legacy_gui_dark_theme.png) | ![Legacy Frasco](images/legacy_gui_dark_theme_with_frasco.png) |
 
 ---
 
@@ -152,9 +189,11 @@ Pipeline com 5 nós ROS 2 e duas GUIs alternativas:
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 🔄 Ciclo de grasp — 7 fases
+### 🔄 Ciclo de grasp
 
-Cada chamada de `/cell/execute_grasp` executa, depois de resolver IK para todos os waypoints:
+Dois caminhos coexistem:
+
+**1. Pipeline autônomo** (`/cell/execute_grasp`) — 7 fases articulares + Cartesianas:
 
 | Fase | Movimento | Tipo |
 |:---:|:---|:---:|
@@ -168,6 +207,20 @@ Cada chamada de `/cell/execute_grasp` executa, depois de resolver IK para todos 
 
 > [!TIP]
 > A trajetória usa **ease-in/out sinusoidal** com 8 waypoints por segmento articular e 6 waypoints Cartesianos. Validação **AABB** contra `_WORLD_OBSTACLES` (esteira, pedestal, paredes, prateleira de sort) é feita pelo executor antes de enviar qualquer trajetória.
+
+**2. Ciclo manual da GUI** (`manual_control`, aba **Célula**) — 4 fases simples por botão de objeto:
+
+| Fase | Ação | Detalhe |
+|:---:|:---|:---|
+| **1/4** | Abre a mão + braço vai para **approach lateral** | TCP em `(0.75, −0.135, 0.85)`, fingers extended em +Y |
+| **2/4** | Braço desce para a pose de grasp do objeto | `(0.748, +0.065, 0.851)` frasco · `(0.770, +0.065, 0.866)` tubo · `(0.770, +0.065, 0.844)` ampola |
+| **3/4** | Smart-close incremental no grip correto | Detecção de contato via FK dos fingertips vs AABB do objeto |
+| **4/4** | Braço sobe de volta ao approach | Saída com o objeto preso |
+
+O botão **Entregar** (mesma aba) executa: move para a caixa de destino → abre a mão → retorna ao approach.
+
+> [!NOTE]
+> A IK do ciclo manual usa `approach_vec=(0,1,0)` (lateral). Os alvos de pick são derivados de `hand_fk` — o módulo `kinematics.py` traça em SI a posição de cada dedo, palma e MCP, e o `_solve_pose` calibra `hand_origin` para que os fingertips encostem na superfície real do cilindro.
 
 ---
 
@@ -193,7 +246,18 @@ T_origin = Translation(xyz) × R_rpy(roll, pitch, yaw)
 | joint5 | `(0, -0.125, 0)` | `(π/2, 0, 0)` |
 | joint6 | `(0, 0.1084, 0)` | `(-π/2, 0, 0)` |
 
-`T_HAND_ATTACH` posiciona o TCP **75 mm abaixo do flange Link6**, no centro da zona onde os dedos COVVI se fecham — não no acoplamento `hand_base_link`. Isso garante que a IK trabalhe com o ponto real de captura.
+`T_HAND_ATTACH` (atualizada) é **rotação identidade + translação `(0, 0, 0.115)` em frame `Link6`**:
+
+```python
+T_HAND_ATTACH = np.array([
+    [1, 0, 0, 0    ],
+    [0, 1, 0, 0    ],
+    [0, 0, 1, 0.115],   # 115 mm — fingertip convergence point
+    [0, 0, 0, 1    ],
+])
+```
+
+A escolha alinha o eixo do approach (`TCP_z`) com a **direção dos dedos** (`+hand_y`, dado o acoplamento URDF `Rx(π/2)`): com `approach_vec=(0,0,-1)` os dedos apontam para baixo; com `approach_vec=(0,1,0)` para frente (lateral). Isso garante que a IK trabalhe com o **ponto de fechamento dos fingertips**, e não no flange.
 
 ### Cinemática Inversa (IK)
 
@@ -202,6 +266,7 @@ T_origin = Translation(xyz) × R_rpy(roll, pitch, yaw)
 1. **Multi-start geométrico**: 14 palpites por chamada — varredura de `q1` ±0.7 rad para ambos os ramos de cotovelo, mais o `q_seed` se fornecido.
 2. **Wrist analítico**: extrai `q4_urdf = θ4_DH − π/2` (offset URDF) testando os dois sinais de `q5`.
 3. **Refinamento DLS desacoplado**: 4 ciclos de (DLS 3-DOF braço + recálculo analítico do pulso) seguidos de 100 iterações DLS 6-DOF com `λ` adaptativo (decay exponencial 0.06 → 0.003).
+4. **Branch-locking** (no `manual_control_node._solve_pose`): se o IK global voltar com `|Δj1| > 60°` ou `|Δj2| > 60°` em relação à semente, força `_ik_refine` direto da semente para não trocar de ramo (wrist-flipped, shoulder-back).
 
 Limites articulares em convenção URDF (joints 2 e 4 com offset de −π/2 em relação ao DH):
 ```
@@ -229,7 +294,18 @@ ros2 run grasp_ml_pack test_kin
 Resultado geral: PASS ✓
 ```
 
+Validação on-the-fly do `manual_control_node._compute_pick_targets` (approach lateral, T_HAND_ATTACH atualizada):
+
+```
+approach  TCP=(0.75, −0.135, 0.85) — err≈1.9 mm
+frasco    TCP=(0.748, +0.065, 0.851) — err≈0.5 mm — 3 dedos em CONTACT (Index/Middle/Ring), Little a 19 mm
+tubo      TCP=(0.770, +0.065, 0.866) — err≈2.5 mm — Ring em CONTACT (3 mm), demais 10–15 mm da superfície
+ampola    TCP=(0.770, +0.065, 0.844) — err≈1.0 mm — 4 dedos longos abraçando a 10–21 mm
+```
+
 ### Cinemática da Mão COVVI
+
+#### Inversa por grasp
 
 `hand_ik(grasp_type, obj_diameter)` retorna o dicionário `{Thumb, Index, Middle, Ring, Little, Rotate}` em rad. Tipos definidos em `HAND_CONFIGS`:
 
@@ -241,6 +317,25 @@ Resultado geral: PASS ✓
 | `fingertip_grip` | Ampola (Box 3) |
 
 O atuador da mão tem 31 juntas no Gazebo (6 primárias + 25 mimic). Os multiplicadores de mimic vêm direto do URDF e ficam em `grasp_executor.py::_MIMIC_MAP`.
+
+#### Direta 3D — `hand_fk(hand_state)`
+
+Função adicionada ao `kinematics.py` que devolve, para um `hand_state` de 6 valores, as **posições em SI (metros) de todos os dedos, MCPs e palma** no frame `hand_base_link`:
+
+```python
+fks = hand_fk({'Thumb': 1.5, 'Index': 1.5, ..., 'Rotate': 0.8})
+fks['tip_Index']   # (3,) — ponta do indicador
+fks['mcp_Thumb']   # (3,) — MCP do polegar APÓS rotação do chassis
+fks['palm_center'] # (3,) — centróide dos 5 MCPs
+```
+
+Particularidades:
+
+- **Rodrigues no chassis do polegar** — o `Rotate` (junta primária) gira o `thumb_chassis` em torno de `−hand_y` via `mimic = 1.534 · Rotate`. Sem isso o polegar fica estático.
+- **Modelo planar 2-link nos dedos** — `finger_fk(driver_angle)` retorna `(x, 0, z)` no plano do dedo, mapeados em `(mx, my+x, mz+z)` em `hand_base_link`.
+- **Helper `grasp_center_in_hand(hand_state, grip_type)`** — centróide dos fingertips relevantes (Thumb+Index para fingertip, Thumb+Index+Middle para claw, todos+palm para palm).
+
+Usado pelo `manual_control_node._solve_pose` para escolher `hand_origin` de modo que a *grasp center* coincida com a superfície do cilindro alvo.
 
 ---
 
