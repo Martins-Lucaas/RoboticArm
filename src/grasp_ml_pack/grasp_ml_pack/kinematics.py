@@ -45,24 +45,19 @@ _A3 = 0.5680   # joint3 → joint4 link length
 
 # Transformação fixa flange → ponto de preensão (TCP efetivo) na palma COVVI.
 #
-# Acoplamento URDF Link6 → hand_base_link: xyz="0 0 0.01" rpy="π/2 0 0".
+# Acoplamento URDF Link6 → hand_base_link: xyz="0 0 0" rpy="π/2 0 0" (flush).
 # Em configuração palm-down (q_pick padrão), Link6_y aponta para +world_Z.
 #
-# A correção crítica: o TCP DEVE coincidir com a região onde os dedos fecham
-# em torno do objeto, não com hand_base_link nem com um ponto fantasma.
-# Análise geométrica COVVI (verificada por FK):
-#   • hand_base_link world Z ≈ Link6 world Z (acoplamento na lateral)
+# O TCP coincide com a região onde os dedos fecham em torno do objeto.
+# Geometria COVVI (verificada por FK):
+#   • hand_base_link world Z ≈ Link6 world Z (acoplamento flush)
 #   • Index MCP world Z = Link6 world Z + 0.015   (dedo nasce 15 mm acima)
 #   • Fingertip fechado world Z = MCP − 0.067     (curl efetivo)
 #                              = Link6 world Z − 0.052
-#
-# Portanto, com TCP definido como `(0, -0.052, 0.01)` no frame do Link6, o
-# ponto IK passa pela zona de preensão real. O usuário define `pick_z` como
-# o centro do objeto (belt_top + h/2) e os dedos fechados envolvem o objeto.
 T_HAND_ATTACH = np.array([
     [1.0,  0.0,  0.0,  0.000],
     [0.0,  0.0, -1.0, -0.075],   # 75 mm — TCP entre palma e fingertips
-    [0.0,  1.0,  0.0,  0.010],
+    [0.0,  1.0,  0.0,  0.000],
     [0.0,  0.0,  0.0,  1.000],
 ], dtype=float)
 
@@ -533,8 +528,8 @@ HAND_CONFIGS: dict[str, dict[str, float]] = {
         'Ring':  1.05, 'Little': 0.95, 'Rotate': 0.45,
     },
     'fingertip_grip': {
-        'Thumb': 0.75, 'Index': 0.70, 'Middle': 0.65,
-        'Ring':  0.05, 'Little': 0.05, 'Rotate': 0.82,
+        'Thumb': 0.85, 'Index': 0.80, 'Middle': 0.00,
+        'Ring':  0.00, 'Little': 0.00, 'Rotate': 0.82,
     },
 }
 

@@ -75,11 +75,14 @@ def _build_gazebo_urdf():
             f'</gazebo>'
         )
 
+    # Acoplamento flush: a face de montagem da mão coincide com a origem
+    # do Link6 (centro do flange). Rx(+90°) alinha o eixo Y da mão com o
+    # eixo Z do flange para a mão se estender axialmente ao pulso.
     coupling_joint = """
   <joint name="hand_coupling" type="fixed">
     <parent link="Link6"/>
     <child link="hand_base_link"/>
-    <origin xyz="0 0 0.01" rpy="1.5708 0 0"/>
+    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
   </joint>
 """
     combined = cr10_urdf.replace(

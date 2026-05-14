@@ -521,9 +521,15 @@ class GraspExecutorNode(Node):
         self.declare_parameter('sim_only', True)
         self.declare_parameter('pick_x', 0.65)
         self.declare_parameter('pick_y', 0.00)
-        self.declare_parameter('pick_z_frasco', 0.916)
-        self.declare_parameter('pick_z_tubo',   0.946)
-        self.declare_parameter('pick_z_ampola', 0.913)
+        # Recalibrado para T_HAND_ATTACH flush (acoplamento sem 1cm de offset).
+        # pick_z = world Z do TCP (ponto de convergência dos fingertips), escolhido
+        # para que o grasp envolva corretamente cada objeto:
+        #   frasco — TCP no centro do cilindro (palm grip envolve r=42mm)
+        #   tubo   — TCP no centro do cilindro (claw grip envolve r=12mm)
+        #   ampola — TCP no topo do cilindro  (fingertip pinch de cima)
+        self.declare_parameter('pick_z_frasco', 0.851)
+        self.declare_parameter('pick_z_tubo',   0.866)
+        self.declare_parameter('pick_z_ampola', 0.881)
         self.declare_parameter('box1_x', -0.05)
         self.declare_parameter('box1_y',  0.65)
         self.declare_parameter('box1_z',  0.60)
