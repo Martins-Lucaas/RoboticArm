@@ -52,7 +52,7 @@ _SDF_FRASCO = """\
     <collision name="collision">
       <geometry><cylinder><radius>0.042</radius><length>0.090</length></cylinder></geometry>
       <surface>
-        <friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction>
+        <friction><ode><mu>1.5</mu><mu2>1.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
         <contact><ode><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
       </surface>
     </collision>
@@ -81,7 +81,7 @@ _SDF_TUBO = """\
     <collision name="collision">
       <geometry><cylinder><radius>0.012</radius><length>0.120</length></cylinder></geometry>
       <surface>
-        <friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction>
+        <friction><ode><mu>1.5</mu><mu2>1.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
         <contact><ode><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
       </surface>
     </collision>
@@ -110,7 +110,7 @@ _SDF_AMPOLA = """\
     <collision name="collision">
       <geometry><cylinder><radius>0.005</radius><length>0.075</length></cylinder></geometry>
       <surface>
-        <friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction>
+        <friction><ode><mu>1.5</mu><mu2>1.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
         <contact><ode><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
       </surface>
     </collision>

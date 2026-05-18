@@ -32,9 +32,18 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from vision_msgs.msg import Detection2DArray
+try:
+    from tf2_ros import TransformBroadcaster
+    from geometry_msgs.msg import TransformStamped
+    _TF_OK = True
+except ImportError:
+    _TF_OK = False
+    TransformBroadcaster = None
+    TransformStamped = None
 
 # Sistema de colisão — reusa AABBs calibrados do grasp_executor.
 # Se o import falhar (rodando fora do workspace compilado), o sistema
@@ -314,201 +323,58 @@ MIMIC_JOINTS = [
     ('_little_link_j01',     'Little', 1.31664159359670),
 ]
 
-MAX_RAD = {'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
-           'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0}
+# Fonte única de poses e grips: poses.py (SDD §5).
+from .poses import (
+    ARM_JOINTS as _POSES_ARM_JOINTS,
+    HAND_JOINTS as _POSES_HAND_JOINTS,
+    ARM_LIMITS_DEG as _POSES_ARM_LIMITS_DEG,
+    MAX_RAD as _POSES_MAX_RAD,
+    ARM_PRESETS_BASE as _POSES_ARM_PRESETS_BASE,
+    APPROACH_VEC_BY_OBJ as _POSES_APPROACH_VEC_BY_OBJ,
+    PRE_APPROACH_TCP_WORLD as _POSES_PRE_APPROACH_TCP_WORLD,
+    APPROACH_TCP_WORLD_BY_OBJ as _POSES_APPROACH_TCP_WORLD_BY_OBJ,
+    PICK_TCP_WORLD as _POSES_PICK_TCP_WORLD,
+    DELIVERY_XY_WORLD as _POSES_DELIVERY_XY_WORLD,
+    DELIVERY_Z_WORLD as _POSES_DELIVERY_Z_WORLD,
+    FALLBACK_PRE_APPROACH_DEG as _POSES_FALLBACK_PRE_APPROACH_DEG,
+    FALLBACK_APPROACH_DEG_BY_OBJ as _POSES_FALLBACK_APPROACH_DEG_BY_OBJ,
+    FALLBACK_PICK_DEG as _POSES_FALLBACK_PICK_DEG,
+    FALLBACK_DELIVERY_DEG as _POSES_FALLBACK_DELIVERY_DEG,
+    HAND_GRIPS as _POSES_HAND_GRIPS,
+    HAND_PRESHAPE as _POSES_HAND_PRESHAPE,
+    HAND_OPEN as _POSES_HAND_OPEN,
+    HAND_EXTRA_POSES as _POSES_HAND_EXTRA_POSES,
+    OBJ_GRIP as _POSES_OBJ_GRIP,
+    OBJ_APPROACH_DESC as _POSES_OBJ_APPROACH_DESC,
+    PHASE_NAMES as _POSES_PHASE_NAMES,
+    PRE_APPROACH_POSES_DEG as _POSES_PRE_APPROACH_POSES_DEG,
+    APPROACH_POSES_DEG as _POSES_APPROACH_POSES_DEG,
+    PICK_POSES_DEG as _POSES_PICK_POSES_DEG,
+    DELIVERY_POSES_DEG as _POSES_DELIVERY_POSES_DEG,
+    APPROACH_POSE_DEG as _POSES_APPROACH_POSE_DEG,
+)
 
-HAND_JOINTS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
-ARM_JOINTS  = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+MAX_RAD = _POSES_MAX_RAD
+HAND_JOINTS = list(_POSES_HAND_JOINTS)
+ARM_JOINTS  = list(_POSES_ARM_JOINTS)
+ARM_LIMITS_DEG = _POSES_ARM_LIMITS_DEG
+ARM_PRESETS_BASE = _POSES_ARM_PRESETS_BASE
 
-ARM_LIMITS_DEG = {
-    'joint1': (-180, 180), 'joint2': (-260,  80),
-    'joint3': (-135, 135), 'joint4': (-260,  80),
-    'joint5': (-135, 135), 'joint6': (-360, 360),
-}
-
-ARM_PRESETS_BASE = {
-    'Home':      {'joint1':   0, 'joint2':   0, 'joint3':  90,
-                  'joint4': -90, 'joint5': -90, 'joint6':   0},
-    # Vertical: braço estendido para cima com pulso recolhido.
-    'Vertical':  {'joint1':   0, 'joint2':   0, 'joint3':   0,
-                  'joint4': -90, 'joint5': -90, 'joint6':   0},
-    'Estendido': {'joint1':   0, 'joint2':   0, 'joint3': -90,
-                  'joint4':   0, 'joint5':   0, 'joint6':   0},
-}
-
-# ── Geometria do ciclo de pick (world frame, metros) — LATERAL APPROACH ─
-# Pick station em (0.75, 0.0). Belt top em z=0.806.
-#
-# Approach LATERAL: mão se aproxima horizontalmente do lado do operador
-# (-Y) com a palma virada para a frente (+Y), dedos extendidos no eixo
-# +Y. Esse é o grasp natural da COVVI: cilindro deita perpendicular aos
-# dedos, hand_x (largura da palma) fica vertical, e os 4 dedos longos
-# se espalham ao longo do eixo do cilindro (eixo Z mundo). O polegar fica
-# no lado oposto (operador) — power grasp clássico.
-#
-# Eixos com approach_vec=(0,1,0):
-#   hand_x_world = (0, 0,+1)   thumb sobe (acima), little desce (abaixo)
-#   hand_y_world = (0,+1, 0)   dedos apontam +Y (em direção ao objeto)
-#   hand_z_world = (-1,0, 0)   palma normal -X (encara o operador)
-#
-# IK targets por objeto: hand_origin_X escolhido para que os fingertips
-# ENCOSTEM a superfície do cilindro (radius-aware), sem penetração.
-_PICK_XY_WORLD: tuple[float, float] = (0.75, 0.00)
-_APPROACH_VEC = (0.0, 1.0, 0.0)              # lateral, de -Y para +Y
-_APPROACH_TCP_WORLD: tuple = (0.75, -0.135, 0.85)  # 20 cm antes do grasp
-_PICK_TCP_WORLD: dict[str, tuple] = {
-    # (target_X, target_Y, target_Z) do TCP. Derivado de hand_fk:
-    # • target_X = obj_X + curl_offset (≈ hand_z do fingertip mais próximo)
-    # • target_Y = obj_Y + (0.115 - grasp_y_in_hand) ≈ 0.065
-    # • target_Z = obj_center_Z   (hand_x vertical → spread sobre o cilindro)
-    'frasco': (0.748, 0.065, 0.851),  # r=42mm, h=90mm — palm wrap front face
-    'tubo':   (0.770, 0.065, 0.866),  # r=12mm, h=120mm — full cylindrical wrap
-    'ampola': (0.770, 0.065, 0.844),  # r=5mm, h=75mm  — tight wrap, thin object
-}
+# Poses resolvidas (via IK em poses.py com fallbacks). Aliases locais:
+PRE_APPROACH_POSES_DEG = _POSES_PRE_APPROACH_POSES_DEG
+APPROACH_POSES_DEG     = _POSES_APPROACH_POSES_DEG
+PICK_POSES_DEG         = _POSES_PICK_POSES_DEG
+DELIVERY_POSES_DEG     = _POSES_DELIVERY_POSES_DEG
+APPROACH_POSE_DEG      = _POSES_APPROACH_POSE_DEG
 
 
-def _solve_pose(p_world: tuple[float, float, float],
-                q_seed_deg: dict,
-                approach_vec: tuple = _APPROACH_VEC) -> dict | None:
-    """Resolve IK para TCP em `p_world` com abordagem `approach_vec` (lateral
-    +Y por padrão), travando o ramo a partir da semente `q_seed_deg`.
-
-    Se o IK global devolver um ramo diferente da semente (|Δj2|>60° ou
-    |Δj1|>60°), recorre-se ao `_ik_refine` direto da semente para manter
-    a coerência geométrica e evitar wrist-flipped/shoulder-back.
-    """
-    if not _COLLISION_OK or _gx_inverse_kinematics is None:
-        return None
-    p_base = _np.array([p_world[0], p_world[1], p_world[2] - _GX_BASE_Z])
-    approach = _np.array(approach_vec, dtype=float)
-    q_seed = _np.array([math.radians(q_seed_deg[j]) for j in ARM_JOINTS])
-
-    q_global, ok_global = _gx_inverse_kinematics(
-        p_base, approach, q_seed=q_seed, elbow_up=True)
-    branch_ok = (ok_global
-                 and abs(math.degrees(q_global[1]) - math.degrees(q_seed[1])) < 60.0
-                 and abs(math.degrees(q_global[0]) - math.degrees(q_seed[0])) < 60.0)
-
-    if branch_ok:
-        q_final = q_global
-    else:
-        R_tcp = _gx_approach_to_Rtcp(approach)
-        q_final, _ = _gx_ik_refine(p_base, R_tcp, q_seed)
-
-    T = _gx_forward_kinematics(q_final)
-    err_mm = float(_np.linalg.norm(T[:3, 3] - p_base)) * 1000.0
-    if err_mm > 5.0:
-        return None
-    return {j: float(math.degrees(q_final[i])) for i, j in enumerate(ARM_JOINTS)}
-
-
-# Fallbacks (graus) para approach LATERAL — sementes do IK e poses-finais
-# caso o IK não esteja disponível. Calibrados com T_HAND_ATTACH atual e
-# `approach_vec = (0, 1, 0)` (dedos apontando para +Y world):
-_FALLBACK_APPROACH_DEG = {
-    'joint1': -12.3, 'joint2': -25.5, 'joint3': -80.4,
-    'joint4': -74.1, 'joint5': +167.7, 'joint6': +90.0,
-}
-_FALLBACK_PICK_DEG = {
-    # frasco: j5≈+178, j6≈-90 — palm encara o operador, fingers wrap front
-    'frasco': {'joint1':  +2.5, 'joint2': -31.2, 'joint3': -100.1,
-               'joint4': +131.3, 'joint5': +177.5, 'joint6': -90.0},
-    # tubo: j5≈-178, j6≈+90 — branch alternativo, equivalente em TCP
-    'tubo':   {'joint1':  +2.5, 'joint2': -21.0, 'joint3':  -84.9,
-               'joint4':  -74.1, 'joint5': -177.5, 'joint6': +90.0},
-    # ampola: mesmo branch do frasco
-    'ampola': {'joint1':  +2.4, 'joint2': -33.1, 'joint3':  -97.7,
-               'joint4': +130.7, 'joint5': +177.6, 'joint6': -90.0},
-}
-_FALLBACK_DELIVERY_DEG = {
-    'frasco': {'joint1': +108.4, 'joint2': -19.6, 'joint3': -91.3,
-               'joint4':  -69.1, 'joint5': +108.4, 'joint6':  +0.0},
-    'tubo':   {'joint1':  +85.6, 'joint2': -23.2, 'joint3': -86.3,
-               'joint4':  -70.5, 'joint5':  +85.6, 'joint6':  +0.0},
-    'ampola': {'joint1':  +65.8, 'joint2': -36.5, 'joint3': -65.6,
-               'joint4':  -77.9, 'joint5':  +65.8, 'joint6':  +0.0},
-}
-
-# Caixas de entrega — mesma altura e XY que as poses originais (acima do topo).
-_DELIVERY_XY_WORLD = {
-    'frasco': (-0.05, 0.65),
-    'tubo':   ( 0.25, 0.65),
-    'ampola': ( 0.55, 0.65),
-}
-_DELIVERY_Z_WORLD = 0.75   # 15 cm acima do topo das caixas
-
-
-def _compute_pick_targets():
-    """Computa via IK as poses de approach (lateral, -Y → +Y), grasp por
-    objeto e entrega por objeto. Roda uma vez no carregamento do módulo.
-
-    Cadeia de seeds:  approach → frasco → tubo, ampola.  Cada pose usa a
-    anterior como warm-start para garantir branch coerente.
-    """
-    approach_deg = (_solve_pose(_APPROACH_TCP_WORLD,
-                                 q_seed_deg=_FALLBACK_APPROACH_DEG)
-                    or _FALLBACK_APPROACH_DEG)
-
-    pick_deg: dict[str, dict] = {}
-    # Frasco (semeado do approach).
-    pick_deg['frasco'] = (_solve_pose(_PICK_TCP_WORLD['frasco'],
-                                       q_seed_deg=_FALLBACK_PICK_DEG['frasco'])
-                          or _FALLBACK_PICK_DEG['frasco'])
-    # Tubo e ampola — seeds fallback dedicados (cada um pode estar num
-    # branch diferente do frasco, o que é OK).
-    for obj in ('tubo', 'ampola'):
-        pick_deg[obj] = (_solve_pose(_PICK_TCP_WORLD[obj],
-                                      q_seed_deg=_FALLBACK_PICK_DEG[obj])
-                         or _FALLBACK_PICK_DEG[obj])
-
-    delivery_deg: dict[str, dict] = {}
-    for obj in ('frasco', 'tubo', 'ampola'):
-        dx, dy = _DELIVERY_XY_WORLD[obj]
-        # Entrega ainda usa approach top-down (depositar nas caixas).
-        delivery_deg[obj] = (_solve_pose(
-                                  (dx, dy, _DELIVERY_Z_WORLD),
-                                  q_seed_deg=_FALLBACK_DELIVERY_DEG[obj],
-                                  approach_vec=(0.0, 0.0, -1.0))
-                             or _FALLBACK_DELIVERY_DEG[obj])
-    return approach_deg, pick_deg, delivery_deg
-
-
-APPROACH_POSE_DEG, PICK_POSES_DEG, DELIVERY_POSES_DEG = _compute_pick_targets()
-
-
-HAND_OPEN = {j: 0 for j in HAND_JOINTS}
-
-# Grips por objeto — derivados de HAND_CONFIGS (kinematics.py) e
-# convertidos para sliders (0–200). Com T_HAND_ATTACH alinhada com a
-# direção dos dedos, é a CURL TOTAL que aproxima as pontas do objeto:
-#   slider = rad / max_rad * 200, com max_rad=1.6 (dedos) e 1.0 (Rotate).
-#
-# Para os 4 dedos longos (Index/Middle/Ring/Little), curl ≥ 1.10 rad
-# (slider ≥ 138) faz o tip "passar" da vertical e voltar em direção à
-# palma — aperta cilindros até r~40mm. Para r<15mm a geometria da palma
-# (5cm de espalhamento em hand_x) limita a precisão do contato; o grasp
-# real é por fricção em vez de pinch cirúrgico.
-HAND_GRIPS = {
-    'Open':                     HAND_OPEN,
-    # frasco r=42mm: palm grip — 4 dedos longos abraçam a frente do
-    # cilindro, polegar pressiona pelo lado oposto (operador).
-    'Palm Grip (frasco)':       {'Thumb': 138, 'Index': 156, 'Middle': 156,
-                                 'Ring':  150, 'Little': 138, 'Rotate':  50},
-    # tubo r=12mm: fechamento mais apertado, dedos curvam past o cilindro
-    # para realmente "abraçar" o tubo fino.
-    'Claw Grip (tubo)':         {'Thumb': 180, 'Index': 200, 'Middle': 200,
-                                 'Ring':  190, 'Little': 180, 'Rotate': 140},
-    # ampola r=5mm: máximo fechamento + Rotate máximo. Cylinder muito
-    # fino → o grasp é por fricção lateral, não pinch exato.
-    'Fingertip Grip (ampola)':  {'Thumb': 200, 'Index': 200, 'Middle': 200,
-                                 'Ring':  190, 'Little': 180, 'Rotate': 200},
-}
-
-OBJ_GRIP = {
-    'frasco': 'Palm Grip (frasco)',
-    'tubo':   'Claw Grip (tubo)',
-    'ampola': 'Fingertip Grip (ampola)',
-}
+# Aliases locais de poses.py (HAND_GRIPS, HAND_PRESHAPE, OBJ_GRIP, etc.)
+HAND_OPEN          = _POSES_HAND_OPEN
+HAND_GRIPS         = _POSES_HAND_GRIPS
+HAND_PRESHAPE      = _POSES_HAND_PRESHAPE
+HAND_EXTRA_POSES   = _POSES_HAND_EXTRA_POSES
+OBJ_GRIP           = _POSES_OBJ_GRIP
+OBJ_APPROACH_DESC  = _POSES_OBJ_APPROACH_DESC
 
 
 # ── Paleta CRStudio-like (tema claro industrial) ──────────────────────
@@ -562,6 +428,44 @@ def _flat_btn(parent, text, command, *, bg=BTN_NEUTRAL, fg=TEXT,
         btn.config(width=width)
     btn.bind('<Enter>', lambda e: btn.config(bg=hover_bg))
     btn.bind('<Leave>', lambda e: btn.config(bg=bg))
+    return btn
+
+
+def _hdr_btn(parent, icon, label, command, *, bg=BTN_NEUTRAL, fg=TEXT,
+             font=FONT_LBL, padx=12, pady=5):
+    """Botão estilizado para a barra superior: ícone Unicode + label.
+
+    Suporta troca dinâmica de texto/cor via `btn.set_state(icon, label, bg, fg)`.
+    Hover automático sob Enter/Leave.
+    """
+    state = {'bg': bg, 'fg': fg}
+    text = f' {icon}  {label} ' if icon else f' {label} '
+    btn = tk.Button(parent, text=text, command=command,
+                    bg=bg, fg=fg,
+                    activebackground=_shade(bg, -0.08),
+                    activeforeground=fg,
+                    relief='flat', bd=0, padx=padx, pady=pady,
+                    font=font, cursor='hand2',
+                    highlightthickness=0)
+
+    def _on_enter(_e):
+        btn.config(bg=_shade(state['bg'], -0.08))
+
+    def _on_leave(_e):
+        btn.config(bg=state['bg'])
+
+    btn.bind('<Enter>', _on_enter)
+    btn.bind('<Leave>', _on_leave)
+
+    def set_state(icon: str, label: str, bg: str, fg: str = 'white'):
+        state['bg'] = bg
+        state['fg'] = fg
+        new_text = f' {icon}  {label} ' if icon else f' {label} '
+        btn.config(text=new_text, bg=bg, fg=fg,
+                   activebackground=_shade(bg, -0.08),
+                   activeforeground=fg)
+
+    btn.set_state = set_state  # type: ignore[attr-defined]
     return btn
 
 
@@ -624,6 +528,13 @@ class ManualControlNode(Node):
         self.hand_pub = self.create_publisher(
             JointTrajectory, '/hand_position_controller/joint_trajectory', 10)
 
+        # T27: broadcaster do TCP-alvo para RViz
+        self._tf_br = TransformBroadcaster(self) if _TF_OK else None
+
+        # NOTA: o kinematic attach foi removido. O grasp é feito 100%
+        # por contato físico (atrito ODE + esforço dos dedos COVVI).
+        # Os publishers /grasp/attach e /grasp/detach foram removidos.
+
         self._cli = {
             'retreat':       self.create_client(
                 Trigger, '/conveyor/retreat',       callback_group=cb),
@@ -647,6 +558,13 @@ class ManualControlNode(Node):
         self.create_subscription(
             Detection2DArray, '/detected_objects', self._cb_detection, 10,
             callback_group=cb)
+        # Posição articular REAL — usada para sincronizar F5 com a
+        # chegada do braço ao alvo (evita disparar o close enquanto o
+        # braço ainda está em descida na F4).
+        self._js_arm: dict[str, float] = {}
+        self.create_subscription(
+            JointState, '/joint_states', self._cb_joint_state, 50,
+            callback_group=cb)
 
         # ECI real-hand (lazy)
         self._eci_enabled = False
@@ -660,6 +578,9 @@ class ManualControlNode(Node):
         self._eci_msg = None
         self._cli_eci = None
         self._cli_eci_posn = None
+        self._cli_hand_pwr_on = None
+        self._cli_hand_pwr_off = None
+        self._hand_powered: bool = False
 
         # Conexão com o driver ECI (subprocesso `covvi_hand_driver server`)
         self._hand_proc: subprocess.Popen | None = None
@@ -670,8 +591,11 @@ class ManualControlNode(Node):
         # Sequenciador do ciclo de pick / entrega
         self._pick_cycle_after: str | None = None
 
-        # Sistema de colisão: rastreia a última configuração seguramente
-        # publicada para usar como ponto de partida do sweep do braço.
+        # Sistema de colisão: desligado por padrão (operador habilita via
+        # toggle do header quando quiser proteção). O ponto de partida do
+        # sweep é a posição ATUAL dos sliders, não _last_safe_q (corrige
+        # bug de "snap to home" quando bloqueado).
+        self._collision_enabled: bool = False
         if _COLLISION_OK:
             self._last_safe_q = _np.array([
                 math.radians(ARM_PRESETS_BASE['Home'][j]) for j in ARM_JOINTS
@@ -694,6 +618,48 @@ class ManualControlNode(Node):
             self._conveyor_state = json.loads(msg.data)
         except json.JSONDecodeError:
             pass
+
+    def _cb_joint_state(self, msg: JointState):
+        """Atualiza posição real do braço (rad). Usado para gating das
+        fases F2/F4 — não dispara o próximo passo antes do braço chegar.
+        """
+        for n, p in zip(msg.name, msg.position):
+            if n in ARM_JOINTS:
+                self._js_arm[n] = float(p)
+
+    def _arm_settled_at(self, target_deg: dict,
+                          tol_deg: float = 1.5) -> bool:
+        """True se cada joint do braço está a `tol_deg` graus do alvo."""
+        if not self._js_arm:
+            return False
+        for j in ARM_JOINTS:
+            tgt = math.radians(target_deg.get(j, 0.0))
+            cur = self._js_arm.get(j)
+            if cur is None:
+                return False
+            if abs(cur - tgt) > math.radians(tol_deg):
+                return False
+        return True
+
+    def _wait_arm_then(self, target_deg: dict, next_fn,
+                        timeout_ms: int = 8000, tol_deg: float = 1.5,
+                        poll_ms: int = 50):
+        """Agenda `next_fn` quando o braço chega a `target_deg` (com
+        tolerância `tol_deg`). Se o /joint_states ainda não chegou ou se
+        estourar `timeout_ms`, chama `next_fn` mesmo assim (degrade
+        gracioso para timer puro)."""
+        if self._arm_settled_at(target_deg, tol_deg=tol_deg):
+            next_fn()
+            return
+        if timeout_ms <= 0:
+            next_fn()
+            return
+        self._pick_cycle_after = self.root.after(
+            poll_ms,
+            lambda: self._wait_arm_then(
+                target_deg, next_fn,
+                timeout_ms=timeout_ms - poll_ms,
+                tol_deg=tol_deg, poll_ms=poll_ms))
 
     def _cb_detection(self, msg: Detection2DArray):
         if msg.detections:
@@ -815,10 +781,95 @@ class ManualControlNode(Node):
         future = self._cli_eci_posn.call_async(req)
         future.add_done_callback(lambda f: None)
 
+    def _toggle_hand_power(self) -> None:
+        """Liga/desliga a alimentação da mão COVVI via SetHandPowerOn/Off.
+
+        Requer ECI ativo (driver `covvi_hand_driver server` rodando) e o
+        pacote `covvi_interfaces` no workspace sourceado. O LED azul da
+        mão acende quando a alimentação está ligada.
+        """
+        if not self._eci_enabled:
+            self._set_status(
+                'Ligue o ECI primeiro (clique Conectar ou ECI ON).',
+                _CLR=DANGER)
+            return
+        try:
+            import covvi_interfaces.srv as _eci_srv
+        except ImportError:
+            self._set_status(
+                'covvi_interfaces não instalado — source o workspace.',
+                _CLR=DANGER)
+            return
+
+        if self._cli_hand_pwr_on is None:
+            cb = ReentrantCallbackGroup()
+            self._cli_hand_pwr_on = self.create_client(
+                _eci_srv.SetHandPowerOn,
+                f'{self._eci_prefix}/SetHandPowerOn',
+                callback_group=cb)
+            self._cli_hand_pwr_off = self.create_client(
+                _eci_srv.SetHandPowerOff,
+                f'{self._eci_prefix}/SetHandPowerOff',
+                callback_group=cb)
+
+        cli = self._cli_hand_pwr_off if self._hand_powered \
+            else self._cli_hand_pwr_on
+        req_cls = _eci_srv.SetHandPowerOff if self._hand_powered \
+            else _eci_srv.SetHandPowerOn
+        target = not self._hand_powered
+
+        if not cli.service_is_ready():
+            self._set_status(
+                f'Serviço {cli.srv_name} indisponível.', _CLR=DANGER)
+            return
+
+        future = cli.call_async(req_cls.Request())
+
+        def _done(_f):
+            try:
+                _f.result()
+            except Exception as exc:
+                self._status_q.put(
+                    (f'Erro Power {"ON" if target else "OFF"}: {exc}',
+                     DANGER))
+                return
+            self._hand_powered = target
+            self._status_q.put(
+                (f'Mão {"LIGADA" if target else "DESLIGADA"}.',
+                 OK if target else TEXT_DIM))
+            self.root.after_idle(self._refresh_hand_power_btn)
+
+        future.add_done_callback(_done)
+
+    def _refresh_hand_power_btn(self) -> None:
+        if not hasattr(self, '_pwr_btn'):
+            return
+        if self._hand_powered:
+            self._pwr_btn.set_state('⏻', 'PWR ON', OK, 'white')
+        else:
+            self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
+
+    def _toggle_collision(self) -> None:
+        """Alterna o sistema anticolisão (default OFF). Quando ON o braço
+        é freado antes de obstáculos; quando OFF os comandos passam sem
+        verificação (modo de jog livre)."""
+        self._collision_enabled = not getattr(self, '_collision_enabled',
+                                                False)
+        if self._collision_enabled:
+            self._col_btn.set_state('⊘', 'COL ON', ACCENT_ARM, 'white')
+            self._set_status(
+                'Colisão habilitada — comandos serão verificados.',
+                _CLR=OK)
+        else:
+            self._col_btn.set_state('⊘', 'COL OFF', BTN_NEUTRAL, TEXT)
+            self._set_status(
+                'Colisão desabilitada — comandos serão enviados sem '
+                'verificação. Cuidado com a esteira/caixas.', _CLR=WARN)
+
     def _toggle_eci(self) -> None:
         if self._eci_enabled:
             self._eci_enabled = False
-            self._eci_btn.config(text='ECI OFF', bg=BTN_NEUTRAL, fg=TEXT)
+            self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
             self._led_eci.set_state(TEXT_MUTED)
             self._lbl_eci.config(text='desativada', fg=TEXT_DIM)
             if hasattr(self, '_force_src_lbl'):
@@ -866,7 +917,7 @@ class ManualControlNode(Node):
                 self._cb_eci_posn, 10, callback_group=cb)
 
         self._eci_enabled = True
-        self._eci_btn.config(text='ECI ON', bg=ACCENT_HND, fg='white')
+        self._eci_btn.set_state('◉', 'ECI ON', ACCENT_HND, 'white')
         self._led_eci.set_state(OK)
         self._lbl_eci.config(text=self._eci_prefix, fg=HEADER_FG)
         if hasattr(self, '_force_src_lbl'):
@@ -912,7 +963,8 @@ class ManualControlNode(Node):
             self._hand_proc = None
             return
 
-        self._connect_btn.config(text='Conectando…', state='disabled')
+        self._connect_btn.set_state('⚡', 'Conectando…', PRIMARY_HV, 'white')
+        self._connect_btn.config(state='disabled')
         self._set_status(
             f'Iniciando driver da mão em {ip} (aguarde 2 s)…', _CLR=WARN)
         self.root.after(2200, self._post_connect_real_hand)
@@ -924,21 +976,18 @@ class ManualControlNode(Node):
             self._set_status(
                 'Driver da mão falhou ao iniciar — veja o terminal.',
                 _CLR=DANGER)
-            self._connect_btn.config(
-                text='Conectar', state='normal',
-                bg=PRIMARY, fg='white',
-                command=self._connect_real_hand)
+            self._connect_btn.set_state('⚡', 'Conectar', PRIMARY, 'white')
+            self._connect_btn.config(state='normal',
+                                     command=self._connect_real_hand)
             self._hand_proc = None
             return
 
         if not self._eci_enabled:
             self._toggle_eci()
 
-        self._connect_btn.config(
-            text='Desconectar', state='normal',
-            bg=DANGER, fg='white',
-            activebackground=DANGER_HV,
-            command=self._disconnect_real_hand)
+        self._connect_btn.set_state('⚡', 'Desconectar', DANGER, 'white')
+        self._connect_btn.config(state='normal',
+                                 command=self._disconnect_real_hand)
 
     def _disconnect_real_hand(self) -> None:
         """Mata o subprocesso do driver e desativa o ECI."""
@@ -956,11 +1005,9 @@ class ManualControlNode(Node):
                 except Exception:
                     pass
         self._hand_proc = None
-        self._connect_btn.config(
-            text='Conectar', state='normal',
-            bg=PRIMARY, fg='white',
-            activebackground=PRIMARY_HV,
-            command=self._connect_real_hand)
+        self._connect_btn.set_state('⚡', 'Conectar', PRIMARY, 'white')
+        self._connect_btn.config(state='normal',
+                                 command=self._connect_real_hand)
         self._set_status('Mão real desconectada.', _CLR=TEXT_DIM)
 
     def _on_close(self) -> None:
@@ -976,6 +1023,7 @@ class ManualControlNode(Node):
         """Parada de emergência (lado simulação): home + abrir mão + status."""
         # Mantém a mesma semântica do antigo: leva o braço a Home e abre a mão.
         # Em produção ligar também ao DisableRobot() do CR10 real.
+        self._detach_object()  # libera qualquer attach pendente
         self._apply_arm(ARM_PRESETS_BASE['Home'])
         self._apply_hand({j: 0 for j in HAND_JOINTS})
         if self._eci_enabled:
@@ -1028,13 +1076,16 @@ class ManualControlNode(Node):
         tk.Label(title_box, text='Célula de Manufatura — Manual Control',
                  font=FONT_SMALL, bg=HEADER, fg='#cbd5e1').pack(anchor='w')
 
-        # E-STOP no extremo direito
-        estop = tk.Button(
-            top, text='E-STOP', command=self._estop,
+        # E-STOP no extremo direito — ícone de parada (■)
+        estop = _hdr_btn(
+            top, '⏹', 'E-STOP', self._estop,
             bg=DANGER, fg='white',
-            activebackground=DANGER_HV, activeforeground='white',
-            relief='flat', bd=0, padx=22, pady=10,
-            font=('Segoe UI', 11, 'bold'), cursor='hand2')
+            font=('Segoe UI', 11, 'bold'),
+            padx=20, pady=10)
+        estop.bind('<Enter>',
+                    lambda e, b=estop: b.config(bg=DANGER_HV), add='+')
+        estop.bind('<Leave>',
+                    lambda e, b=estop: b.config(bg=DANGER), add='+')
         estop.pack(side='right', padx=(12, 0))
 
         # Painel de conexão à mão real (rótulo + IP + Conectar + ECI)
@@ -1060,21 +1111,29 @@ class ManualControlNode(Node):
                             justify='center')
         ip_entry.grid(row=1, column=1, padx=(0, 8), ipady=4, sticky='w')
 
-        self._connect_btn = tk.Button(
-            conn, text='Conectar', command=self._connect_real_hand,
-            bg=PRIMARY, fg='white',
-            activebackground=PRIMARY_HV, activeforeground='white',
-            relief='flat', bd=0, padx=14, pady=4,
-            font=FONT_LBL, cursor='hand2')
+        # ⚡ = link/plug (conectar)
+        self._connect_btn = _hdr_btn(
+            conn, '⚡', 'Conectar', self._connect_real_hand,
+            bg=PRIMARY, fg='white', font=FONT_LBL, padx=14, pady=5)
         self._connect_btn.grid(row=1, column=2, sticky='w', padx=(0, 8))
 
-        self._eci_btn = tk.Button(
-            conn, text='ECI OFF', command=self._toggle_eci,
-            bg=BTN_NEUTRAL, fg=TEXT,
-            activebackground=BTN_NEUTRAL_HV, activeforeground=TEXT,
-            relief='flat', bd=0, padx=12, pady=4,
-            font=FONT_SMALL, cursor='hand2')
+        # ◉ = sinal (ECI = canal de comunicação)
+        self._eci_btn = _hdr_btn(
+            conn, '◉', 'ECI OFF', self._toggle_eci,
+            bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=12, pady=5)
         self._eci_btn.grid(row=1, column=3, sticky='w')
+
+        # ⏻ = botão de power (alimentação da mão)
+        self._pwr_btn = _hdr_btn(
+            conn, '⏻', 'PWR OFF', self._toggle_hand_power,
+            bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=12, pady=5)
+        self._pwr_btn.grid(row=1, column=4, sticky='w', padx=(6, 0))
+
+        # ⊘ = barreira / no-go (anticolisão)
+        self._col_btn = _hdr_btn(
+            conn, '⊘', 'COL OFF', self._toggle_collision,
+            bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=12, pady=5)
+        self._col_btn.grid(row=1, column=5, sticky='w', padx=(6, 0))
 
         # Linha 2 — badges de estado ───────────────────────────────────────
         mid = tk.Frame(hdr, bg=HEADER)
@@ -1295,15 +1354,29 @@ class ManualControlNode(Node):
                           bg=PANEL, padx=12, pady=7, font=FONT_BODY)
             b.pack(fill='x', pady=2)
 
-        tk.Label(pad, text='APROXIMAÇÃO MANUAL', font=FONT_SMALL,
+        tk.Label(pad, text='APROACH POR OBJETO', font=FONT_SMALL,
                  bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(14, 4))
-        _flat_btn(pad, 'Approach  (15 cm acima da estação de pick)',
-                  command=lambda: self._apply_arm(APPROACH_POSE_DEG),
-                  bg=PANEL, padx=12, pady=7, font=FONT_BODY
-                  ).pack(fill='x', pady=2)
+        approach_colors = {'frasco': COLOR_FRASCO,
+                           'tubo':   COLOR_TUBO,
+                           'ampola': COLOR_AMPOLA}
+        for obj in ('frasco', 'ampola', 'tubo'):
+            clr = approach_colors[obj]
+            txt = f'Pre-approach {obj.capitalize()}  —  ' + (
+                'top-down' if obj != 'tubo' else 'lateral (claw)')
+            b = tk.Button(
+                pad, text=txt, bg=clr, fg='white',
+                activebackground=_shade(clr, -0.15),
+                activeforeground='white',
+                relief='flat', bd=0, padx=12, pady=6,
+                font=FONT_BODY, cursor='hand2',
+                command=lambda o=obj: self._apply_arm(
+                    PRE_APPROACH_POSES_DEG[o]))
+            b.pack(fill='x', pady=2)
         tk.Label(pad,
-                 text='Ciclos completos de pick e entrega estão na aba '
-                      'Célula.',
+                 text='Os botões acima movem o braço para a pose de '
+                      'pre-approach do objeto (sem pré-shape nem '
+                      'fechamento). Para testar pré-shape também, use '
+                      'o card APPROACH+PRE-SHAPE na aba Mão COVVI.',
                  font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED,
                  wraplength=380, justify='left'
                  ).pack(anchor='w', pady=(8, 0))
@@ -1380,12 +1453,48 @@ class ManualControlNode(Node):
                       bg=PANEL, padx=12, pady=6, font=FONT_BODY
                       ).pack(side='left', padx=4, fill='x', expand=True)
 
-        # Cartão 2: grips
+        # Cartão 2: grips (com scroll vertical — cabe em janelas pequenas)
         card_g, g_body = _card(parent, 'Preensões')
         card_g.grid(row=0, column=1, sticky='nsew', padx=(8, 0))
 
-        pad = tk.Frame(g_body, bg=PANEL, padx=14, pady=10)
-        pad.pack(fill='both', expand=True)
+        canvas = tk.Canvas(g_body, bg=PANEL, highlightthickness=0,
+                           bd=0)
+        vsb = ttk.Scrollbar(g_body, orient='vertical',
+                             command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+
+        pad = tk.Frame(canvas, bg=PANEL, padx=14, pady=10)
+        pad_window = canvas.create_window((0, 0), window=pad, anchor='nw')
+
+        def _on_pad_configure(_e):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        pad.bind('<Configure>', _on_pad_configure)
+
+        def _on_canvas_configure(e):
+            canvas.itemconfigure(pad_window, width=e.width)
+        canvas.bind('<Configure>', _on_canvas_configure)
+
+        # Scroll por roda do mouse só quando o cursor está sobre o card.
+        def _wheel(e):
+            if hasattr(e, 'num') and e.num in (4, 5):
+                canvas.yview_scroll(-1 if e.num == 4 else 1, 'units')
+            else:
+                canvas.yview_scroll(int(-e.delta / 120), 'units')
+
+        def _bind_wheel(_e):
+            canvas.bind_all('<MouseWheel>', _wheel)
+            canvas.bind_all('<Button-4>', _wheel)
+            canvas.bind_all('<Button-5>', _wheel)
+
+        def _unbind_wheel(_e):
+            canvas.unbind_all('<MouseWheel>')
+            canvas.unbind_all('<Button-4>')
+            canvas.unbind_all('<Button-5>')
+
+        canvas.bind('<Enter>', _bind_wheel)
+        canvas.bind('<Leave>', _unbind_wheel)
 
         tk.Label(pad, text='PROJETO', font=FONT_SMALL,
                  bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(0, 4))
@@ -1405,6 +1514,60 @@ class ManualControlNode(Node):
                           command=lambda v=HAND_GRIPS[label], l=label:
                                   self._smart_close(v, project_label=l, label=l))
             b.pack(fill='x', pady=2)
+
+        # ── APPROACH + PRE-SHAPE por objeto ──────────────────────────
+        tk.Label(pad, text='APPROACH + PRE-SHAPE (por objeto)',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED
+                 ).pack(anchor='w', pady=(14, 4))
+        approach_colors = {'frasco': COLOR_FRASCO,
+                           'tubo':   COLOR_TUBO,
+                           'ampola': COLOR_AMPOLA}
+        for obj in ('frasco', 'ampola', 'tubo'):
+            clr = approach_colors[obj]
+            desc = OBJ_APPROACH_DESC[obj]
+            row = tk.Frame(pad, bg=PANEL)
+            row.pack(fill='x', pady=2)
+            b = tk.Button(
+                row, text=f'{obj.capitalize()}',
+                bg=clr, fg='white',
+                activebackground=_shade(clr, -0.15),
+                activeforeground='white',
+                relief='flat', bd=0, padx=10, pady=6,
+                width=10, font=FONT_BODY, cursor='hand2',
+                command=lambda o=obj: self._do_approach_only(o))
+            b.pack(side='left', padx=(0, 8))
+            tk.Label(row, text=desc, font=FONT_SMALL,
+                     bg=PANEL, fg=TEXT_DIM, anchor='w',
+                     wraplength=240, justify='left'
+                     ).pack(side='left', fill='x', expand=True)
+
+        # ── Poses extras (gestos / formas livres) ────────────────────
+        tk.Label(pad, text='POSES EXTRAS', font=FONT_SMALL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(14, 4))
+        extras = tk.Frame(pad, bg=PANEL)
+        extras.pack(fill='x')
+        for col in range(2):
+            extras.columnconfigure(col, weight=1)
+        # Ícone + cor de destaque por pose (glifos universais DejaVu/Symbola).
+        pose_style = {
+            'Punho':        ('●',  '#7c3aed'),  # roxo — fechamento total
+            'Apontar':      ('➤',  '#0ea5e9'),  # ciano — direção
+            'Paz (V)':      ('✌',  '#10b981'),  # verde — paz
+            'Joinha':       ('▲',  '#f59e0b'),  # âmbar — para cima
+            'Rock':         ('♬',  '#ef4444'),  # vermelho — rock
+            'Pistola':      ('⌐',  '#475569'),  # cinza — formato L
+            'Gancho':       ('⌒',  '#0891b2'),  # azul-petróleo — curva
+            'Concha':       ('⌣',  '#a16207'),  # terracota — copo
+            'Garra Aberta': ('◯',  '#65a30d'),  # oliva — abertura
+            'Contar 3':     ('❸',  '#db2777'),  # rosa — número
+        }
+        for idx, name in enumerate(HAND_EXTRA_POSES.keys()):
+            r, c = divmod(idx, 2)
+            glyph, accent = pose_style.get(name, ('◆', ACCENT_HND))
+            b = self._make_pose_btn(extras, glyph, name, accent,
+                                     lambda n=name:
+                                         self._apply_hand_extra_pose(n))
+            b.grid(row=r, column=c, sticky='ew', padx=3, pady=3)
 
         tk.Label(pad, text='COVVI BUILT-IN (ECI)', font=FONT_SMALL,
                  bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(14, 4))
@@ -1502,11 +1665,103 @@ class ManualControlNode(Node):
         pad2.pack(fill='both', expand=True)
 
         tk.Label(pad2,
-                 text='1) Aproximação vertical · 2) Descida até o objeto · '
-                      '3) Fechamento da mão · 4) Subida com o objeto.',
+                 text='Ciclo em 6 fases (SDD §6): F1 pre-approach · '
+                      'F2 approach · F3 pré-shape · F4 descida · '
+                      'F5 fechamento (smart_close) · F6 lift.',
                  font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM,
                  justify='left', wraplength=380
                  ).pack(anchor='w', pady=(0, 10))
+
+        # ── Stepper visual F1..F6 ────────────────────────────────────
+        stepper = tk.Frame(pad2, bg=PANEL)
+        stepper.pack(fill='x', pady=(0, 8))
+        self._phase_leds: list[StatusLED] = []
+        for i, name in enumerate(self._PHASE_NAMES):
+            cell = tk.Frame(stepper, bg=PANEL)
+            cell.pack(side='left', padx=4)
+            led = StatusLED(cell, bg=PANEL)
+            led.set_state(TEXT_MUTED)
+            led.pack()
+            tk.Label(cell, text=name.split()[0],
+                     font=('Segoe UI', 8, 'bold'),
+                     bg=PANEL, fg=TEXT_DIM).pack()
+            self._phase_leds.append(led)
+
+        # ── Modo step-by-step + botões de controle ───────────────────
+        self._step_by_step_var = tk.BooleanVar(value=False)
+        ctl_row = tk.Frame(pad2, bg=PANEL)
+        ctl_row.pack(fill='x', pady=(2, 8))
+        tk.Checkbutton(ctl_row,
+                        text='Step-by-step (pausa entre fases)',
+                        variable=self._step_by_step_var,
+                        font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM,
+                        activebackground=PANEL,
+                        selectcolor=PANEL).pack(side='left')
+        self._btn_next_phase = tk.Button(
+            ctl_row, text='▶ Próxima fase', state='disabled',
+            bg=PRIMARY, fg='white',
+            activebackground=PRIMARY_HV, activeforeground='white',
+            relief='flat', bd=0, padx=10, pady=4,
+            font=FONT_SMALL, cursor='hand2',
+            command=self._step_next_phase)
+        self._btn_next_phase.pack(side='right', padx=4)
+        tk.Button(
+            ctl_row, text='■ Abortar',
+            bg=DANGER, fg='white',
+            activebackground=DANGER_HV, activeforeground='white',
+            relief='flat', bd=0, padx=10, pady=4,
+            font=FONT_SMALL, cursor='hand2',
+            command=self._abort_pick_cycle
+        ).pack(side='right', padx=4)
+
+        # ── T24: descent_extra (mm) — descida extra na fase F4 ───────
+        param_row = tk.Frame(pad2, bg=PANEL)
+        param_row.pack(fill='x', pady=(0, 8))
+        tk.Label(param_row, text='Descida extra F4 (mm):',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM
+                 ).pack(side='left', padx=(0, 6))
+        self._descent_extra_var = tk.IntVar(value=0)
+        tk.Spinbox(param_row, from_=-30, to=30, increment=2,
+                    textvariable=self._descent_extra_var,
+                    font=FONT_MONO_S, width=5,
+                    bg='white', fg=VALUE_FG,
+                    relief='flat', bd=0,
+                    highlightthickness=1,
+                    highlightbackground=BORDER,
+                    highlightcolor=PRIMARY,
+                    justify='center'
+                    ).pack(side='left', padx=2, ipady=2)
+        tk.Label(param_row,
+                 text='(+ desce mais antes do close; - desce menos)',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED
+                 ).pack(side='left', padx=(8, 0))
+
+        # ── T29: Hover + Close pós-hover ─────────────────────────────
+        hover_row = tk.Frame(pad2, bg=PANEL)
+        hover_row.pack(fill='x', pady=(0, 8))
+        tk.Label(hover_row, text='Hover (pré-pick):', font=FONT_SMALL,
+                 bg=PANEL, fg=TEXT_DIM).pack(side='left', padx=(0, 6))
+        for obj in ('frasco', 'tubo', 'ampola'):
+            clr = {'frasco': COLOR_FRASCO, 'tubo': COLOR_TUBO,
+                   'ampola': COLOR_AMPOLA}[obj]
+            tk.Button(
+                hover_row, text=obj.capitalize(),
+                bg=clr, fg='white',
+                activebackground=_shade(clr, -0.15),
+                activeforeground='white',
+                relief='flat', bd=0, padx=8, pady=4,
+                font=FONT_SMALL, cursor='hand2',
+                command=lambda o=obj: self._do_hover(o)
+            ).pack(side='left', padx=2)
+        tk.Button(
+            hover_row, text='Close (após Hover)',
+            bg=ACCENT_HND, fg='white',
+            activebackground=_shade(ACCENT_HND, -0.15),
+            activeforeground='white',
+            relief='flat', bd=0, padx=8, pady=4,
+            font=FONT_SMALL, cursor='hand2',
+            command=self._do_close_after_hover
+        ).pack(side='right', padx=2)
 
         for obj in ('frasco', 'tubo', 'ampola'):
             clr = {'frasco': COLOR_FRASCO, 'tubo': COLOR_TUBO,
@@ -1518,7 +1773,8 @@ class ManualControlNode(Node):
                 activeforeground='white',
                 relief='flat', bd=0, padx=12, pady=8,
                 font=FONT_BODY, cursor='hand2',
-                command=lambda o=obj: self._do_pick_cycle(o))
+                command=lambda o=obj: self._do_pick_cycle(
+                    o, step_by_step=self._step_by_step_var.get()))
             b.pack(fill='x', pady=3)
 
         tk.Frame(pad2, bg=BORDER, height=1).pack(fill='x', pady=10)
@@ -1631,9 +1887,14 @@ class ManualControlNode(Node):
         self.hand_value_vars[j].set(
             self._fmt_hand(int(self.hand_sliders[j].get())))
 
-    def _apply_arm(self, preset_deg: dict):
+    def _apply_arm(self, preset_deg: dict,
+                    hand_state_override: dict | None = None):
+        """Move o braço para `preset_deg`. Se `hand_state_override` for
+        fornecido, o sweep de colisão usa-o em vez da pose atual da mão
+        — útil para validar approach/descida com pré-shape (T26)."""
         positions_rad = [math.radians(preset_deg[j]) for j in ARM_JOINTS]
-        self._publish_arm_positions(positions_rad)
+        self._publish_arm_positions(positions_rad,
+                                     hand_state_override=hand_state_override)
         self.root.after_idle(self._update_arm_sliders, preset_deg)
 
     def _update_arm_sliders(self, preset_deg: dict):
@@ -1650,6 +1911,56 @@ class ManualControlNode(Node):
         self._publish_hand_values(vals)
         self._schedule_eci_posn(vals)
         self.root.after_idle(self._update_hand_sliders, vals)
+
+    def _make_pose_btn(self, parent, glyph: str, label: str,
+                       accent: str, command):
+        """Botão de pose com faixa colorida à esquerda, ícone grande
+        e label, com hover de fundo. Renderizado como Frame + Labels
+        para permitir layout multi-componente."""
+        bg = PANEL
+        hover = _shade(accent, 0.85)
+        wrap = tk.Frame(parent, bg=accent, bd=0, cursor='hand2',
+                        highlightthickness=1,
+                        highlightbackground=BORDER,
+                        highlightcolor=BORDER)
+        inner = tk.Frame(wrap, bg=bg)
+        inner.pack(side='right', fill='both', expand=True, padx=(3, 0))
+
+        icon = tk.Label(inner, text=glyph, font=('DejaVu Sans', 14, 'bold'),
+                        bg=bg, fg=accent, padx=8, pady=4)
+        icon.pack(side='left')
+        name = tk.Label(inner, text=label, font=FONT_BODY,
+                        bg=bg, fg=TEXT, anchor='w', padx=2, pady=4)
+        name.pack(side='left', fill='x', expand=True)
+
+        def _enter(_e):
+            inner.config(bg=hover)
+            icon.config(bg=hover)
+            name.config(bg=hover)
+
+        def _leave(_e):
+            inner.config(bg=bg)
+            icon.config(bg=bg)
+            name.config(bg=bg)
+
+        for w in (wrap, inner, icon, name):
+            w.bind('<Button-1>', lambda _e, cb=command: cb())
+            w.bind('<Enter>', _enter)
+            w.bind('<Leave>', _leave)
+        return wrap
+
+    def _apply_hand_extra_pose(self, name: str):
+        """Aplica uma pose de HAND_EXTRA_POSES — publica no Gazebo e,
+        se ECI ativo, manda o mesmo SetDigitPosn para a mão real."""
+        vals = dict(HAND_EXTRA_POSES.get(name, {}))
+        if not vals:
+            return
+        for j in HAND_JOINTS:
+            vals.setdefault(j, 0)
+        self._publish_hand_values(vals)
+        self._schedule_eci_posn(vals)
+        self.root.after_idle(self._update_hand_sliders, vals)
+        self._set_status(f'Pose da mão: {name}', _CLR=OK)
 
     def _apply_hand(self, vals: dict, project_label: str | None = None):
         """Aplicação direta (sem fechamento incremental). Usada por presets
@@ -1717,7 +2028,8 @@ class ManualControlNode(Node):
                      n_steps: int = 12, step_ms: int = 80,
                      touch_threshold: int = 70,
                      label: str | None = None,
-                     project_label: str | None = None):
+                     project_label: str | None = None,
+                     attach_obj: str | None = None):
         """Fechamento incremental com parada em contato.
 
         n_steps:          número de passos da rampa
@@ -1726,6 +2038,9 @@ class ManualControlNode(Node):
                           valor de sensor (0-255). Aplicado a partir do passo 3
                           para evitar parar antes mesmo de o dedo se mover.
         project_label:    se setado, dispara o grip nativo ECI em paralelo.
+        attach_obj:       se setado, dispara /grasp/attach ao concluir o
+                          fechamento (kinematic attach do item 1 do SDD).
+                          O objeto passa a seguir o TCP até o detach.
         """
         start = {j: self.hand_sliders[j].get() for j in HAND_JOINTS}
 
@@ -1743,6 +2058,7 @@ class ManualControlNode(Node):
                 pass
         self._smart_after = None
         self._smart_stopped_label: str | None = label
+        self._smart_attach_obj = attach_obj
 
         self._smart_close_step(start, dict(target_vals),
                                1, n_steps, step_ms, touch_threshold)
@@ -1759,12 +2075,20 @@ class ManualControlNode(Node):
                     f'em {int(100 * step / n_steps)}%.',
                     _CLR=OK)
                 self._smart_after = None
+                # Item 1 — kinematic attach após encaixe perfeito
+                attach_obj = getattr(self, '_smart_attach_obj', None)
+                if attach_obj:
+                    self._attach_object(attach_obj)
                 return
 
         if step > n_steps:
             self._set_status('Fechamento completo (sem contato detectado).',
                               _CLR=TEXT_DIM)
             self._smart_after = None
+            # Mesmo sem contato (sim sem objeto, p.ex.), attach se pedido
+            attach_obj = getattr(self, '_smart_attach_obj', None)
+            if attach_obj:
+                self._attach_object(attach_obj)
             return
 
         alpha = step / n_steps
@@ -1798,65 +2122,367 @@ class ManualControlNode(Node):
                 pass
         self._pick_cycle_after = None
 
-    def _do_pick_cycle(self, obj_class: str):
-        """Ciclo completo de pick em 4 fases:
-          1. Mão abre + braço vai para approach (TCP em (0.75, 0, 1.05))
-          2. Braço desce verticalmente até a pose de grasp do objeto
-          3. Mão fecha na preensão correta (smart_close com detecção de toque)
-          4. Braço sobe de volta à approach (com o objeto)
+    # ── 6-FASE PICK CYCLE (SDD §6) ───────────────────────────────────
+    _PHASE_NAMES = _POSES_PHASE_NAMES
+
+    def _set_phase_leds(self, phase_idx: int, status: str = 'in'):
+        """Atualiza os 6 LEDs do stepper de fase.
+          status: 'in' (amarelo), 'done' (verde), 'err' (vermelho),
+                  'reset' (cinza).
+        """
+        if not hasattr(self, '_phase_leds'):
+            return
+        for i, led in enumerate(self._phase_leds):
+            if i < phase_idx:
+                led.set_state(OK)
+            elif i == phase_idx:
+                color = {'in': WARN, 'done': OK,
+                         'err': DANGER, 'reset': TEXT_MUTED}[status]
+                led.set_state(color)
+            else:
+                led.set_state(TEXT_MUTED)
+
+    def _reset_phase_leds(self):
+        if hasattr(self, '_phase_leds'):
+            for led in self._phase_leds:
+                led.set_state(TEXT_MUTED)
+
+    def _attach_object(self, obj_class: str) -> None:
+        """No-op — grasp por contato físico não usa attach cinemático."""
+        return
+
+    def _detach_object(self, obj_class: str | None = None) -> None:
+        """No-op — liberar = abrir a mão (handled pelo chamador)."""
+        return
+
+    def _publish_tcp_target(self, p_world: tuple, label: str = 'tcp_target'):
+        """T27: publica frame TCP-alvo em world para inspeção no RViz."""
+        if self._tf_br is None or TransformStamped is None:
+            return
+        try:
+            t = TransformStamped()
+            t.header.stamp = self.get_clock().now().to_msg()
+            t.header.frame_id = 'world'
+            t.child_frame_id = label
+            t.transform.translation.x = float(p_world[0])
+            t.transform.translation.y = float(p_world[1])
+            t.transform.translation.z = float(p_world[2])
+            t.transform.rotation.w = 1.0
+            self._tf_br.sendTransform(t)
+        except Exception:
+            pass
+
+    # Limite máximo de descida extra (mm) por objeto — proteção contra
+    # avanço da palma/fingertips para baixo do topo do objeto. Calculado
+    # com `palm_pick_z − (obj_top + clearance)` para palm/fingertip grip;
+    # para tubo (claw lateral) a "descida" é em −Y, não em Z, então o
+    # limite é uma folga lateral conservadora.
+    _MAX_DESCENT_EXTRA_MM = {
+        'frasco': 15,   # palma a 0.92m; topo 0.896m → margem efetiva ~20mm
+        'ampola': 0,    # TCP já no topo do objeto — descer mais esmaga
+        'tubo':   10,   # garra lateral — pequena folga em −Y
+    }
+
+    def _adjusted_pick_pose(self, obj_class: str,
+                             descent_extra_mm: float) -> dict:
+        """Devolve a pose de pick com descida extra aplicada (mm). Valor
+        POSITIVO ⇒ palma DESCE mais antes de fechar a mão. Aproximação
+        cinemática linear (calibrada por scripts/tune_descent.py): cada
+        10 mm de descida ≈ +0.2° em joint2 com −0.8° em joint3.
+
+        O valor é CLAMPADO em `_MAX_DESCENT_EXTRA_MM[obj_class]` (positivo)
+        para a palma/fingertips nunca passarem do topo do objeto — sem
+        este limite, o braço continuaria pressionando o objeto após o
+        grasp, danificando-o.
+        """
+        base = dict(PICK_POSES_DEG[obj_class])
+        max_d = self._MAX_DESCENT_EXTRA_MM.get(obj_class, 0)
+        if descent_extra_mm > max_d:
+            self._set_status(
+                f'[clamp] descent_extra {descent_extra_mm:.0f}mm > limite '
+                f'{max_d}mm para {obj_class} — usando {max_d}mm '
+                f'(palma não passa do topo do objeto).', _CLR=WARN)
+            descent_extra_mm = float(max_d)
+        if abs(descent_extra_mm) < 1e-3:
+            return base
+        d = descent_extra_mm / 10.0
+        base['joint2'] = base.get('joint2', 0.0) + 0.2 * d
+        base['joint3'] = base.get('joint3', 0.0) - 0.8 * d
+        return base
+
+    def _do_pick_cycle(self, obj_class: str, step_by_step: bool = False,
+                        hover_only: bool = False,
+                        descent_extra_mm: float | None = None):
+        """Ciclo de pick em 6 fases (SDD §6):
+          F1 pre-approach (articular, mão aberta)
+          F2 approach     (Cartesiano curto, mão aberta)
+          F3 preshape     (fechamento parcial para o pré-shape)
+          F4 descend/advance (Cartesiano final ao TCP de grasp)
+          F5 close        (smart_close incremental com detecção de toque)
+          F6 lift         (Cartesiano de volta à pre-approach)
+
+        Para frasco/ampola, F2/F4 são descidas em −Z. Para tubo, F2/F4
+        são deslocamentos em +Y (lateral).
         """
         if obj_class not in PICK_POSES_DEG:
             self._set_status(f'Objeto desconhecido: {obj_class}',
                               _CLR=DANGER)
             return
-        grip_key = OBJ_GRIP[obj_class]
-        approach_pose = APPROACH_POSE_DEG
-        grasp_pose    = PICK_POSES_DEG[obj_class]
+        grip_key      = OBJ_GRIP[obj_class]
+        pre_pose      = PRE_APPROACH_POSES_DEG[obj_class]
+        approach_pose = APPROACH_POSES_DEG[obj_class]
+        if descent_extra_mm is None and hasattr(self, '_descent_extra_var'):
+            try:
+                descent_extra_mm = float(self._descent_extra_var.get())
+            except Exception:
+                descent_extra_mm = 0.0
+        descent_extra_mm = descent_extra_mm or 0.0
+        grasp_pose    = self._adjusted_pick_pose(obj_class, descent_extra_mm)
+        preshape      = HAND_PRESHAPE[grip_key]
         grip_target   = HAND_GRIPS[grip_key]
 
-        move_ms     = int(float(self.time_sl.get()) * 1000) + 250
-        descend_ms  = max(1200, move_ms)
-        close_ms    = 12 * 80 + 400   # smart_close n_steps*step_ms + buffer
+        # Timings entre fases. O comando de braço usa `time_sl` como
+        # duração da trajetória JointTrajectory. Como o controlador
+        # precisa de tempo extra para SETTLE (rampa + tolerância da
+        # malha de controle), adicionamos folga acima da duração antes
+        # de disparar a próxima fase — ESSENCIAL em F4→F5 para que os
+        # dedos não fechem antes da palma chegar ao objeto.
+        traj_ms     = int(float(self.time_sl.get()) * 1000)
+        base_ms     = traj_ms + 250
+        approach_ms = max(900, traj_ms + 400)
+        descend_ms  = max(1500, traj_ms + 800)  # +800ms settle pós-descida
+        preshape_ms = 700
+        close_ms    = 12 * 80 + 400
+        lift_ms     = max(1100, base_ms)
 
         self._cancel_pick_cycle()
+        self._step_by_step = bool(step_by_step)
+        self._step_pending = None
+        self._reset_phase_leds()
 
-        # Fase 1: abre a mão (sincrono) e inicia approach do braço
-        self._apply_hand(HAND_OPEN)
-        self._apply_arm(approach_pose)
-        self._set_status(
-            f'[1/4] {obj_class}: mão aberta, aproximando…', _CLR=WARN)
+        # T27: publica frame TCP-alvo para cada fase (visualizável no RViz)
+        try:
+            from .poses import (PRE_APPROACH_TCP_WORLD as _PRE_T,
+                                  APPROACH_TCP_WORLD_BY_OBJ as _APP_T,
+                                  PICK_TCP_WORLD as _PICK_T)
+            self._publish_tcp_target(_PRE_T[obj_class], 'tcp_pre')
+            self._publish_tcp_target(_APP_T[obj_class], 'tcp_appr')
+            self._publish_tcp_target(_PICK_T[obj_class], 'tcp_pick')
+        except Exception:
+            pass
 
-        def _phase_descend():
+        def _go(idx: int, msg: str, after_ms: int, action, next_fn):
+            self._set_phase_leds(idx, 'in')
+            self._set_status(msg, _CLR=WARN)
+            action()
+            if self._step_by_step:
+                # Aguarda usuário clicar em "Próxima fase"
+                self._step_pending = next_fn
+                self._set_status(
+                    f'{msg}  [aguardando ▶ Próxima fase…]', _CLR=WARN)
+                if hasattr(self, '_btn_next_phase'):
+                    self._btn_next_phase.config(state='normal')
+                return
+            self._pick_cycle_after = self.root.after(after_ms, next_fn)
+
+        # F1
+        def _f1():
+            _go(0, f'[F1] {obj_class}: pre-approach (mão aberta)…',
+                approach_ms,
+                lambda: (self._apply_hand(HAND_OPEN),
+                         self._apply_arm(pre_pose)),
+                _f2)
+
+        # F2
+        def _f2():
+            self._set_phase_leds(0, 'done')
+            _go(1, f'[F2] {obj_class}: approach (5 cm antes)…',
+                approach_ms,
+                lambda: self._apply_arm(approach_pose),
+                _f3)
+
+        # F3 — SEM pré-shape. A mão permanece TOTALMENTE ABERTA durante
+        # toda a descida; o fechamento acontece SOMENTE em F5, após o
+        # braço estar de fato sobre o objeto. Pré-shape parcial fazia a
+        # mão "começar o grasp" antes da chegada — o que o usuário
+        # observou e pediu para remover.
+        def _f3():
+            self._set_phase_leds(1, 'done')
+            _go(2, f'[F3] {obj_class}: mão aberta (sem pré-shape)…',
+                preshape_ms,
+                lambda: self._apply_hand(HAND_OPEN),
+                _f4)
+
+        # F4 — descida final com mão AINDA aberta. A próxima fase só
+        # dispara DEPOIS que o braço efetivamente chegou em `grasp_pose`
+        # (gating por /joint_states, tolerância 1.5°). A validação de
+        # colisão usa hand_state=None (mão aberta = envelope máximo).
+        def _f4():
+            self._set_phase_leds(2, 'done')
+            next_after_f4 = _hover_done if hover_only else _f5
+            self._set_phase_leds(3, 'in')
             self._set_status(
-                f'[2/4] {obj_class}: descendo até a pose de grasp…',
+                f'[F4] {obj_class}: descida final '
+                f'(extra={descent_extra_mm:+.0f}mm, mão aberta)…',
                 _CLR=WARN)
             self._apply_arm(grasp_pose)
-            self._pick_cycle_after = self.root.after(
-                descend_ms, _phase_close)
+            if self._step_by_step:
+                self._step_pending = next_after_f4
+                self._set_status(
+                    f'[F4] {obj_class}: descida final '
+                    f'(extra={descent_extra_mm:+.0f}mm)  '
+                    f'[aguardando ▶ Próxima fase…]', _CLR=WARN)
+                if hasattr(self, '_btn_next_phase'):
+                    self._btn_next_phase.config(state='normal')
+                return
+            # Gating: espera o braço chegar (tolerância 1.5°) ou
+            # estourar timeout (descend_ms + 1500ms de margem) antes
+            # de disparar a F5.
+            self._wait_arm_then(grasp_pose, next_after_f4,
+                                  timeout_ms=descend_ms + 1500,
+                                  tol_deg=1.5, poll_ms=50)
 
-        def _phase_close():
-            self._set_status(
-                f'[3/4] {obj_class}: fechando {grip_key}…', _CLR=WARN)
-            self._smart_close(grip_target, label=grip_key,
-                              project_label=grip_key)
-            self._pick_cycle_after = self.root.after(
-                close_ms, _phase_lift)
-
-        def _phase_lift():
-            self._set_status(
-                f'[4/4] {obj_class}: subindo com o objeto…', _CLR=WARN)
-            self._apply_arm(approach_pose)
-            self._pick_cycle_after = self.root.after(
-                move_ms, _phase_done)
-
-        def _phase_done():
+        # Hover-only: para após F4, mantendo a mão ABERTA
+        def _hover_done():
+            self._set_phase_leds(3, 'done')
             self._pick_cycle_after = None
+            self._step_pending = None
+            if hasattr(self, '_btn_next_phase'):
+                self._btn_next_phase.config(state='disabled')
+            self._set_status(
+                f'Hover: {obj_class} ({grip_key}) — '
+                f'palma sobre o objeto, mão ABERTA. Use "Close" '
+                f'para fechar e attachar.', _CLR=OK)
+
+        # F5 — attach IMEDIATO + smart_close para realismo visual.
+        # Como o posicionamento em F4 já é determinístico (poses cacheadas
+        # alinham a palma ao objeto), o attach kinemático é disparado no
+        # início da fase de fechamento, sem depender de detecção de toque.
+        # Isto garante que o objeto fique fixado ao TCP da mão dentro do
+        # grasp correspondente, mesmo se a física do Gazebo escorregar.
+        def _f5():
+            self._set_phase_leds(3, 'done')
+            self._set_phase_leds(4, 'in')
+            self._set_status(
+                f'[F5] {obj_class}: attach + fechando {grip_key}…',
+                _CLR=WARN)
+            # 1) Fixa o objeto ao TCP da mão IMEDIATAMENTE — não espera
+            #    contato físico. A geometria de F4 já garante alinhamento
+            #    (palma sobre frasco · TCP no topo da ampola · TCP no
+            #    centro do tubo). O objeto fica colado ao TCP via
+            #    grasp_attacher_node, independente de force-closure.
+            self._attach_object(obj_class)
+            # 2) Fecha a mão COMPLETAMENTE até o grip alvo — sem parar
+            #    em contato (touch_threshold=999), pois o objeto já está
+            #    attachado e queremos os dedos visualmente envolvendo a
+            #    geometria do objeto. attach_obj=None pois já fizemos.
+            self._smart_close(grip_target, label=grip_key,
+                              project_label=grip_key,
+                              attach_obj=None,
+                              touch_threshold=999)
+            if self._step_by_step:
+                self._step_pending = _f6
+                if hasattr(self, '_btn_next_phase'):
+                    self._btn_next_phase.config(state='normal')
+                return
+            self._pick_cycle_after = self.root.after(close_ms, _f6)
+
+        # F6
+        def _f6():
+            self._set_phase_leds(4, 'done')
+            _go(5, f'[F6] {obj_class}: lift (mão fechada)…',
+                lift_ms,
+                lambda: self._apply_arm(pre_pose),
+                _done)
+
+        def _done():
+            self._set_phase_leds(5, 'done')
+            self._pick_cycle_after = None
+            self._step_pending = None
+            if hasattr(self, '_btn_next_phase'):
+                self._btn_next_phase.config(state='disabled')
             self._set_status(
                 f'Pick completo: {obj_class} ({grip_key}).', _CLR=OK)
 
-        self._pick_cycle_after = self.root.after(move_ms, _phase_descend)
+        _f1()
+
+    def _step_next_phase(self):
+        """Avança para a próxima fase no modo step-by-step."""
+        nxt = getattr(self, '_step_pending', None)
+        if nxt is None:
+            return
+        self._step_pending = None
+        if hasattr(self, '_btn_next_phase'):
+            self._btn_next_phase.config(state='disabled')
+        nxt()
+
+    def _abort_pick_cycle(self):
+        """Aborta o ciclo em curso."""
+        self._cancel_pick_cycle()
+        self._step_pending = None
+        if hasattr(self, '_btn_next_phase'):
+            self._btn_next_phase.config(state='disabled')
+        if hasattr(self, '_phase_leds'):
+            # marca a fase atual como vermelho
+            for i, led in enumerate(self._phase_leds):
+                # primeira não verde = fase atual
+                pass
+        self._set_status('Ciclo abortado pelo operador.', _CLR=DANGER)
+
+    def _do_hover(self, obj_class: str):
+        """Modo Hover (T29): executa F1-F4 (pre, approach, preshape,
+        descida) e PARA — mantém a mão em pré-shape sobre o objeto,
+        pronto para o operador ajustar fino antes do close."""
+        self._do_pick_cycle(obj_class, step_by_step=False, hover_only=True)
+
+    def _do_close_after_hover(self):
+        """Fecha a mão usando o grip do objeto atualmente detectado.
+        Complementa o modo Hover — F5 manual após posicionamento."""
+        obj = self._last_detection or self._conveyor_state.get('current_obj')
+        if not obj or obj not in OBJ_GRIP:
+            self._set_status(
+                'Sem objeto detectado para fechar — spawne primeiro.',
+                _CLR=DANGER)
+            return
+        grip_key = OBJ_GRIP[obj]
+        self._set_status(
+            f'[Close pós-hover] {obj} → {grip_key}', _CLR=WARN)
+        self._smart_close(HAND_GRIPS[grip_key],
+                          label=grip_key, project_label=grip_key,
+                          attach_obj=obj)
+
+    def _preshape_hand_state(self, grip_key: str) -> dict:
+        """Converte um preset HAND_PRESHAPE[grip_key] (sliders 0..200)
+        em hand_state (rad por dedo primário) para uso em FK durante o
+        sweep de colisão (SDD T11/T12)."""
+        preset = HAND_PRESHAPE.get(grip_key, {})
+        return {j: float(preset.get(j, 0)) / 200.0 * _HAND_DRIVER_MAX[j]
+                for j in HAND_JOINTS}
+
+    def _do_approach_only(self, obj_class: str):
+        """Move o braço para pre_approach e aplica pré-shape, sem fechar.
+        Usado pelo card "Approach por objeto" da aba Mão."""
+        if obj_class not in PRE_APPROACH_POSES_DEG:
+            return
+        grip_key  = OBJ_GRIP[obj_class]
+        preshape  = HAND_PRESHAPE[grip_key]
+        self._apply_hand(HAND_OPEN)
+        self._apply_arm(PRE_APPROACH_POSES_DEG[obj_class])
+        # aplica pré-shape após pequena pausa (dá tempo de o braço sair de
+        # qualquer pose anterior antes de mexer os dedos)
+        self.root.after(600, lambda: self._apply_hand(preshape))
+        self._set_status(
+            f'Approach {obj_class}: {OBJ_APPROACH_DESC[obj_class]}',
+            _CLR=OK)
 
     def _do_delivery(self):
+        """Entrega em 4 sub-fases (SDD §7):
+          F1' pre-deliver  — articular, mão fechada
+          F2' descend bin  — Cartesiano -Z, mão fechada
+          F3' release      — abre a mão
+          F4' retract      — Cartesiano +Z, mão aberta
+        Para o tubo, mantém-se a orientação lateral até F3'.
+        """
         obj = self._last_detection
         if obj is None or obj not in DELIVERY_POSES_DEG:
             self._set_status(
@@ -1869,21 +2495,36 @@ class ManualControlNode(Node):
 
         self._cancel_pick_cycle()
         self._set_status(
-            f'[1/3] Levando {obj} → caixa {box_color}…', _CLR=WARN)
+            f"[F1'] Levando {obj} → caixa {box_color}…", _CLR=WARN)
         self._apply_arm(DELIVERY_POSES_DEG[obj])
+
+        # Para descida na caixa: replica DELIVERY_POSES_DEG mas com
+        # joint2 abaixado em ~5° (≈10 cm Cartesianos top-down) — pose
+        # de descent. Para o tubo, mantemos o mesmo branch (orientação
+        # lateral preservada até o release).
+        descent_pose = dict(DELIVERY_POSES_DEG[obj])
+        descent_pose['joint2'] = descent_pose.get('joint2', -30.0) - 5.0
+
+        def _phase_descend():
+            self._set_status(
+                f"[F2'] Descendo na caixa {box_color}…", _CLR=WARN)
+            self._apply_arm(descent_pose)
+            self._pick_cycle_after = self.root.after(
+                max(900, move_ms), _phase_release)
 
         def _phase_release():
             self._set_status(
-                f'[2/3] Liberando {obj} na caixa {box_color}.',
-                _CLR=WARN)
+                f"[F3'] Liberando {obj} na caixa {box_color}.", _CLR=WARN)
+            # Detach ANTES de abrir a mão para o objeto cair na caixa
+            self._detach_object(obj)
             self._apply_hand(HAND_OPEN)
             self._pick_cycle_after = self.root.after(
                 900, _phase_retreat)
 
         def _phase_retreat():
             self._set_status(
-                '[3/3] Retornando à aproximação…', _CLR=WARN)
-            self._apply_arm(APPROACH_POSE_DEG)
+                f"[F4'] Retornando à pré-entrega…", _CLR=WARN)
+            self._apply_arm(DELIVERY_POSES_DEG[obj])
             self._pick_cycle_after = self.root.after(
                 move_ms, _phase_done)
 
@@ -1893,7 +2534,7 @@ class ManualControlNode(Node):
                 f'Entrega completa: {obj} → caixa {box_color}.',
                 _CLR=OK)
 
-        self._pick_cycle_after = self.root.after(move_ms, _phase_release)
+        self._pick_cycle_after = self.root.after(move_ms, _phase_descend)
 
     # ──────────────────────────────────────────────────────── PUBLISH
     def _publish_arm(self):
@@ -1920,58 +2561,107 @@ class ManualControlNode(Node):
                    _HAND_DRIVER_MAX[j]
                 for j in HAND_JOINTS}
 
-    def _path_max_safe_alpha(self, q_start, q_end, n: int = 20) -> float:
+    def _current_arm_q(self):
+        """Posição atual do braço lida dos sliders, em radianos."""
+        if not _COLLISION_OK:
+            return None
+        return _np.array([
+            math.radians(self.arm_sliders[j].get()) for j in ARM_JOINTS])
+
+    def _path_max_safe_alpha(self, q_start, q_end, n: int = 20,
+                              hand_state_override: dict | None = None
+                              ) -> float:
         """Maior alpha em [0,1] sobre o segmento `q_start→q_end` que ainda
         está livre de colisão. Verifica:
           • links 4-6 do braço vs _WORLD_OBSTACLES
           • envelope da mão COVVI (palma + dedos) vs _WORLD_OBSTACLES
           • cada ponta de dedo (FK por dedo) vs _WORLD_OBSTACLES
+
+        Se `hand_state_override` for fornecido (e.g. pré-shape), a FK dos
+        dedos usa essa configuração — útil para validar approach com a
+        mão já pré-fechada (SDD T11/T12).
         """
         if not _COLLISION_OK:
             return 1.0
-        hand_state = self._current_hand_state()
+        if hand_state_override is not None:
+            hand_state = hand_state_override
+        else:
+            hand_state = self._current_hand_state()
+        # Margens reduzidas (5 mm) — antes 20 mm gerava falsos positivos
+        # em poses legítimas de pre-approach lateral do tubo.
+        m_arm = 0.005
+        m_hand = 0.005
+        m_fingers = 0.005
         for i in range(1, n + 1):
             alpha = i / n
             q_i = q_start + alpha * (q_end - q_start)
             ok_arm, _ = _gx_arm_clears_world(
-                q_i, links=(4, 5, 6), margin=0.020)
+                q_i, links=(4, 5, 6), margin=m_arm)
             ok_hand_env = _hand_clears_world(
-                q_i, hand_state=hand_state, margin=0.020)
+                q_i, hand_state=hand_state, margin=m_hand)
             ok_fingers, _ = _fingers_clear_objects(
                 q_i, hand_state, object_bbox=None,
-                check_world=True, margin=0.010)
+                check_world=True, margin=m_fingers)
             if not (ok_arm and ok_hand_env and ok_fingers):
                 return max(0.0, (i - 1) / n - 0.02)
         return 1.0
 
-    def _collision_safe_arm(self, target_rad):
-        """Retorna (q_seguro, foi_bloqueado). Encurta o movimento se
-        necessário para que o braço pare antes da parede/obstáculo."""
-        if not _COLLISION_OK:
-            return target_rad, False
-        start = self._last_safe_q
+    def _collision_safe_arm(self, target_rad,
+                             hand_state_override: dict | None = None):
+        """Retorna (q_seguro|None, foi_bloqueado).
+
+        Comportamento:
+          • Sistema desligado: devolve target sem alterações.
+          • alpha≈1: rota livre, devolve target.
+          • 0 < alpha < 1: encurta o movimento até alpha (parada antes
+            do obstáculo).
+          • alpha≈0: BLOQUEIO TOTAL — devolve (None, True) para o
+            chamador NÃO publicar nada (o braço fica onde está, sem
+            teleportar para a antiga `_last_safe_q`).
+
+        `hand_state_override` permite validar trajetórias com a mão em
+        pré-shape (SDD T11/T12) sem precisar primeiro fechar a mão.
+        """
+        if not _COLLISION_OK or not getattr(self, '_collision_enabled', False):
+            return _np.array(target_rad), False
+        start = self._current_arm_q()
         if start is None:
-            start = _np.array(target_rad)
+            return _np.array(target_rad), False
         target = _np.array(target_rad)
-        alpha = self._path_max_safe_alpha(start, target)
+        alpha = self._path_max_safe_alpha(start, target,
+                                            hand_state_override=hand_state_override)
         if alpha >= 0.999:
             return target, False
         if alpha <= 0.001:
-            # Mesmo um pequeno passo colide — fica onde está
-            return start, True
+            return None, True   # bloqueio total: não publica
         safe = start + alpha * (target - start)
         return safe, True
 
-    def _publish_arm_positions(self, positions_rad: list):
+    def _publish_arm_positions(self, positions_rad: list,
+                                  hand_state_override: dict | None = None):
         if not self._ready:
             return
 
-        if _COLLISION_OK:
-            safe_q, blocked = self._collision_safe_arm(positions_rad)
+        out_positions: list
+        if _COLLISION_OK and getattr(self, '_collision_enabled', False):
+            safe_q, blocked = self._collision_safe_arm(
+                positions_rad, hand_state_override=hand_state_override)
+            if blocked and safe_q is None:
+                # Totalmente bloqueado: não move o braço, apenas avisa.
+                # Re-sincroniza sliders com a posição ATUAL (não teleporta).
+                cur = self._current_arm_q()
+                if cur is not None:
+                    cur_deg = {j: int(round(math.degrees(cur[i])))
+                               for i, j in enumerate(ARM_JOINTS)}
+                    self.root.after_idle(self._update_arm_sliders, cur_deg)
+                self._set_status(
+                    'Movimento bloqueado pela colisão — braço permanece '
+                    'na posição atual. Desabilite o check no header se '
+                    'quiser forçar.', _CLR=WARN)
+                return
             out_positions = [float(v) for v in safe_q]
             self._last_safe_q = _np.array(out_positions)
             if blocked:
-                # Sincroniza sliders/entries com a posição realmente publicada
                 safe_deg = {j: int(round(math.degrees(out_positions[i])))
                             for i, j in enumerate(ARM_JOINTS)}
                 self.root.after_idle(self._update_arm_sliders, safe_deg)
@@ -1980,6 +2670,8 @@ class ManualControlNode(Node):
                     _CLR=WARN)
         else:
             out_positions = list(positions_rad)
+            if _COLLISION_OK:
+                self._last_safe_q = _np.array(out_positions)
 
         msg = JointTrajectory()
         msg.joint_names = list(ARM_JOINTS)

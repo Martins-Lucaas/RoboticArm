@@ -3,6 +3,21 @@
 <world name="conveyor_cell">
 
   <!-- ================================================================
+       PLUGINS — gazebo_ros_state expõe os serviços de SetEntityState/
+       GetEntityState que o grasp_attacher_node usa para teleportar o
+       pick_object a 30Hz seguindo a palma (kinematic attach). SEM este
+       plugin, /gazebo/set_entity_state não existe e o attach silen-
+       ciosamente falha (objeto cai por gravidade durante o grasp).
+       ================================================================ -->
+
+  <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+    <ros>
+      <namespace>/gazebo</namespace>
+    </ros>
+    <update_rate>30.0</update_rate>
+  </plugin>
+
+  <!-- ================================================================
        ILUMINAÇÃO — Célula industrial bem iluminada
        ================================================================ -->
 

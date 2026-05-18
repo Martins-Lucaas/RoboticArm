@@ -53,19 +53,118 @@ def _fix_virtual_link_inertia(urdf_body: str) -> str:
 
 
 def _stabilize_hand_joints(urdf_body: str) -> str:
+    """Patcha dinâmica + limites das juntas da mão COVVI para permitir
+    grasp por contato físico real (sem kinematic attach).
+
+    Mudanças vs. URDF original:
+      • effort: 1.0 → 8.0 N·m (juntas primárias) — força de fechamento
+        suficiente para o atrito sustentar 180g (frasco) sem deslizar.
+        Industry baseline: Robotiq adaptive ~10 N·m, Schunk SDH ~5 N·m.
+      • damping: mimic 120 → 30, primária 10 → 5 — dedos transmitem
+        força mais rápido para o objeto antes do controlador saturar.
+      • friction (junta): mantida (estabilidade do solver ODE).
+    """
     def _patch(m: re.Match) -> str:
         jxml = m.group(0)
         if 'type="revolute"' not in jxml:
             return jxml
-        damp, fric = (120.0, 20.0) if '<mimic' in jxml else (10.0, 2.0)
+        is_mimic = '<mimic' in jxml
+        damp, fric = (30.0, 10.0) if is_mimic else (5.0, 1.0)
         dyn_tag = f'<dynamics damping="{damp}" friction="{fric}"/>'
         if '<dynamics' in jxml:
             jxml = re.sub(r'<dynamics[^/]*/>', dyn_tag, jxml)
         else:
             jxml = jxml.replace('</joint>',
                                 f'      {dyn_tag}\n    </joint>')
+        # Boost no effort_limit (apenas para juntas PRIMÁRIAS, não mimic)
+        # para o PID desenvolver força de fechamento real.
+        if not is_mimic:
+            jxml = re.sub(r'effort="[\d.]+"', 'effort="8.0"', jxml)
         return jxml
     return re.sub(r'<joint\b[^>]*>.*?</joint>', _patch, urdf_body, flags=re.DOTALL)
+
+
+def _inject_skin_layer(urdf_body: str) -> str:
+    """Injeta uma camada de "pele" macia ao redor de cada falange da mão.
+
+    Motivação
+    ─────────
+    O URDF original modela cada falange como uma AABB rígida; entre
+    falanges adjacentes existem cantos vivos e descontinuidades onde o
+    objeto pode encaixar e ser ejetado lateralmente pelo contato. Em
+    mãos reais (incluindo a COVVI física) há uma luva de silicone
+    coobrindo todos os dedos — esse "skin" cria uma superfície contínua,
+    macia e de alto atrito ao redor do esqueleto rígido.
+
+    Implementação
+    ─────────────
+    Para cada link de falange (`*_proximal` e `*_distal` dos 5 dedos),
+    duplica a `<collision>` original adicionando uma SEGUNDA caixa com:
+      • dimensões + `_SKIN_INFLATE_M` em CADA eixo (envelope ~3mm além
+        do esqueleto);
+      • mesmo `origin xyz/rpy` da original (permanece colada na falange);
+    URDF + Gazebo aceitam múltiplos `<collision>` por link e somam-nos
+    no shape do ODE. A pele é regida pelas mesmas tags `<gazebo
+    reference>` do link (kp=5e4 + kd=50 + mu=1.5 + maxVel=0.01), então
+    automaticamente herda contato macio e atrito alto.
+
+    Para a `lisa` (palma) que usa colisão de malha, é adicionado um box
+    inflado aproximado para suavizar a interface palma-objeto.
+    """
+    _SKIN_INFLATE_M = 0.003   # 3mm de pele por face (6mm de aumento total/eixo)
+
+    # 1) Box-collisions de falanges — inflar e duplicar
+    finger_link_pat = re.compile(
+        r'(<link\s+name="(?:thumb|index|middle|ring|little)_(?:proximal|distal)"[^>]*>'
+        r'.*?</link>)',
+        re.DOTALL)
+
+    box_coll_pat = re.compile(
+        r'(<collision>\s*<geometry>\s*<box\s+size="([^"]+)"\s*/>\s*</geometry>'
+        r'\s*<origin\s+xyz="([^"]+)"\s+rpy="([^"]+)"\s*/>\s*</collision>)',
+        re.DOTALL)
+
+    def _patch_finger_link(m: re.Match) -> str:
+        link_xml = m.group(0)
+
+        def _patch_collision(cm: re.Match) -> str:
+            original = cm.group(1)
+            sizes = [float(s) for s in cm.group(2).split()]
+            xyz   = cm.group(3)
+            rpy   = cm.group(4)
+            inflated = ' '.join(
+                f'{s + 2 * _SKIN_INFLATE_M:.5f}' for s in sizes)
+            skin = (
+                f'\n        <collision name="skin">'
+                f'<geometry><box size="{inflated}"/></geometry>'
+                f'<origin xyz="{xyz}" rpy="{rpy}"/>'
+                f'</collision>'
+            )
+            return original + skin
+
+        return box_coll_pat.sub(_patch_collision, link_xml, count=1)
+
+    urdf_body = finger_link_pat.sub(_patch_finger_link, urdf_body)
+
+    # 2) Palma (lisa) — usa colisão de malha; adiciona box-skin
+    # aproximado ao redor da palma. Geometria do right_lisa.STL:
+    # palm ocupa aprox. x ∈ [-0.04, +0.04], y ∈ [0, +0.092], z ∈
+    # [-0.02, +0.02] no frame de hand_base. Box centrado em
+    # (0, 0.046, 0) com tamanho (0.085, 0.092, 0.045) — 3mm de pele
+    # em cada face suaviza o contato sem mudar o footprint visível.
+    palm_skin = (
+        '\n        <collision name="palm_skin">'
+        '<geometry><box size="0.085 0.092 0.045"/></geometry>'
+        '<origin xyz="0 0.046 0" rpy="0 0 0"/>'
+        '</collision>'
+    )
+    urdf_body = re.sub(
+        r'(<link\s+name="lisa">.*?<collision>\s*<geometry>\s*<mesh\b[^>]*?/>'
+        r'\s*</geometry>\s*<origin\b[^>]*?/>\s*</collision>)',
+        lambda m: m.group(1) + palm_skin,
+        urdf_body, count=1, flags=re.DOTALL)
+
+    return urdf_body
 
 
 def _build_robot_urdf():
@@ -108,14 +207,35 @@ def _build_robot_urdf():
 
     hand_body = _fix_virtual_link_inertia(hand_body)
     hand_body = _stabilize_hand_joints(hand_body)
+    hand_body = _inject_skin_layer(hand_body)
 
+    # Tag <gazebo reference> por link da mão.
+    #
+    # CONTATO SUAVE para grasp sem ejeção:
+    #   kp=5e4 (era 1e6) — rigidez Hertziana 20× menor: a "mola" do
+    #     contato armazena MUITO menos energia ao penetrar, então o
+    #     impulso de separação é proporcionalmente menor → o objeto
+    #     não sai disparado quando o dedo toca.
+    #   kd=50 (era 1.0) — amortecimento alto na junção de contato
+    #     dissipa a velocidade relativa rapidamente; sem isso o objeto
+    #     oscila/quica antes de estabilizar.
+    #   maxContacts=8 (era default) — mais pontos de contato suaviza
+    #     a distribuição da força ao redor da geometria cilíndrica.
+    #   minDepth=0.0005 — pequena interpenetração permitida absorve o
+    #     impacto inicial sem disparar correção brusca do solver.
+    #
+    # Industry baseline: ROS-Industrial gripper sims usam kp ≈ 1e4–1e5
+    # com kd ~ 1–10% de kp para grasping estável.
     hand_link_names = re.findall(r'<link\s+name="([^"]+)"', hand_body)
     for lname in hand_link_names:
         hand_body += (
             f'\n  <gazebo reference="{lname}">'
             f'<gravity>false</gravity>'
             f'<self_collide>false</self_collide>'
-            f'<kp>1e6</kp><kd>1.0</kd>'
+            f'<kp>5e4</kp><kd>50.0</kd>'
+            f'<maxContacts>8</maxContacts>'
+            f'<minDepth>0.0005</minDepth>'
+            f'<maxVel>0.01</maxVel>'
             f'</gazebo>'
         )
 
@@ -229,14 +349,22 @@ def generate_launch_description():
         executable='grasp_executor',
         parameters=[params_file])
 
+    # NOTA: o grasp_attacher_node (kinematic teleport) foi removido —
+    # a captura agora é feita por contato físico real (atrito ODE +
+    # esforço dos dedos COVVI), como em manipuladores industriais.
+
     conveyor = Node(
         package='grasp_ml_pack',
         executable='conveyor_controller',
         parameters=[params_file, {'sim_only': sim_only}])
 
+    # GUI = manual_control (substitui o gui_control antigo). Expõe o
+    # ciclo completo de pick em 6 fases (F1..F6) com gating por
+    # /joint_states e attach kinemático imediato em F5 — fluxo testado
+    # para frasco/ampola/tubo. Para desabilitar a GUI: no_gui:=true.
     gui = Node(
         package='grasp_ml_pack',
-        executable='gui_control',
+        executable='manual_control',
         condition=UnlessCondition(no_gui))
 
     pipeline = Node(
@@ -247,7 +375,8 @@ def generate_launch_description():
     after_hand_start_cell = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=load_hand,
-            on_exit=[detector, executor_node, conveyor, gui, pipeline]))
+            on_exit=[detector, executor_node,
+                     conveyor, gui, pipeline]))
 
     return LaunchDescription([
         use_yolo_arg,
