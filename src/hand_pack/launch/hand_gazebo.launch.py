@@ -1,4 +1,17 @@
+"""Launch standalone da mão COVVI no Gazebo.
+
+Lê o URDF cru do Onshape, aplica os patches de:
+  - limites factíveis das juntas (manual COVVI: 81° flexão);
+  - dinâmica para grasp por contato (effort, damping);
+  - "pele" macia em falanges e palma;
+  - supressão de auto-colisão intra-dedo.
+
+E publica o `robot_description` resultante para o `robot_state_publisher`
++ Gazebo via `spawn_entity`.
+"""
+
 import os
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, RegisterEventHandler
@@ -6,17 +19,22 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
+from hand_pack.urdf_helpers import apply_all
+
+
+def _load_patched_urdf(urdf_path: str) -> str:
+    with open(urdf_path, 'r') as f:
+        raw = f.read()
+    return apply_all(raw, skin_inflate_m=0.002)
+
+
 def generate_launch_description():
-    # 1. Definir o pacote
     package_name = 'hand_pack'
     pkg_share = get_package_share_directory(package_name)
     urdf_file = os.path.join(pkg_share, 'urdf', 'linear_covvi_hand_gazebo.urdf')
 
-    # 2. Ler o URDF
-    with open(urdf_file, 'r') as infp:
-        robot_desc = infp.read()
+    robot_desc = _load_patched_urdf(urdf_file)
 
-    # 3. NÓ: Robot State Publisher (O coração do TF)
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -25,14 +43,11 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_desc, 'use_sim_time': True}]
     )
 
-    # 4. INCLUIR: Mundo do Gazebo
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(
             get_package_share_directory('gazebo_ros'), 'launch', 'gazebo.launch.py')]),
     )
 
-    # 5. NÓ: Spawn Entity (Coloca a mão no Gazebo)
-    # Adicionado '-z', '0.1' para garantir que ela não faça spawn afundada no chão
     spawn_entity = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
@@ -40,8 +55,6 @@ def generate_launch_description():
         output='screen'
     )
 
-    # 6. NÓS DOS CONTROLADORES (Apenas definidos, não iniciados ainda)
-    # O argumento '--controller-manager' força a conexão direta e evita falhas de rede interna
     load_joint_state_broadcaster = Node(
         package="controller_manager",
         executable="spawner",
@@ -56,9 +69,6 @@ def generate_launch_description():
         output='screen'
     )
 
-    # 7. EVENT HANDLERS (A Mágica da Sincronização)
-    
-    # A - Só inicia o Broadcaster APÓS o robô terminar de spawnar no Gazebo
     delay_broadcaster_after_spawn = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=spawn_entity,
@@ -66,7 +76,6 @@ def generate_launch_description():
         )
     )
 
-    # B - Só inicia o Controlador de Posição APÓS o Broadcaster iniciar com sucesso
     delay_controller_after_broadcaster = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=load_joint_state_broadcaster,
@@ -74,7 +83,6 @@ def generate_launch_description():
         )
     )
 
-    # Retorna o Launch final estruturado
     return LaunchDescription([
         robot_state_publisher,
         gazebo,

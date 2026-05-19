@@ -42,11 +42,25 @@ MIMIC_JOINTS = [
     ('_little_link_j01',     'Little', 1.31664159359670),
 ]
 
-# Maximum joint angle in radians (for 0-200 → rad conversion)
-MAX_RAD = {'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
-           'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0}
+# Limites por junta driver — devem casar com HAND_DRIVER_LIMITS /
+# HAND_DRIVER_LOWER em hand_pack/urdf_helpers.py. MIN_RAD funciona
+# como o ``open_limit`` calibrado do firmware (rest pose levemente
+# curvado da mão real).
+MAX_RAD = {'Thumb': 1.0, 'Index': 1.0, 'Middle': 1.0,
+           'Ring':  1.0, 'Little': 1.0, 'Rotate': 1.0}
+MIN_RAD = {'Thumb': 0.08, 'Index': 0.12, 'Middle': 0.12,
+           'Ring':  0.12, 'Little': 0.12, 'Rotate': 0.0}
+
+# Slider 0..HAND_SLIDER_MAX (percent semantics) interpola linearmente
+# entre MIN_RAD (open_limit) e MAX_RAD (close_limit) — mesma semântica
+# do firmware COVVI (0% = aberto, 100% = fechado).
+HAND_SLIDER_MAX = 100
 
 MAIN_JOINTS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
+
+
+def _slider_to_rad(j: str, slider_val: float) -> float:
+    return MIN_RAD[j] + (slider_val / HAND_SLIDER_MAX) * (MAX_RAD[j] - MIN_RAD[j])
 
 
 class HandControlGUI(Node):
@@ -78,14 +92,14 @@ class HandControlGUI(Node):
         ttk.Separator(self.root, orient='horizontal').pack(fill='x', pady=6)
 
         tk.Label(self.root,
-                 text='Posição  (0 = aberto  ·  200 = fechado)',
+                 text=f'Posição  (0 = aberto  ·  {HAND_SLIDER_MAX} = fechado, cap manual)',
                  font=('Arial', 9, 'italic')).pack()
 
         for joint in MAIN_JOINTS:
             f = tk.Frame(self.root)
             f.pack(fill='x', padx=20)
             tk.Label(f, text=f'{joint}:', width=8, anchor='w').pack(side=tk.LEFT)
-            s = tk.Scale(f, from_=0, to=200, resolution=1,
+            s = tk.Scale(f, from_=0, to=HAND_SLIDER_MAX, resolution=1,
                          orient=tk.HORIZONTAL,
                          command=lambda _: self._on_change())
             s.pack(side=tk.LEFT, fill='x', expand=True)
@@ -166,11 +180,11 @@ class HandControlGUI(Node):
 
         names, positions = list(MAIN_JOINTS), []
         for j in MAIN_JOINTS:
-            positions.append(vals[j] / 200.0 * MAX_RAD[j])
+            positions.append(_slider_to_rad(j, vals[j]))
 
         for mimic, driver, mult in MIMIC_JOINTS:
             names.append(mimic)
-            positions.append(vals[driver] / 200.0 * MAX_RAD[driver] * mult)
+            positions.append(_slider_to_rad(driver, vals[driver]) * mult)
 
         msg = JointTrajectory()
         msg.joint_names = names

@@ -70,6 +70,7 @@ try:
         _K_D_FINGER as _GX_K_D_FINGER,
         _K_P_THUMB as _GX_K_P_THUMB,
     )
+    from .cage_check import cage_status as _gx_cage_status
     _COLLISION_OK = True
 except Exception:
     _np = None
@@ -80,6 +81,7 @@ except Exception:
     _gx_finger_fk = None
     _gx_forward_kinematics = None
     _gx_inverse_kinematics = None
+    _gx_cage_status = None
     _GX_OBSTACLES = {}
     _GX_PICK_BBOX = {}
     _GX_T_HAND_ATTACH = None
@@ -105,8 +107,20 @@ _FINGER_MCP_HAND: dict[str, tuple] = {
 }
 
 # Conversão dos slider values (0-200) para o ângulo primário (rad).
-_HAND_DRIVER_MAX = {'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
-                    'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0}
+# Slider 0 mapeia em _HAND_DRIVER_MIN (open_limit calibrado da COVVI
+# real — rest pose levemente curvado) e slider 200 em _HAND_DRIVER_MAX
+# (close_limit). Devem casar com hand_pack.urdf_helpers.HAND_DRIVER_*.
+_HAND_DRIVER_MAX = {'Thumb': 1.0, 'Index': 1.0, 'Middle': 1.0,
+                    'Ring':  1.0, 'Little': 1.0, 'Rotate': 1.0}
+_HAND_DRIVER_MIN = {'Thumb': 0.08, 'Index': 0.12, 'Middle': 0.12,
+                    'Ring':  0.12, 'Little': 0.12, 'Rotate': 0.0}
+
+
+def _hand_slider_to_rad(j: str, slider_val: float) -> float:
+    """Converte slider 0..200 em rad interpolando [MIN, MAX] do driver."""
+    return (_HAND_DRIVER_MIN[j]
+            + float(slider_val) / 200.0
+            * (_HAND_DRIVER_MAX[j] - _HAND_DRIVER_MIN[j]))
 
 
 def _finger_tip_hand(finger: str, primary_rad: float):
@@ -2029,7 +2043,8 @@ class ManualControlNode(Node):
                      touch_threshold: int = 70,
                      label: str | None = None,
                      project_label: str | None = None,
-                     attach_obj: str | None = None):
+                     attach_obj: str | None = None,
+                     cage_obj_class: str | None = None):
         """Fechamento incremental com parada em contato.
 
         n_steps:          número de passos da rampa
@@ -2041,7 +2056,30 @@ class ManualControlNode(Node):
         attach_obj:       se setado, dispara /grasp/attach ao concluir o
                           fechamento (kinematic attach do item 1 do SDD).
                           O objeto passa a seguir o TCP até o detach.
+        cage_obj_class:   'frasco'/'tubo'/'ampola' — quando dado, executa
+                          cage check (geometria de engaiolamento) antes da
+                          rampa. Loga warn se inválido; não bloqueia.
         """
+        # Cage check (não-fatal) quando o caller passou contexto de objeto.
+        if cage_obj_class and _gx_cage_status is not None and _COLLISION_OK:
+            try:
+                q_arm = _np.array([
+                    math.radians(self.arm_sliders[j].get())
+                    for j in ARM_JOINTS])
+                hand_state_rad = {j: _hand_slider_to_rad(j, target_vals.get(j, 0))
+                                  for j in HAND_JOINTS}
+                cage = _gx_cage_status(q_arm, hand_state_rad, cage_obj_class)
+                tag = label or cage_obj_class
+                if not cage.valid:
+                    self.get_logger().warn(
+                        f'[{tag}:CAGE] {cage.summary()}')
+                else:
+                    self.get_logger().info(
+                        f'[{tag}:CAGE] gaiola válida — fechando')
+            except Exception as exc:  # FK ou sliders ausentes
+                self.get_logger().debug(
+                    f'[CAGE] check ignorado ({exc!r})')
+
         start = {j: self.hand_sliders[j].get() for j in HAND_JOINTS}
 
         if project_label and self._eci_enabled:
@@ -2379,7 +2417,8 @@ class ManualControlNode(Node):
             self._smart_close(grip_target, label=grip_key,
                               project_label=grip_key,
                               attach_obj=None,
-                              touch_threshold=999)
+                              touch_threshold=999,
+                              cage_obj_class=obj_class)
             if self._step_by_step:
                 self._step_pending = _f6
                 if hasattr(self, '_btn_next_phase'):
@@ -2449,14 +2488,14 @@ class ManualControlNode(Node):
             f'[Close pós-hover] {obj} → {grip_key}', _CLR=WARN)
         self._smart_close(HAND_GRIPS[grip_key],
                           label=grip_key, project_label=grip_key,
-                          attach_obj=obj)
+                          attach_obj=obj, cage_obj_class=obj)
 
     def _preshape_hand_state(self, grip_key: str) -> dict:
         """Converte um preset HAND_PRESHAPE[grip_key] (sliders 0..200)
         em hand_state (rad por dedo primário) para uso em FK durante o
         sweep de colisão (SDD T11/T12)."""
         preset = HAND_PRESHAPE.get(grip_key, {})
-        return {j: float(preset.get(j, 0)) / 200.0 * _HAND_DRIVER_MAX[j]
+        return {j: _hand_slider_to_rad(j, preset.get(j, 0))
                 for j in HAND_JOINTS}
 
     def _do_approach_only(self, obj_class: str):
@@ -2556,9 +2595,8 @@ class ManualControlNode(Node):
     def _current_hand_state(self) -> dict:
         """Estado atual da mão (sliders) convertido para ângulos primários (rad)."""
         if not hasattr(self, 'hand_sliders'):
-            return {j: 0.0 for j in HAND_JOINTS}
-        return {j: float(self.hand_sliders[j].get()) / 200.0 *
-                   _HAND_DRIVER_MAX[j]
+            return {j: _HAND_DRIVER_MIN[j] for j in HAND_JOINTS}
+        return {j: _hand_slider_to_rad(j, self.hand_sliders[j].get())
                 for j in HAND_JOINTS}
 
     def _current_arm_q(self):
@@ -2693,7 +2731,7 @@ class ManualControlNode(Node):
     def _publish_hand_values(self, vals: dict):
         if not self._ready:
             return
-        primary_rad = {j: vals[j] / 200.0 * MAX_RAD[j] for j in HAND_JOINTS}
+        primary_rad = {j: _hand_slider_to_rad(j, vals[j]) for j in HAND_JOINTS}
         names = list(HAND_JOINTS)
         positions = [primary_rad[j] for j in HAND_JOINTS]
         for mimic, driver, mult in MIMIC_JOINTS:

@@ -57,9 +57,10 @@ except ImportError:
 from .kinematics import (
     inverse_kinematics,
     forward_kinematics, fk_partial,
-    HAND_CONFIGS, HAND_LIMITS, hand_ik,
+    HAND_CONFIGS, HAND_LIMITS, HAND_LOWER, hand_ik,
 )
 from .perfect_grasp import PerfectGrasp
+from .cage_check import cage_status
 # Poses canônicas (SDD §4) — fonte única de verdade do approach/pick.
 from .poses import (
     PRE_APPROACH_POSES_DEG as _POSES_PRE_APPROACH_DEG,
@@ -407,15 +408,20 @@ class GraspExecutorNode(Node):
         self.declare_parameter('sim_only', True)
         self.declare_parameter('pick_x', 0.65)
         self.declare_parameter('pick_y', 0.00)
-        # Recalibrado para T_HAND_ATTACH flush (acoplamento sem 1cm de offset).
-        # pick_z = world Z do TCP (ponto de convergência dos fingertips), escolhido
-        # para que o grasp envolva corretamente cada objeto:
-        #   frasco — TCP no centro do cilindro (palm grip envolve r=42mm)
-        #   tubo   — TCP no centro do cilindro (claw grip envolve r=12mm)
-        #   ampola — TCP no topo do cilindro  (fingertip pinch de cima)
-        self.declare_parameter('pick_z_frasco', 0.921)
+        # `pick_z_*` = CENTRO Z DO OBJETO na pose canônica (belt + half_h).
+        # Usado como `ref_obj.z` em `_solve_grasp_poses_at`, onde os deltas
+        # `PICK_TCP_WORLD − ref_obj` representam a transformação centro-do-
+        # objeto → TCP. ATENÇÃO: antes este parâmetro armazenava o TCP_z e
+        # gerava delta_z = 0, causando o TCP a ficar no centro real do
+        # objeto (em vez de 25 mm acima do topo para o frasco, +37 mm para
+        # a ampola). Sintoma: dedos varriam o topo do frasco e empurravam
+        # objetos pequenos antes do contato palmar.
+        #   frasco — center_z = belt(0.806) + half_h(0.045) = 0.851
+        #   tubo   — center_z = belt(0.806) + half_h(0.060) = 0.866
+        #   ampola — center_z = belt(0.806) + half_h(0.0375) = 0.844
+        self.declare_parameter('pick_z_frasco', 0.851)
         self.declare_parameter('pick_z_tubo',   0.866)
-        self.declare_parameter('pick_z_ampola', 0.881)
+        self.declare_parameter('pick_z_ampola', 0.844)
         self.declare_parameter('box1_x', -0.05)
         self.declare_parameter('box1_y',  0.65)
         self.declare_parameter('box1_z',  0.60)
@@ -667,9 +673,23 @@ class GraspExecutorNode(Node):
                 preshape_slider = (HAND_PRESHAPE.get(grip_label)
                                     if grip_label else None)
                 preshape_rad = (
-                    {j: float(preshape_slider.get(j, 0)) / 200.0 * HAND_LIMITS[j]
+                    {j: HAND_LOWER[j] + float(preshape_slider.get(j, 0)) / 200.0
+                        * (HAND_LIMITS[j] - HAND_LOWER[j])
                      for j in _HAND_PRIMARY}
                     if preshape_slider else None)
+
+                # Cage check antes de fechar — mesmo padrão da Fase 2 do
+                # ciclo autônomo. Loga warn se preshape/posição do braço
+                # deixam fingertips fora da gaiola; não bloqueia.
+                cage = cage_status(self._current_q,
+                                   preshape_rad or cfg_closed,
+                                   obj,
+                                   world_obj_pos=self._get_world_obj_pos())
+                if not cage.valid:
+                    self.get_logger().warn(f'[MANUAL:CAGE] {cage.summary()}')
+                else:
+                    self.get_logger().info('[MANUAL:CAGE] gaiola válida — fechando')
+
                 self._perfect_grasp.close_until_contact(
                     cfg_closed,
                     label=f'{obj}/{grip_type}',
@@ -892,54 +912,108 @@ class GraspExecutorNode(Node):
             cfg_grasp  = hand_ik(grip_type, obj_diam)
             cfg_closed = _close_extra(cfg_grasp)
 
-            # ── FASE 1: HOME → pick (passo único, espaço articular) ──────
-            # Trajetória interpolada DIRETAMENTE no espaço de juntas — UM goal
-            # `FollowJointTrajectory` leva o braço de HOME a q_pick em ~2 s.
-            # Não passa por waypoints intermediários: visualmente é um único
-            # movimento fluido. Cartesiano não é factível aqui (a reta TCP
-            # cruza zona inalcançável perto do ombro); juntas, sim.
-            #
-            # Segurança: a interpolação articular não garante TCP monotônico,
-            # então validamos a varredura amostrando 20 configurações entre
-            # HOME_Q e q_pick e checando contra `_WORLD_OBSTACLES`. O resultado
-            # foi pré-validado para os 3 objetos (frasco/tubo/ampola).
-            #
-            # Mão APENAS ABERTA durante o movimento. NÃO pré-curla (`cfg_grasp`)
-            # em paralelo — fazer isso faz a mão fechar antes do braço chegar
-            # ao objeto, impedindo o grasp correto. O fechamento sobre o
-            # objeto é feito SOMENTE na F2, depois que o braço completa o
-            # trajeto e a palma está em cima do objeto.
-            self._validate_sweep(_HOME_Q, q_pick, n_steps=20, name='HOME→pick')
-            self._status_msg = f'APPROACH_PICK:{obj_class}'
+            # ── FASE 1: HOME → APPROACH (acima do objeto, mão aberta) ────
+            # Em vez de ir direto ao PICK, paramos 60 mm acima — aí
+            # pre-fechamos a mão em CUP shape (driver ~0.5, ~50% curl) FORA
+            # do volume do objeto. Quando descermos para PICK, os dedos
+            # JÁ ESTÃO em posição de envolver o cilindro — o curl final
+            # (preshape → grasp) acontece pelos lados do objeto, não por
+            # cima, eliminando a varredura do topo que ejetava o frasco.
+            self._validate_sweep(_HOME_Q, q_ap, n_steps=20, name='HOME→approach')
+            self._validate_sweep(q_ap, q_pick, n_steps=10, name='approach→pick')
+            self._status_msg = f'APPROACH:{obj_class}'
             self.get_logger().info(
-                '[F1] HOME → pick (articular, mão ABERTA durante o trajeto)')
+                '[F1] HOME → APPROACH (60 mm acima do PICK, mão aberta)')
             self._send_hand_async(cfg_open, 1.0)
-            self._send_arm(q_pick)
+            self._send_arm(q_ap)
 
-            # ── FASE 2: Fechar mão com detecção de contato (PerfectGrasp) ─
-            # Algoritmo industrial padrão: rampa o target em passos de
-            # ~3.4° a cada 100ms; após cada passo, lê /joint_states e
-            # detecta lag por dedo. Quando algum dedo lagueia >2.3° por
-            # 2 ticks consecutivos, ele é congelado no `pos_actual` —
-            # impede que o PID continue empurrando o objeto após o
-            # contato (causa raiz da ejeção observada no fluxo anterior).
-            self._status_msg = f'GRASPING:{obj_class}'
-            self.get_logger().info(
-                '[F2] Fechando mão sobre o objeto (PerfectGrasp + contato)')
-            # Pré-shape: posiciona Rotate (polegar) e abre dedos parcialmente
-            # ANTES do fechamento ativo. Sem isso o polegar não está
-            # oposto aos dedos quando começam a curvar.
+            # ── FASE 1.5: Pre-close na APPROACH (cup shape em ar) ────────
+            # Computa pre-shape a partir de HAND_PRESHAPE (poses.py). Esses
+            # ângulos formam um "cup" cujos fingertips ficam OUTSIDE do
+            # volume do objeto canônico no eixo descendente — verificado
+            # numericamente para os 3 cilindros.
             from .poses import HAND_PRESHAPE, OBJ_GRIP
             grip_label = OBJ_GRIP.get(obj_class)
             preshape_slider = HAND_PRESHAPE.get(grip_label) if grip_label else None
             preshape_rad = (
-                {j: float(preshape_slider.get(j, 0)) / 200.0 * HAND_LIMITS[j]
+                {j: HAND_LOWER[j] + float(preshape_slider.get(j, 0)) / 200.0
+                    * (HAND_LIMITS[j] - HAND_LOWER[j])
                  for j in _HAND_PRIMARY}
                 if preshape_slider else None)
+            if preshape_rad is not None:
+                self._status_msg = f'PRESHAPE:{obj_class}'
+                self.get_logger().info(
+                    '[F1.5] Pre-shape (cup) na APPROACH antes da descida')
+                self._send_hand(preshape_rad, 0.8)
+                time.sleep(0.85)
+
+            # ── FASE 1.55: TUBO step-aside −X (engajamento sem sweep) ────
+            # O tubo é cilindro vertical alto (120 mm). A trajetória nativa
+            # APPROACH→PICK sweep o TCP em +Y (eixo do finger_dir lateral),
+            # passando os fingertips ao longo do eixo do tubo — qualquer
+            # contato lateral durante a sweep empurra o tubo de pé. Pull
+            # back −X 50 mm primeiro (clearance horizontal); a engajamento
+            # final em +X traz palma e fingertips contra o tubo sem sweep
+            # destrutivo.
+            if obj_class == 'tubo':
+                try:
+                    from .poses import (RTCP_BY_OBJ, solve_pose_R,
+                                          PICK_TCP_WORLD)
+                    pt = PICK_TCP_WORLD['tubo']
+                    tcp_step = (pt[0] - 0.050, pt[1], pt[2])
+                    R_step   = RTCP_BY_OBJ.get('tubo')
+                    seed_step = {j: float(math.degrees(q_ap[i]))
+                                 for i, j in enumerate(_ARM_JOINTS)}
+                    d_step = solve_pose_R(np.asarray(tcp_step), R_step,
+                                            seed_step, check_collision=False)
+                    if d_step is not None:
+                        q_step = _deg_dict_to_rad(d_step)
+                        self._status_msg = f'STEPASIDE:{obj_class}'
+                        self.get_logger().info(
+                            '[F1.55] TUBO step-aside −X 50 mm '
+                            '(evita sweep dos fingertips no tubo)')
+                        self._send_arm(q_step)
+                    else:
+                        self.get_logger().warn(
+                            '[F1.55] TUBO step-aside: IK falhou — '
+                            'engajando direto')
+                except Exception as exc:
+                    self.get_logger().warn(
+                        f'[F1.55] TUBO step-aside ignorado: {exc!r}')
+
+            # ── FASE 1.6: APPROACH → PICK (descida com mão em cup) ───────
+            # Mão FIXA em preshape durante a descida vertical de 60 mm.
+            # Os fingertips deslizam pelos lados do objeto sem varrer
+            # sua face superior. Velocidade reduzida (1.5 s) para evitar
+            # impulso lateral.
+            self._status_msg = f'DESCEND:{obj_class}'
+            self.get_logger().info(
+                '[F1.6] APPROACH → PICK (descida, mão fixa em cup-shape)')
+            self._send_arm(q_pick)
+
+            # ── FASE 2: Fechar mão com detecção de contato (PerfectGrasp) ─
+            # Agora os fingertips estão em cup-shape AO REDOR do objeto.
+            # O fechamento final pega o objeto pelo lado — não por cima.
+            self._status_msg = f'GRASPING:{obj_class}'
+
+            # Cage check: garante que os fingertips estão em torno do
+            # objeto (não acima, não penetrando, dentro do alcance).
+            # Não-fatal — só loga warn; o PerfectGrasp ainda tenta.
+            cage = cage_status(self._current_q,
+                               preshape_rad or cfg_closed,
+                               obj_class,
+                               world_obj_pos=self._get_world_obj_pos())
+            if not cage.valid:
+                self.get_logger().warn(f'[F2:CAGE] {cage.summary()}')
+            else:
+                self.get_logger().info('[F2:CAGE] gaiola válida — fechando')
+
+            self.get_logger().info(
+                '[F2] Fechamento final sobre o objeto (PerfectGrasp + contato)')
             result = self._perfect_grasp.close_until_contact(
                 cfg_closed,
                 label=f'{obj_class}/{grip_type}',
-                preshape_cfg_rad=preshape_rad)
+                preshape_cfg_rad=None)  # já em preshape — não re-aplicar
             if not result.contact_detected:
                 self.get_logger().warn(
                     f'[F2] {obj_class}: nenhum contato detectado '

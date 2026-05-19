@@ -52,7 +52,7 @@ _SDF_FRASCO = """\
     <collision name="collision">
       <geometry><cylinder><radius>0.042</radius><length>0.090</length></cylinder></geometry>
       <surface>
-        <friction><ode><mu>1.5</mu><mu2>1.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
+        <friction><ode><mu>2.5</mu><mu2>2.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
         <contact><ode><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
       </surface>
     </collision>
@@ -81,7 +81,7 @@ _SDF_TUBO = """\
     <collision name="collision">
       <geometry><cylinder><radius>0.012</radius><length>0.120</length></cylinder></geometry>
       <surface>
-        <friction><ode><mu>1.5</mu><mu2>1.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
+        <friction><ode><mu>2.5</mu><mu2>2.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
         <contact><ode><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
       </surface>
     </collision>
@@ -110,7 +110,7 @@ _SDF_AMPOLA = """\
     <collision name="collision">
       <geometry><cylinder><radius>0.005</radius><length>0.075</length></cylinder></geometry>
       <surface>
-        <friction><ode><mu>1.5</mu><mu2>1.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
+        <friction><ode><mu>2.5</mu><mu2>2.5</mu2><fdir1>0 0 0</fdir1><slip1>0.0</slip1><slip2>0.0</slip2></ode></friction>
         <contact><ode><max_vel>0.02</max_vel><min_depth>0.001</min_depth></ode></contact>
       </surface>
     </collision>
@@ -148,7 +148,10 @@ class ConveyorControllerNode(Node):
         self.declare_parameter('pick_x', 0.65)
         self.declare_parameter('pick_y', 0.00)
         self.declare_parameter('belt_surface_z', 0.806)
-        self.declare_parameter('spawn_z', 2.0)
+        # Spawn baixo: ~5 mm acima do z_center final do objeto. Evita
+        # tombamento e dispersão angular vinda de queda livre — objeto
+        # repousa praticamente onde o grasp_executor espera.
+        self.declare_parameter('spawn_z', 0.95)
         self.declare_parameter('object_sequence', ['frasco', 'tubo', 'ampola'])
         self.declare_parameter('sim_only', True)
 
@@ -347,12 +350,16 @@ class ConveyorControllerNode(Node):
 
         # Posição definida exclusivamente via initial_pose do request.
         # O SDF não carrega pose — evita conflito/dupla-aplicação pelo Gazebo.
+        # Spawn z = belt + half_height + small_clearance (5 mm): cai apenas
+        # 5 mm em queda livre, sem tombar — alinhamento eixo-Z preservado.
+        half_h = _OBJ_HALF_HEIGHT[obj_class]
+        spawn_z_obj = self._belt_z + half_h + 0.005
         req = SpawnEntity.Request()
         req.name = 'pick_object'
         req.xml  = _SPAWN_SDF[obj_class]
         req.initial_pose.position.x  = self._pick_x
         req.initial_pose.position.y  = self._pick_y
-        req.initial_pose.position.z  = self._spawn_z
+        req.initial_pose.position.z  = spawn_z_obj
         req.initial_pose.orientation.w = 1.0
 
         future = self._spawn_cli.call_async(req)

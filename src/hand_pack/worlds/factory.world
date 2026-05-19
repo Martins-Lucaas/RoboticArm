@@ -9,7 +9,11 @@
       <ode>
         <solver>
           <type>quick</type>
-          <iters>150</iters>
+          <!-- 200 iters: reduz penetração do mesh do objeto na pele
+               antes de <self_collide> reagir. Padrão Gazebo (~50) é
+               insuficiente quando 5 falanges + palma + objeto colidem
+               no mesmo passo (caso típico de power grip). -->
+          <iters>200</iters>
           <sor>1.3</sor>
           <use_dynamic_moi_rescaling>true</use_dynamic_moi_rescaling>
         </solver>

@@ -1,12 +1,35 @@
 import math
+import re
 import threading
+import time
 import rclpy
 from rclpy.node import Node
+from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
+
+# Cage check é fornecido pelo grasp_ml_pack. Soft-import: a GUI funciona
+# mesmo sem o pacote (sem o check), apenas log.
+try:
+    import numpy as _np
+    from grasp_ml_pack.cage_check import cage_status as _cage_status
+    _CAGE_OK = True
+except Exception:
+    _np = None
+    _cage_status = None
+    _CAGE_OK = False
+
+# Extrai o nome do objeto entre parênteses do label de grip
+# (ex.: 'Palm Grip (frasco)' → 'frasco'). Usado para acionar o cage check.
+_GRIP_OBJ_RE = re.compile(r'\(([^)]+)\)\s*$')
+
+
+def _grip_label_to_obj(label: str) -> str | None:
+    m = _GRIP_OBJ_RE.search(label or '')
+    return m.group(1) if m else None
 
 # ---------- Hand constants (mimic joint multipliers from URDF) ----------
 MIMIC_JOINTS = [
@@ -38,9 +61,23 @@ MIMIC_JOINTS = [
     ('_little_link_j01',     'Little', 1.31664159359670),
 ]
 
+# Limites factíveis derivados do manual técnico da COVVI Hand
+# (CV-000918-TC Rev. 6 — "Finger flexion: 81° na PONTA do dedo"). Como as
+# juntas mimic somam multiplicadores na cadeia, o cap real do driver é
+# driver = fingertip_flex / Σ(mults). Ver hand_pack/urdf_helpers.py para
+# o detalhamento. Estes valores DEVEM casar com HAND_DRIVER_LIMITS /
+# HAND_DRIVER_LOWER em urdf_helpers.py.
+#   MAX_RAD ≡ close_limit (slider 100%)
+#   MIN_RAD ≡ open_limit  (slider 0% = rest pose levemente curvado,
+#                          equivalente ao DigitConfigMsg.open_limit
+#                          calibrado no firmware da mão real)
 MAX_RAD = {
-    'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
-    'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0,
+    'Thumb': 1.0, 'Index': 1.0, 'Middle': 1.0,
+    'Ring':  1.0, 'Little': 1.0, 'Rotate': 1.0,
+}
+MIN_RAD = {
+    'Thumb': 0.08, 'Index': 0.12, 'Middle': 0.12,
+    'Ring':  0.12, 'Little': 0.12, 'Rotate': 0.0,
 }
 
 HAND_JOINTS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
@@ -84,33 +121,99 @@ PICK_POSES = {
     },
 }
 
-# Configurações de grasp da mão COVVI (extraído de kinematics.HAND_CONFIGS),
-# em valor de slider 0..200 (0=aberto, 200=fechado em max_rad).
-# Mapeamento: cfg_rad_j → slider_j = round(cfg_rad_j / MAX_RAD[j] * 200)
+# Configurações de grasp da mão COVVI — definidas como FRAÇÕES do cap
+# (0.0 = junta aberta, 1.0 = no cap factível). Independente do valor
+# absoluto do cap, o formato do grip é preservado.
 #   palm_grip      → frasco (preensão palmar, garrafa)
 #   claw_grip      → tubo de ensaio (garra fina)
 #   fingertip_grip → ampola (pinça de pontas)
-# Valores derivados:
-#   palm_grip   = {Thumb:1.10,Index:1.25,Middle:1.25,Ring:1.20,Little:1.10,Rotate:0.25}
-#               = {138, 156, 156, 150, 138, 50}
-#   claw_grip   = {Thumb:0.90,Index:1.10,Middle:1.10,Ring:1.05,Little:0.95,Rotate:0.45}
-#               = {112, 138, 138, 131, 119, 90}
-#   fingertip   = {Thumb:0.75,Index:0.70,Middle:0.65,Ring:0.05,Little:0.05,Rotate:0.82}
-#               = {94, 88, 81, 6, 6, 164}
-HAND_GRIPS = {
+HAND_GRIPS_FRAC = {
     'Palm Grip (frasco)': {
-        'Thumb': 138, 'Index': 156, 'Middle': 156,
-        'Ring':  150, 'Little': 138, 'Rotate': 50,
+        'Thumb': 0.69, 'Index': 0.78, 'Middle': 0.78,
+        'Ring':  0.75, 'Little': 0.69, 'Rotate': 0.25,
     },
+    # Claw e Fingertip: posições MÁXIMAS de fechamento, equivalentes a
+    # slider 0..200 dividido por 200 (mesmo target em rad que o cell
+    # pick-and-place em grasp_ml_pack/poses.py). A força final é dada
+    # pelo PerfectGrasp/_grasp_with_contact_detection — estes valores
+    # apenas definem o envelope onde o fechamento pode parar.
     'Claw Grip (tubo)': {
-        'Thumb': 112, 'Index': 138, 'Middle': 138,
-        'Ring':  131, 'Little': 119, 'Rotate': 90,
+        'Thumb': 0.375, 'Index': 0.375, 'Middle': 0.40,
+        'Ring':  0.41,  'Little': 0.435, 'Rotate': 1.00,
     },
     'Fingertip Grip (ampola)': {
-        'Thumb': 94, 'Index': 88, 'Middle': 81,
-        'Ring':   6, 'Little':  6, 'Rotate': 164,
+        'Thumb': 0.52, 'Index': 0.31, 'Middle': 0.00,
+        'Ring':  0.00, 'Little': 0.00, 'Rotate': 0.73,
     },
 }
+
+# Escala dos sliders da mão. 100 = "porcentagem de fechamento" — visualmente
+# claro de que o slider no máximo corresponde ao cap factível da mão.
+HAND_SLIDER_MAX = 100
+
+
+def _slider_to_rad(j: str, slider_val: float) -> float:
+    """Slider 0..HAND_SLIDER_MAX → rad em [MIN_RAD[j], MAX_RAD[j]]."""
+    return MIN_RAD[j] + (slider_val / HAND_SLIDER_MAX) * (MAX_RAD[j] - MIN_RAD[j])
+
+
+def _rad_to_slider(j: str, rad: float) -> int:
+    """Inverso de :func:`_slider_to_rad`, com clamp em [0, HAND_SLIDER_MAX]."""
+    span = MAX_RAD[j] - MIN_RAD[j]
+    if span <= 1e-9:
+        return 0
+    return max(0, min(HAND_SLIDER_MAX,
+                      round((rad - MIN_RAD[j]) / span * HAND_SLIDER_MAX)))
+
+
+def clamp_finger_interference(rad_targets: dict) -> dict:
+    """Reduz `Thumb` se Rotate alto + Index/Middle fechando ameaçam colisão.
+
+    Quando o polegar está em oposição (Rotate elevado), o eixo do polegar
+    paira por cima do volume onde as falanges distais de Index/Middle
+    chegam ao fecharem. Sem este clamp, basta o usuário soltar Thumb e
+    Rotate em 100 simultaneamente para que `thumb_distal` atravesse
+    `index_distal`/`middle_distal` independentemente do cap individual de
+    cada junta.
+
+    Heurística (calibrada por inspeção visual):
+        rot ≤ 0.4    → sem clamp (polegar ainda afastado lateralmente).
+        rot > 0.4    → cap efetivo do Thumb cai linearmente com `rot`
+                       e com o ângulo máximo entre Index e Middle.
+
+        thumb_eff = THUMB_CAP - 0.4·(rot - 0.4) - 0.3·max(idx, mid)
+
+    O cap permanece ≥ 0.20 rad para sempre permitir algum fechamento do
+    polegar (ele só recua o suficiente para não tocar os outros dedos).
+
+    Args:
+        rad_targets: dict {junta → rad} a ser publicado. MUTADO IN-PLACE.
+
+    Returns:
+        O mesmo dict (conveniência).
+    """
+    rot = rad_targets.get('Rotate', 0.0)
+    if rot <= 0.4:
+        return rad_targets
+
+    opp = max(rad_targets.get('Index', 0.0), rad_targets.get('Middle', 0.0))
+    thumb_cap = MAX_RAD['Thumb']
+    thumb_eff = thumb_cap - 0.4 * (rot - 0.4) - 0.3 * opp
+    thumb_eff = max(thumb_eff, 0.20)
+
+    if rad_targets.get('Thumb', 0.0) > thumb_eff:
+        rad_targets['Thumb'] = thumb_eff
+    return rad_targets
+
+
+def _grip_frac_to_slider(grip_frac: dict, slider_max: int = HAND_SLIDER_MAX) -> dict:
+    """Converte fração de cap (0..1) em valor de slider (0..slider_max)."""
+    return {j: max(0, min(slider_max, round(f * slider_max)))
+            for j, f in grip_frac.items()}
+
+
+HAND_GRIPS = {label: _grip_frac_to_slider(frac)
+              for label, frac in HAND_GRIPS_FRAC.items()}
 
 # Colour palette
 BG         = '#1a1a2e'
@@ -138,6 +241,16 @@ class CombinedControlGUI(Node):
             JointTrajectory, '/cr10_group_controller/joint_trajectory', 10)
         self.hand_pub = self.create_publisher(
             JointTrajectory, '/hand_position_controller/joint_trajectory', 10)
+
+        # Posição atual das juntas primárias da mão — alimentada por
+        # /joint_states e consultada pelo `_grasp_with_contact_detection`
+        # para detectar dedos bloqueados pelo objeto.
+        self._latest_hand_pos: dict[str, float] = {}
+        self._latest_lock = threading.Lock()
+        self._grasp_busy = False  # bloqueia novos grips enquanto rampa anda
+        self.create_subscription(
+            JointState, '/joint_states', self._on_joint_state, 10)
+
         self._build_ui()
         self._ready = True  # UI ready — user interactions may now publish
 
@@ -349,7 +462,7 @@ class CombinedControlGUI(Node):
             pady=7, padx=10,
         ).pack(side='left')
         tk.Label(
-            header, text='0 = aberta  ·  200 = fechada',
+            header, text=f'0 = aberta  ·  {HAND_SLIDER_MAX} = fechada (cap manual)',
             font=('Arial', 9), bg=HEADER_BG, fg=TEXT_DIM,
         ).pack(side='right', padx=10)
 
@@ -376,7 +489,7 @@ class CombinedControlGUI(Node):
             val_lbl.pack(side='right')
 
             sl = tk.Scale(
-                row, from_=0, to=200, resolution=1,
+                row, from_=0, to=HAND_SLIDER_MAX, resolution=1,
                 orient='horizontal', showvalue=False,
                 bg=PANEL_BG, fg=TEXT_DIM,
                 troughcolor=TROUGH, activebackground=SLIDER_HND,
@@ -402,14 +515,14 @@ class CombinedControlGUI(Node):
             bg=BTN_HND_C, fg='white',
             activebackground='#d32f2f', activeforeground='white',
             relief='flat', padx=12, pady=5, font=('Arial', 9),
-            command=lambda: self._hand_preset(200),
+            command=lambda: self._hand_preset(HAND_SLIDER_MAX),
         ).pack(side='left', padx=3)
         tk.Button(
             btn_row, text='Pinça (50%)',
             bg=BTN_PRESET, fg=TEXT_MAIN,
             activebackground='#546e7a', activeforeground=TEXT_MAIN,
             relief='flat', padx=12, pady=5, font=('Arial', 9),
-            command=lambda: self._hand_preset(100),
+            command=lambda: self._hand_preset(HAND_SLIDER_MAX // 2),
         ).pack(side='left', padx=3)
 
         # Configurações de preensão para os 3 objetos farmacêuticos.
@@ -434,7 +547,7 @@ class CombinedControlGUI(Node):
                 activebackground='#212121', activeforeground='white',
                 relief='flat', padx=4, pady=5,
                 font=('Arial', 8, 'bold'),
-                command=lambda v=vals: self._hand_apply_grip(v),
+                command=lambda v=vals, lab=label: self._hand_apply_grip(v, lab),
             ).pack(side='left', padx=2, fill='x', expand=True)
 
     def _hand_changed(self, val, lbl, _joint):
@@ -442,37 +555,241 @@ class CombinedControlGUI(Node):
         self._publish_hand()
 
     def _hand_preset(self, value):
-        for sl in self.hand_sliders.values():
-            sl.set(value)
+        """Set all sliders to `value`. Para fechamento (value > 0) usa
+        a rampa de contato em thread separada; abertura é direta."""
+        if value <= 0:
+            # Abertura: comando direto, rápido — não há ejeção a temer.
+            for sl in self.hand_sliders.values():
+                sl.set(value)
+            return
+        # Fechamento: aplica via thread com contact-detection
+        target = {j: value for j in HAND_JOINTS}
+        self._start_contact_grasp(target)
 
-    def _hand_apply_grip(self, vals: dict):
+    def _hand_apply_grip(self, vals: dict, label: str | None = None):
+        """Aplica configuração de preensão (palm/claw/fingertip) via
+        fechamento incremental com detecção de contato — evita ejeção
+        do objeto pelo impulso de fechamento simultâneo dos dedos.
+
+        Se `label` contém um objeto entre parênteses (ex.: 'Palm Grip
+        (frasco)'), aciona cage check antes do fechamento.
         """
-        Aplica configuração de preensão (palm/claw/fingertip) em todos os
-        sliders simultaneamente, com uma única publicação no controlador da
-        mão — movimento contínuo e fluido (sem 6 trajetórias separadas).
-        """
+        # Atualiza sliders visualmente para o target ANTES do fechamento
+        # (feedback de "qual configuração foi pedida"). Eles serão
+        # re-sincronizados ao final caso algum dedo trave antes do alvo.
         for j, v in vals.items():
             sl = self.hand_sliders[j]
-            sl.config(command=lambda val: None)         # mute callback
+            sl.config(command=lambda val: None)
             sl.set(v)
             self.hand_labels[j].config(text=f'{int(v):4d}')
-        # Reata callbacks
         for j in vals.keys():
             sl = self.hand_sliders[j]
             lbl = self.hand_labels[j]
             sl.config(command=lambda v, lbl=lbl, jn=j: self._hand_changed(v, lbl, jn))
-        # Publica trajetória única
-        self._publish_hand()
+        self._start_contact_grasp(dict(vals),
+                                  obj_class=_grip_label_to_obj(label))
+
+    def _start_contact_grasp(self, target_sliders: dict,
+                              obj_class: str | None = None) -> None:
+        """Dispara fechamento por contato em thread separada (não trava o UI)."""
+        if not self._ready:
+            return
+        if self._grasp_busy:
+            return  # já em andamento — ignora duplo clique
+        threading.Thread(
+            target=self._grasp_with_contact_detection,
+            args=(target_sliders, obj_class),
+            daemon=True,
+        ).start()
+
+    # ---------------------------- /joint_states callback -----------------
+    def _on_joint_state(self, msg: JointState):
+        """Captura posição atual das 6 juntas primárias da mão."""
+        with self._latest_lock:
+            for name, pos in zip(msg.name, msg.position):
+                if name in HAND_JOINTS:
+                    self._latest_hand_pos[name] = float(pos)
+
+    def _read_hand_pos(self) -> dict:
+        with self._latest_lock:
+            return dict(self._latest_hand_pos)
+
+    # -------------------- Fechamento incremental com contato -----------
+    # Parâmetros do algoritmo (inspirados em grasp_ml_pack.PerfectGrasp,
+    # mas inteiramente locais para evitar dependência cruzada de pacote).
+    _GRASP_STEP_RAD          = 0.04   # ~2.3° por passo
+    _GRASP_STEP_DT           = 0.08   # 80 ms entre passos
+    _GRASP_LAG_THRESHOLD_RAD = 0.05   # >2.9° de lag commanded↔actual = contato
+    _GRASP_STALL_TICKS       = 2      # ticks consecutivos para confirmar
+    _GRASP_MIN_STEPS         = 3      # ignora detecção nos primeiros passos
+    _GRASP_TIMEOUT_S         = 6.0
+
+    def _publish_hand_targets_rad(self, rad: dict, duration_s: float = 0.15):
+        """Envia trajetória das 6 primárias + 26 mimics resolvidas em RAD."""
+        names = list(HAND_JOINTS)
+        positions = [rad[j] for j in HAND_JOINTS]
+        for mimic, driver, mult in MIMIC_JOINTS:
+            names.append(mimic)
+            positions.append(rad[driver] * mult)
+        msg = JointTrajectory()
+        msg.joint_names = names
+        pt = JointTrajectoryPoint()
+        pt.positions = positions
+        pt.time_from_start = Duration(
+            sec=int(duration_s),
+            nanosec=int((duration_s % 1) * 1e9))
+        msg.points.append(pt)
+        self.hand_pub.publish(msg)
+
+    def _grasp_with_contact_detection(self, target_sliders: dict,
+                                       obj_class: str | None = None):
+        """Fechamento incremental com detecção de contato por lag articular.
+
+        Algoritmo (industrial: Robotiq adaptive / Schunk SDH "force-closure"):
+          1. Rampa o `commanded` em passos `_GRASP_STEP_RAD` (~2.3°).
+          2. A cada tick lê `/joint_states`; se um dedo tem
+             `lag = commanded − actual > _GRASP_LAG_THRESHOLD_RAD` por
+             `_GRASP_STALL_TICKS` ticks → CONGELA esse dedo na posição
+             atual (parou no objeto).
+          3. Continua rampa apenas com dedos ainda livres.
+          4. Termina quando todos pararam OU atingiram o target OU timeout.
+
+        Os dedos contatam UM A UM em vez de saturar o esforço do PID
+        simultaneamente — o impulso aplicado ao objeto fica abaixo do
+        atrito da pele/objeto e o objeto NÃO é ejetado.
+        """
+        if self._grasp_busy:
+            return
+        self._grasp_busy = True
+
+        try:
+            # Aplica clamp anti-interferência ANTES de iniciar a rampa.
+            target_rad = {j: _slider_to_rad(j, target_sliders[j])
+                          for j in HAND_JOINTS}
+            target_rad = clamp_finger_interference(target_rad)
+
+            # Cage check (não-fatal): só executa quando o caller passou
+            # contexto de objeto (ex.: clique em "Palm Grip (frasco)").
+            # Loga warn se preshape/posição do braço deixam fingertips
+            # fora da gaiola; o PerfectGrasp ainda tenta fechar.
+            if obj_class and _CAGE_OK:
+                try:
+                    q_arm = _np.array([
+                        math.radians(self.arm_sliders[j].get())
+                        for j in ARM_JOINTS])
+                    cage = _cage_status(q_arm, target_rad, obj_class)
+                    if not cage.valid:
+                        self.get_logger().warn(
+                            f'[{obj_class}:CAGE] {cage.summary()}')
+                    else:
+                        self.get_logger().info(
+                            f'[{obj_class}:CAGE] gaiola válida — fechando')
+                except Exception as exc:
+                    self.get_logger().debug(
+                        f'[CAGE] check ignorado ({exc!r})')
+
+            # Estado inicial — posição atual lida do /joint_states; se
+            # ainda não chegou um estado, assume rest pose (MIN_RAD)
+            # equivalente ao open_limit da mão real.
+            time.sleep(0.05)
+            actual = self._read_hand_pos()
+            if not actual:
+                actual = {j: MIN_RAD[j] for j in HAND_JOINTS}
+
+            commanded: dict = {j: actual.get(j, 0.0) for j in HAND_JOINTS}
+            stalled = {j: False for j in HAND_JOINTS}
+            stall_ctr = {j: 0 for j in HAND_JOINTS}
+
+            t0 = time.time()
+            step_i = 0
+            max_step_per_finger = max(
+                abs(target_rad[j] - commanded[j]) for j in HAND_JOINTS)
+            max_steps = int(max_step_per_finger / self._GRASP_STEP_RAD) + 4
+
+            while (time.time() - t0) < self._GRASP_TIMEOUT_S:
+                # 1. Detecção de stall — só após alguns passos para evitar
+                # falsos positivos do delay inicial do controller.
+                if step_i >= self._GRASP_MIN_STEPS:
+                    cur = self._read_hand_pos()
+                    for j in HAND_JOINTS:
+                        if stalled[j]:
+                            continue
+                        lag = abs(commanded[j] - cur.get(j, commanded[j]))
+                        if lag > self._GRASP_LAG_THRESHOLD_RAD:
+                            stall_ctr[j] += 1
+                            if stall_ctr[j] >= self._GRASP_STALL_TICKS:
+                                stalled[j] = True
+                                # Congela o commanded na ACTUAL → não
+                                # acumula erro/integral para frente.
+                                commanded[j] = float(cur.get(j, commanded[j]))
+                        else:
+                            stall_ctr[j] = 0
+
+                # 2. Rampa dedos ainda livres
+                all_done = True
+                for j in HAND_JOINTS:
+                    if stalled[j]:
+                        continue
+                    if commanded[j] < target_rad[j] - 1e-4:
+                        commanded[j] = min(commanded[j] + self._GRASP_STEP_RAD,
+                                            target_rad[j])
+                        all_done = False
+                    elif commanded[j] > target_rad[j] + 1e-4:
+                        commanded[j] = max(commanded[j] - self._GRASP_STEP_RAD,
+                                            target_rad[j])
+                        all_done = False
+
+                # 3. Publica targets
+                self._publish_hand_targets_rad(commanded,
+                                               duration_s=self._GRASP_STEP_DT * 1.5)
+
+                # 4. Encerra se nada para fazer
+                if all_done or all(stalled.values()):
+                    # Após estabilização, mantém um pequeno bias por
+                    # 200 ms para o atrito desenvolver no contato.
+                    time.sleep(0.20)
+                    break
+
+                if step_i > max_steps + 30:
+                    break  # safety abort
+
+                step_i += 1
+                time.sleep(self._GRASP_STEP_DT)
+
+            # 5. Atualiza sliders da GUI para refletirem o estado final
+            # (alguns dedos podem ter parado antes do target).
+            self._sync_sliders_to_rad(commanded)
+        finally:
+            self._grasp_busy = False
+
+    def _sync_sliders_to_rad(self, rad: dict) -> None:
+        """Reflete posições reais (em rad) nos sliders da GUI."""
+        for j in HAND_JOINTS:
+            sl = self.hand_sliders.get(j)
+            if sl is None:
+                continue
+            slider_val = _rad_to_slider(j, rad[j])
+            sl.config(command=lambda val: None)
+            sl.set(slider_val)
+            self.hand_labels[j].config(text=f'{int(slider_val):4d}')
+            sl.config(command=lambda v, lbl=self.hand_labels[j], jn=j:
+                       self._hand_changed(v, lbl, jn))
 
     def _publish_hand(self):
         if not self._ready:
             return
         vals  = {j: self.hand_sliders[j].get() for j in HAND_JOINTS}
         names = list(HAND_JOINTS)
-        positions = [vals[j] / 200.0 * MAX_RAD[j] for j in HAND_JOINTS]
+        # Converte slider→rad antes do clamp para que a interferência
+        # opere no espaço físico (independe da escala visual).
+        rad_targets = {j: _slider_to_rad(j, vals[j])
+                       for j in HAND_JOINTS}
+        rad_targets = clamp_finger_interference(rad_targets)
+
+        positions = [rad_targets[j] for j in HAND_JOINTS]
         for mimic, driver, mult in MIMIC_JOINTS:
             names.append(mimic)
-            positions.append(vals[driver] / 200.0 * MAX_RAD[driver] * mult)
+            positions.append(rad_targets[driver] * mult)
         msg = JointTrajectory()
         msg.joint_names = names
         pt = JointTrajectoryPoint()

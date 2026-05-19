@@ -193,20 +193,35 @@ Pipeline com 5 nós ROS 2 e duas GUIs alternativas:
 
 Dois caminhos coexistem:
 
-**1. Pipeline autônomo** (`/cell/execute_grasp`) — 7 fases articulares + Cartesianas:
+**1. Pipeline autônomo** (`/cell/execute_grasp`) — fases articulares + Cartesianas + primitivas de segurança:
 
-| Fase | Movimento | Tipo |
-|:---:|:---|:---:|
-| **F1** | HOME → pick (mão em paralelo: open → pré-grip) | 🔁 Articular |
-| **F2** | Fechar mão sobre o objeto (`cfg_closed`) + attach cinemático | ✊ Mão |
-| **F3** | Levantar com objeto (`lift_pos = pick + 22 cm`) | 🔁 Articular |
-| **F4** | Transit lateral → via_box (`z=1.15 m world`) | 📏 Cartesiano |
-| **F5** | Descida → approach_box | 📏 Cartesiano |
-| **F6** | Soltar acima da caixa (detach → open hand → `/conveyor/retreat`) | 📏 Cartesiano |
-| **F7** | Retorno HOME | 📏 Cartesiano |
+| Fase     | Movimento | Tipo |
+|:--------:|:---|:---:|
+| **F1**   | HOME → APPROACH (60 mm acima do pick, mão aberta) | 🔁 Articular |
+| **F1.5** | Pré-shape (`HAND_PRESHAPE` por objeto) na APPROACH — cup-shape estática | ✊ Mão |
+| **F1.55** | **TUBO apenas** — *step-aside* −X 50 mm (evita sweep dos fingertips ao longo do eixo do tubo) | 📏 Cartesiano |
+| **F1.6** | APPROACH → PICK (descida com mão fixa em pre-shape) | 🔁 Articular |
+| **F2:CAGE** | Verifica geometria do engaiolamento (fingertips ao redor do objeto, não acima nem penetrando) — loga warn se inválido | 🔍 Check |
+| **F2**   | `PerfectGrasp.close_until_contact` — fechamento incremental com lag-detection por dedo | ✊ Mão |
+| **F3**   | Levantar com objeto (`lift_pos = pick + 22 cm`) | 🔁 Articular |
+| **F4**   | Trânsito lateral → via_box (`z=1.15 m world`) | 📏 Cartesiano |
+| **F5**   | Descida → approach_box | 📏 Cartesiano |
+| **F6**   | Soltar acima da caixa (open hand → `/conveyor/retreat`) | 📏 Cartesiano |
+| **F7**   | Retorno HOME | 📏 Cartesiano |
 
 > [!TIP]
 > A trajetória usa **ease-in/out sinusoidal** com 8 waypoints por segmento articular e 6 waypoints Cartesianos. Validação **AABB** contra `_WORLD_OBSTACLES` (esteira, pedestal, paredes, prateleira de sort) é feita pelo executor antes de enviar qualquer trajetória.
+
+> [!NOTE]
+> **Cage check** (`grasp_ml_pack/cage_check.py`) — rodado em **F2:CAGE** e em todo fechamento manual com contexto de objeto (botões Palm/Claw/Fingertip da GUI, `_smart_close` do step-by-step, `/grasp/manual_grip`). Para cada dedo cujo `primary > HAND_LOWER + 30 mrad`, valida três condições contra o AABB do objeto:
+> - `tip_z ≤ obj_top + 10 mm` — fingertip não pairando acima do topo
+> - `r_tip ≥ obj_r − 5 mm` — fingertip não penetrando o cilindro horizontal
+> - `r_tip ≤ obj_r + 60 mm` — fingertip dentro do alcance de fechamento
+>
+> **Não-fatal**: viola → loga `[obj:CAGE] cage INVÁLIDO: ...`; o `PerfectGrasp` ainda tenta. FK do dedo é aproximada (modelo planar 2-link + offset do chassis do polegar), então falsos-positivos justificam o caráter warn-only.
+
+> [!NOTE]
+> **PerfectGrasp** (`grasp_ml_pack/perfect_grasp.py`) implementa o padrão **Robotiq adaptive / Schunk SDH "force-closure"** sem sensor de força: ramp do target em passos de 0.06 rad / 100 ms; a cada tick lê `/joint_states` e mede `lag = commanded − actual` por dedo; se `lag > 0.04 rad` por 2 ticks consecutivos o dedo é **congelado** na pos atual (contato detectado). Os dedos contatam um a um — o impulso aplicado ao objeto fica abaixo do atrito da pele/objeto, evitando ejeção.
 
 **2. Ciclo manual da GUI** (`manual_control`, aba **Célula**) — 4 fases simples por botão de objeto:
 
@@ -336,6 +351,27 @@ Particularidades:
 - **Helper `grasp_center_in_hand(hand_state, grip_type)`** — centróide dos fingertips relevantes (Thumb+Index para fingertip, Thumb+Index+Middle para claw, todos+palm para palm).
 
 Usado pelo `manual_control_node._solve_pose` para escolher `hand_origin` de modo que a *grasp center* coincida com a superfície do cilindro alvo.
+
+#### Limites factíveis das juntas — calibração contra o `DigitConfigMsg` real
+
+Os limites do URDF de origem (`0.0 → 1.6 rad` nos drivers) refletem o curso mecânico bruto do CAD; o firmware da mão COVVI real os clampa via `DigitConfigMsg.open_limit` / `close_limit`. Para que o gêmeo digital tenha o **mesmo rest pose** (dedos com leve curvatura natural) e o **mesmo envelope de fechamento** que o produto físico, `hand_pack/urdf_helpers.py` patcha o URDF em tempo de launch:
+
+```python
+HAND_DRIVER_LIMITS = {  # close_limit do firmware (slider 100% → este rad)
+    'Thumb':  1.00, 'Index': 1.00, 'Middle': 1.00,
+    'Ring':   1.00, 'Little': 1.00, 'Rotate': 1.00,
+}
+HAND_DRIVER_LOWER = {   # open_limit do firmware (slider 0% → este rad)
+    'Thumb':  0.08, 'Index': 0.12, 'Middle': 0.12,
+    'Ring':   0.12, 'Little': 0.12, 'Rotate': 0.00,
+}
+```
+
+A função `clamp_hand_joint_limits` propaga os dois bounds para as juntas mimic via `[mult·driver_lower, mult·driver_upper]` ordenado. Os sliders das GUIs (`hand_gui`, `combined_gui`, `manual_control`) interpolam **linearmente entre `MIN_RAD` e `MAX_RAD`** — slider 0 % = rest pose (não-degenerado), slider 100 % = close cap. Mesma semântica do firmware: `Percentage.MIN=0 / MAX=100` no `eci_ros`.
+
+#### Cage check (engaiolamento)
+
+Antes de qualquer fechamento com contexto de objeto, `grasp_ml_pack/cage_check.cage_status(q_arm, hand_state, obj_class)` valida a geometria fingertip vs AABB do objeto. Detalhes na seção [🔄 Ciclo de grasp](#-ciclo-de-grasp).
 
 ---
 

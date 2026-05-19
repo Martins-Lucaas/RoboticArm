@@ -510,40 +510,66 @@ def _finger_ik(target_xz: np.ndarray,
     return t1 / k_p
 
 
+# Valores re-mapeados para o cap 1.0 rad (driver, todos). Pontos
+# importantes:
+#   • palm_grip/claw_grip pedem fechamento próximo do máximo para
+#     envelopar cilindros — ficam ~0.95-1.0 nos quatro dedos longos.
+#   • fingertip_grip mantém Ring/Little em zero (pinça polegar+indicador).
+#   • Rotate é cap independente (oposição do polegar), preservado.
+# Saturação posterior pela URDF é garantia adicional.
 HAND_CONFIGS: dict[str, dict[str, float]] = {
     'open': {
         'Thumb': 0.00, 'Index': 0.00, 'Middle': 0.00,
         'Ring':  0.00, 'Little': 0.00, 'Rotate': 0.00,
     },
     'pinch': {
-        'Thumb': 0.85, 'Index': 0.80, 'Middle': 0.05,
+        'Thumb': 0.80, 'Index': 0.75, 'Middle': 0.05,
         'Ring':  0.05, 'Little': 0.05, 'Rotate': 0.85,
     },
     'cylindrical': {
-        'Thumb': 1.20, 'Index': 1.20, 'Middle': 1.20,
-        'Ring':  1.10, 'Little': 1.00, 'Rotate': 0.50,
+        'Thumb': 0.90, 'Index': 0.95, 'Middle': 0.95,
+        'Ring':  0.90, 'Little': 0.85, 'Rotate': 0.50,
     },
     'spherical': {
-        'Thumb': 1.00, 'Index': 1.00, 'Middle': 1.00,
-        'Ring':  1.00, 'Little': 0.90, 'Rotate': 0.60,
+        'Thumb': 0.80, 'Index': 0.85, 'Middle': 0.85,
+        'Ring':  0.85, 'Little': 0.80, 'Rotate': 0.60,
     },
     'palm_grip': {
-        'Thumb': 1.10, 'Index': 1.25, 'Middle': 1.25,
-        'Ring':  1.20, 'Little': 1.10, 'Rotate': 0.25,
+        'Thumb': 0.95, 'Index': 1.00, 'Middle': 1.00,
+        'Ring':  0.98, 'Little': 0.95, 'Rotate': 0.25,
     },
+    # claw_grip: posições MÁXIMAS de fechamento (slider 0..200 →
+    # 75/75/80/82/87/200). O PerfectGrasp pára antes via lag-detection
+    # quando os dedos encontram o tubo — estes valores são o envelope,
+    # não o aperto final aplicado.
     'claw_grip': {
-        'Thumb': 0.90, 'Index': 1.10, 'Middle': 1.10,
-        'Ring':  1.05, 'Little': 0.95, 'Rotate': 0.45,
+        'Thumb': 0.425, 'Index': 0.450, 'Middle': 0.472,
+        'Ring':  0.481, 'Little': 0.503, 'Rotate': 1.000,
     },
+    # fingertip_grip: pinça polegar+indicador (Middle/Ring/Little ficam
+    # em MIN_RAD = rest pose). Slider 0..200 → 104/62/0/0/0/146.
     'fingertip_grip': {
-        'Thumb': 0.85, 'Index': 0.80, 'Middle': 0.00,
-        'Ring':  0.00, 'Little': 0.00, 'Rotate': 0.82,
+        'Thumb': 0.558, 'Index': 0.393, 'Middle': 0.120,
+        'Ring':  0.120, 'Little': 0.120, 'Rotate': 0.730,
     },
 }
 
+# Limites factíveis derivados de hand_pack.urdf_helpers.HAND_DRIVER_LIMITS.
+# Drivers cappados em 1.0 rad para que a falange distal NÃO atravesse a
+# palma (com self_collide=true bloqueando o resto fisicamente). Wrap
+# resultante na ponta do dedo ≈ 163°, suficiente para envelopar objetos
+# de raio ≤ 45 mm em power grip.
 HAND_LIMITS: dict[str, float] = {
-    'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
-    'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0,
+    'Thumb': 1.0, 'Index': 1.0, 'Middle': 1.0,
+    'Ring':  1.0, 'Little': 1.0, 'Rotate': 1.0,
+}
+
+# ``lower`` calibrado — espelha hand_pack.urdf_helpers.HAND_DRIVER_LOWER.
+# Equivale ao ``open_limit`` do firmware da COVVI Hand: posição de
+# repouso natural com leve curvatura das falanges.
+HAND_LOWER: dict[str, float] = {
+    'Thumb': 0.08, 'Index': 0.12, 'Middle': 0.12,
+    'Ring':  0.12, 'Little': 0.12, 'Rotate': 0.0,
 }
 
 
@@ -686,6 +712,6 @@ def hand_ik(grasp_type: str, obj_diameter: float = 0.0) -> dict[str, float]:
 
     scale = float(np.clip(obj_diameter / d_nom, 0.50, 1.30))
     for j in ['Thumb', 'Index', 'Middle', 'Ring', 'Little']:
-        cfg[j] = float(np.clip(cfg[j] * scale, 0.05, HAND_LIMITS[j]))
+        cfg[j] = float(np.clip(cfg[j] * scale, HAND_LOWER[j], HAND_LIMITS[j]))
 
     return cfg

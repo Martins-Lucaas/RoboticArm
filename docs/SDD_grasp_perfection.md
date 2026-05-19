@@ -8,14 +8,44 @@
 
 | Campo            | Valor                                                 |
 | ---------------- | ----------------------------------------------------- |
-| Versão           | 1.2.0                                                 |
-| Data             | 2026-05-16                                            |
+| Versão           | 1.4.0                                                 |
+| Data             | 2026-05-19                                            |
 | Autor            | Lucas Martins                                         |
 | Status           | Em redação — bloqueia merge de mudanças de pose       |
-| Pacotes afetados | grasp_ml_pack (poses, collision, manual_control, grasp_executor) |
+| Pacotes afetados | grasp_ml_pack (poses, collision, manual_control, grasp_executor, cage_check, perfect_grasp), hand_pack (urdf_helpers, combined_gui, hand_gui, worlds) |
 | Referências      | images/claw.png, images/palmGrip.png, images/fingertip.png |
 
 ### Changelog
+- **v1.4.0 (2026-05-19)** — **Primitivas de segurança e calibração de
+  mão**:
+  - `urdf_helpers.HAND_DRIVER_LOWER` espelha o `DigitConfigMsg.open_limit`
+    do firmware: rest pose com leve curvatura natural (Thumb 0.08, dedos
+    longos 0.12 rad). Sliders das GUIs reescalam para `[MIN, MAX]` sem
+    zona morta.
+  - `cage_check.cage_status` (novo módulo) valida geometria
+    fingertip vs AABB do objeto antes de qualquer fechamento. Wireado
+    em `grasp_executor` (F2:CAGE autônomo e manual), `manual_control_node`
+    (pick step-by-step + close-after-hover), `combined_gui` (botões
+    Palm/Claw/Fingertip). Não-fatal — loga warn.
+  - `perfect_grasp.close_until_contact` (Robotiq adaptive style) já é
+    chamado por todos os caminhos de fechamento desde v1.3.0; este SDD
+    agora formaliza o padrão.
+  - **Step-aside −X 50 mm para o tubo** (F1.55, executor) — antes da
+    descida final em +Y, mão recua 50 mm em −X para evitar sweep dos
+    fingertips ao longo do eixo do tubo (cilindro vertical alto).
+  - `_refresh_tcp_from_grip_type()` agora computa `PICK_TCP_WORLD /
+    APPROACH / PRE_APPROACH` **dinamicamente** a partir de
+    `HAND_CONFIGS × grasp_center_in_hand × RTCP_BY_OBJ × PICK_OBJ_BBOX`.
+    Mudar `HAND_CONFIGS` propaga automaticamente aos alvos IK.
+  - **HAND_CONFIGS atualizado** para os novos envelopes de fechamento:
+    `claw_grip` (Thumb 0.425, Index 0.450, Middle 0.472, Ring 0.481,
+    Little 0.503, Rotate 1.0); `fingertip_grip` (Thumb 0.558, Index
+    0.393, M/R/L em MIN_RAD = rest pose, Rotate 0.73).
+    Slider 0..200 correspondente: claw 75/75/80/82/87/200 ; fingertip
+    104/62/0/0/0/146.
+  - **`base_hand.world` + `factory.world`** — ODE `iters` 50 (default) /
+    150 → **200**. Reduz penetração do mesh do objeto na pele antes do
+    `self_collide` reagir; impulso de correção ~3× menor.
 - **v1.3.0 (2026-05-16)** — T21-T30 totalmente implementados:
   descent_extra na GUI, Hover/Close, TF tcp_target em RViz, scripts
   `tune_rotate.py`/`tune_descent.py`/`test_9cycles.py`. Sign de
@@ -195,8 +225,20 @@ para Link6 — usamos `pick z = 0.866`.
 ### 4.2 Ampola (ampola farmacêutica — r=5 mm, h=75 mm)
 
 - **Tipo de preensão:** Fingertip Pinch (APENAS polegar + indicador;
-  médio/anelar/mínimo PERMANECEM em 0).
+  médio/anelar/mínimo PERMANECEM em rest pose = MIN_RAD).
 - **R_tcp:** `_Rtcp_palm_down(finger_dir=(+1,0,0))` — top-down.
+- **Convergência da pinça (v1.4.0):** com
+  `HAND_CONFIGS['fingertip_grip']` = `Thumb=0.558, Index=0.393`, os
+  fingertips em hand frame ficam em `tip_Thumb=(-0.018, 0.065, 0.057)`
+  e `tip_Index=(0.023, 0.148, 0.034)`. O midpoint
+  `(0.003, 0.106, 0.045)` é o `grasp_center` (centróide Thumb+Index).
+  `_refresh_tcp_from_grip_type()` resolve `PICK_TCP_WORLD['ampola']`
+  para que esse midpoint caia em `(0.75, 0, 0.844)` (centro da
+  ampola). Resultado: `PICK_TCP_WORLD['ampola']` ≈ `(0.759, -0.003,
+  0.889)`. Verificação:
+  `tip_Thumb_world ≈ (0.709, -0.020, 0.832)`,
+  `tip_Index_world ≈ (0.791, +0.020, 0.856)` — **a ampola fica
+  literalmente entre os dois fingertips**.
 - **Pose `pre_approach`:** TCP em `(0.75, 0.00, 1.00)` world.
 - **Pose `approach`:** TCP em `(0.75, 0.00, 0.92)` world.
 - **Pose `grasp`:** TCP em `(0.75, 0.00, 0.87)` world (pinça polegar+
@@ -211,8 +253,16 @@ para Link6 — usamos `pick z = 0.866`.
 ### 4.3 Tubo (tubo de ensaio — r=12 mm, h=120 mm)
 
 - **Tipo de preensão:** Claw lateral (preensão em garra, do lado).
-- **R_tcp:** `_Rtcp_lateral_claw(palm_dir=(0,+1,0), finger_dir=(0,0,−1))`
-  — palma normal +Y, dedos descem em −Z.
+- **R_tcp:** `approach_to_Rtcp(approach_vec=(0,+1,0))` — `TCP_z = +Y`
+  (direção dos dedos), palma encara +Y mundo, dedos descem em −Z.
+- **Step-aside −X 50 mm (F1.55, v1.4.0):** entre F1.5 (preshape em
+  APPROACH) e F1.6 (descida → PICK), a mão recua 50 mm em −X mundo
+  antes de engajar. Sem esse passo, o sweep direto APPROACH (Y=−0.126)
+  → PICK (Y=−0.006) move os fingertips ao longo do eixo do tubo e o
+  empurra lateralmente. Implementado em `grasp_executor._run_cycle`
+  com IK on-the-fly (`solve_pose_R(tcp_pick − [0.05, 0, 0], R_tubo)`);
+  falha graciosamente para descida direta se a IK do step-aside não
+  resolver.
 - **Pose `pre_approach`:** TCP em `(0.75, −0.12, 0.866)` world — mão
   chega de −Y com palma encarando +Y.
 - **Pose `approach`:** TCP em `(0.75, −0.05, 0.866)` world.
@@ -431,7 +481,59 @@ Total estimado: **~12 dias úteis** (≈ 2,5 sprints semanais).
 
 ---
 
-*FIM do SDD v1.0.0.* Atualizações pontuais (ajustes finos de cota)
-devem incrementar o patch (`1.0.1`); mudanças de fluxo de fases
-incrementam o minor (`1.1.0`); reescritas de arquitetura incrementam
+## 12. Primitivas de segurança (v1.4.0)
+
+Três camadas independentes protegem o pick-and-place contra ejeção do
+objeto e bugs de penetração de mesh:
+
+### 12.1 Cage check — `grasp_ml_pack/cage_check.py`
+
+Antes de qualquer fechamento com contexto de objeto, valida três
+condições por fingertip cujo `primary > HAND_LOWER[j] + 30 mrad`:
+
+| Condição | Tolerância | Significado |
+| --- | --- | --- |
+| `tip_z ≤ obj_top + ε_top` | 10 mm | Não pairando acima do topo (risco de fechar em cima) |
+| `r_tip ≥ obj_r − ε_pen` | 5 mm | Não penetrando o cilindro horizontal |
+| `r_tip ≤ obj_r + reach` | 60 mm | Dentro do alcance de fechamento |
+
+Acionado em:
+- `grasp_executor._run_cycle` (F2:CAGE — ciclo autônomo)
+- `grasp_executor._cb_manual_grip` (serviço `/grasp/manual_grip`)
+- `manual_control_node._do_pick_cycle` (F5 step-by-step)
+- `manual_control_node._do_close_after_hover`
+- `combined_gui._hand_apply_grip` (botões Palm/Claw/Fingertip)
+
+**Não-fatal**: viola → loga `[obj:CAGE] cage INVÁLIDO: …` e o
+`PerfectGrasp` ainda tenta fechar. FK do dedo é aproximada (planar
+2-link + offset de chassis no polegar), e falsos-positivos justificam
+o caráter warn-only.
+
+### 12.2 Lag-detection close — `grasp_ml_pack/perfect_grasp.py`
+
+Padrão industrial **Robotiq adaptive / Schunk SDH "force-closure"** sem
+sensor de força:
+
+```
+STEP_RAD = 0.06 rad   STEP_DT = 0.10 s
+LAG_THRESHOLD = 0.04 rad   STALL_TICKS = 2
+```
+
+A cada tick, lê `/joint_states`; se `lag = commanded − actual >
+LAG_THRESHOLD` por `STALL_TICKS` consecutivos em um dedo, esse dedo é
+**congelado** na posição atual. Os dedos contatam um a um — o impulso
+aplicado ao objeto fica abaixo do atrito da pele/objeto.
+
+### 12.3 Solver iters bump — `hand_pack/worlds/*.world`
+
+ODE `<iters>` 200 (de 50 default / 150 anterior). Reduz penetração do
+mesh do objeto na pele inflada antes do `<self_collide>` reagir;
+impulso de correção ~3× menor. Aplicado em `factory.world` e
+`base_hand.world`.
+
+---
+
+*FIM do SDD v1.4.0.* Atualizações pontuais (ajustes finos de cota)
+devem incrementar o patch (`1.4.1`); mudanças de fluxo de fases
+incrementam o minor (`1.5.0`); reescritas de arquitetura incrementam
 o major (`2.0.0`).

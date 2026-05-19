@@ -25,8 +25,10 @@ ARM_LIMITS_DEG = {
     'joint5': (-135, 135), 'joint6': (-360, 360),
 }
 
-MAX_RAD = {'Thumb': 1.6, 'Index': 1.6, 'Middle': 1.6,
-           'Ring':  1.6, 'Little': 1.6, 'Rotate': 1.0}
+# Limites factíveis — espelham hand_pack.urdf_helpers.HAND_DRIVER_LIMITS.
+# Drivers cappados em 1.0 rad → ~163° de wrap na ponta do dedo.
+MAX_RAD = {'Thumb': 1.0, 'Index': 1.0, 'Middle': 1.0,
+           'Ring':  1.0, 'Little': 1.0, 'Rotate': 1.0}
 
 
 # ── Presets de braço (poses-base) ─────────────────────────────────────
@@ -341,71 +343,107 @@ _FRASCO_PALM_Z_DESIRED: float = max(0.920,
                                      _OBJ_TOP_Z['frasco'] + _PALM_CLEARANCE)
 
 PRE_APPROACH_TCP_WORLD: dict[str, tuple] = {
-    'frasco': (0.0, 0.0, 0.0),  # placeholder — preenchido em _refresh_*
+    'frasco': (0.0, 0.0, 0.0),  # preenchidos por _refresh_tcp_from_grip_type()
     'ampola': (0.0, 0.0, 0.0),
-    'tubo':   (0.75, -0.185, 0.866),
+    'tubo':   (0.0, 0.0, 0.0),
 }
 
 APPROACH_TCP_WORLD_BY_OBJ: dict[str, tuple] = {
     'frasco': (0.0, 0.0, 0.0),
     'ampola': (0.0, 0.0, 0.0),
-    'tubo':   (0.75, -0.065, 0.866),
+    'tubo':   (0.0, 0.0, 0.0),
 }
 
 PICK_TCP_WORLD: dict[str, tuple] = {
     'frasco': (0.0, 0.0, 0.0),
     'ampola': (0.0, 0.0, 0.0),
-    'tubo':   (0.75, 0.000, 0.866),
+    'tubo':   (0.0, 0.0, 0.0),
 }
 
 
 def _refresh_tcp_from_grip_type():
-    """Recalcula TCP por objeto respeitando o TIPO DE GRIP:
+    """Recalcula TCP world por objeto a partir do GRASP_CENTER atual.
 
-      • palm grip   → palma sobre o objeto; TCP = palm + 0.070·fdir
-                       (a palma física fica ~45mm à frente do flange,
-                       70mm atrás do TCP)
-      • fingertip   → TCP target at object (fingertips convergem ali)
-      • claw        → TCP target at object (idem)
+    O alvo de IK é o ``TCP_world`` tal que, com o ramo IK escolhido e a
+    pose do braço resolvida, o ``grasp_center`` (centróide dos dedos
+    que efetivamente tocam o objeto, em hand_base_link) caia no centro
+    do objeto. Isso depende DIRETAMENTE de ``HAND_CONFIGS[grip]``:
 
-    Para palm grip, palm_z respeita _OBJ_TOP_Z + _PALM_CLEARANCE para a
-    palma nunca passar do topo do objeto (limite inferior obrigatório).
-    Para fingertip, TCP_z respeita _OBJ_TOP_Z + _PINCH_CLEARANCE.
+        palm_grip       → pts = 5 fingertips + palm_center
+        claw_grip       → pts = tip_Thumb + tip_Index + tip_Middle
+        fingertip_grip  → pts = tip_Thumb + tip_Index
+
+    Cálculo (R_hand = R_tcp · Rx(π/2)):
+
+        hand_base_world = obj_world − R_hand · grasp_center_hand
+        TCP_world       = hand_base_world + 0.115 · finger_dir_world
+                         (finger_dir_world = hand_y mapeado em world,
+                          coluna 1 de R_hand)
+
+    PRE_APPROACH / APPROACH ficam offsetados em +Z (palm-down) ou
+    em -finger_dir (claw lateral) a partir do PICK_TCP. Os offsets
+    estão centralizados em :data:`_TCP_VERTICAL_CLEAR_M` /
+    :data:`_TCP_LATERAL_CLEAR_M` abaixo.
+
+    Como esta função roda em import time, mudanças em HAND_CONFIGS
+    propagam automaticamente para os alvos IK SEM precisar recolar
+    valores hardcoded. As poses cacheadas em ``_CACHED_*_POSES_DEG``
+    permanecem como SEED da IK; o ramo é re-resolvido se o delta for
+    grande.
     """
-    fdirs = RTCP_BY_OBJ.get('_finger_dir', {}) if isinstance(
-        RTCP_BY_OBJ, dict) else {}
+    try:
+        import numpy as np
+        from .kinematics import HAND_CONFIGS, grasp_center_in_hand
+        from .collision import PICK_OBJ_BBOX
+    except Exception:
+        return
 
-    # ── TOP-DOWN PALM GRIP: frasco — palma horizontal sobre o
-    # cilindro, dedos em +X curvam para baixo abraçando a parte
-    # superior. Geometria (finger_dir=+X):
-    #   palm_center = TCP − 0.070·fdir   → palm em x = TCP_x − 0.070
-    #   MCPs (juntas proximais dos 4 dedos) = palm + 0.046·fdir
-    #                                       → x = TCP_x − 0.024
-    # Para os MCPs ficarem alinhados com o centro do frasco (x=0.75),
-    # TCP_x = 0.75 + 0.024 ≈ 0.774. Palm_x = 0.704 (à -X do frasco),
-    # dedos extendem +X cruzando sobre o frasco e curvam para baixo
-    # envolvendo a parte superior (z=0.851±0.045).
-    # Z do PICK: palm a 25mm acima do topo do frasco (top=0.896 →
-    # palm_z=0.921). TCP_z = palm_z (finger_dir é horizontal, sem
-    # componente Z). APPROACH a +6cm; PRE_APPROACH a +18cm.
-    PICK_TCP_WORLD['frasco']            = (0.774, 0.000, 0.921)
-    APPROACH_TCP_WORLD_BY_OBJ['frasco'] = (0.774, 0.000, 0.981)
-    PRE_APPROACH_TCP_WORLD['frasco']    = (0.774, 0.000, 1.101)
+    if not isinstance(RTCP_BY_OBJ, dict) or not RTCP_BY_OBJ:
+        return
 
-    # ── FINGERTIP GRIP: ampola — TCP AT ampola top (clampado) ──────
-    # PICK_z = max(topo, parâmetro) → garante que a ponta nunca passa
-    # do topo do objeto. Topo ampola = 0.881.
-    ampola_top = _OBJ_TOP_Z['ampola']
-    pick_z_ampola = max(0.881, ampola_top + _PINCH_CLEARANCE)
-    PRE_APPROACH_TCP_WORLD['ampola']    = (0.75, 0.0, pick_z_ampola + 0.119)
-    APPROACH_TCP_WORLD_BY_OBJ['ampola'] = (0.75, 0.0, pick_z_ampola + 0.049)
-    PICK_TCP_WORLD['ampola']            = (0.75, 0.0, pick_z_ampola)
+    # Rx(π/2) — converte TCP frame → hand_base_link frame (T_HAND_ATTACH
+    # mais a rotação fixa do URDF Link6 → hand_base_link). Colunas: hand
+    # axes expressos no frame TCP.
+    R_HAND_FROM_TCP = np.array([[1.0, 0.0,  0.0],
+                                 [0.0, 0.0, -1.0],
+                                 [0.0, 1.0,  0.0]], dtype=float)
 
-    # ── CLAW GRIP: tubo — TCP AT tubo center (0.75, 0, 0.866) ──────
-    # finger_dir=+Y (lateral), palma em -Y do tubo.
-    PRE_APPROACH_TCP_WORLD['tubo']    = (0.75, -0.185, 0.866)
-    APPROACH_TCP_WORLD_BY_OBJ['tubo'] = (0.75, -0.065, 0.866)
-    PICK_TCP_WORLD['tubo']            = (0.75,  0.000, 0.866)
+    _GRIP_KIND   = {'frasco': 'palm', 'ampola': 'fingertip', 'tubo': 'claw'}
+    _HAND_CFGKEY = {'frasco': 'palm_grip',
+                    'ampola': 'fingertip_grip',
+                    'tubo':   'claw_grip'}
+
+    # Offsets de approach: top-down sobe em +Z, claw lateral recua em
+    # -finger_dir (= +hand_y do mundo, para tubo isso é -Y world).
+    _APPR_DZ = 0.060
+    _PRE_DZ  = 0.180
+    _APPR_DLAT = 0.120
+    _PRE_DLAT  = 0.200
+
+    for obj in ('frasco', 'ampola', 'tubo'):
+        if obj not in PICK_OBJ_BBOX or obj not in RTCP_BY_OBJ:
+            continue
+        cx, cy, cz, *_ = PICK_OBJ_BBOX[obj]
+        obj_pos = np.array([cx, cy, cz], dtype=float)
+        gc_hand = grasp_center_in_hand(HAND_CONFIGS[_HAND_CFGKEY[obj]],
+                                        _GRIP_KIND[obj])
+        R_tcp  = np.asarray(RTCP_BY_OBJ[obj], dtype=float)
+        R_hand = R_tcp @ R_HAND_FROM_TCP
+        hand_base = obj_pos - R_hand @ gc_hand
+        finger_dir_w = R_hand[:, 1]      # hand_y no mundo
+        tcp_pick = hand_base + 0.115 * finger_dir_w
+
+        if obj == 'tubo':
+            tcp_appr = tcp_pick - _APPR_DLAT * finger_dir_w
+            tcp_pre  = tcp_pick - _PRE_DLAT  * finger_dir_w
+        else:
+            up = np.array([0.0, 0.0, 1.0])
+            tcp_appr = tcp_pick + _APPR_DZ * up
+            tcp_pre  = tcp_pick + _PRE_DZ  * up
+
+        PICK_TCP_WORLD[obj]            = tuple(float(round(v, 4)) for v in tcp_pick)
+        APPROACH_TCP_WORLD_BY_OBJ[obj] = tuple(float(round(v, 4)) for v in tcp_appr)
+        PRE_APPROACH_TCP_WORLD[obj]    = tuple(float(round(v, 4)) for v in tcp_pre)
 
 
 _refresh_tcp_from_grip_type()
@@ -473,22 +511,33 @@ HAND_GRIPS = {
     # (r=45mm). Subimos a 185-195 para envolverem a geometria.
     'Palm Grip (frasco)':      {'Thumb': 185, 'Index': 195, 'Middle': 195,
                                  'Ring':  190, 'Little': 185, 'Rotate':  50},
-    'Claw Grip (tubo)':        {'Thumb': 175, 'Index': 190, 'Middle': 190,
-                                 'Ring':  185, 'Little': 178, 'Rotate':  90},
-    'Fingertip Grip (ampola)': {'Thumb': 145, 'Index': 140, 'Middle':   0,
-                                 'Ring':    0, 'Little':   0, 'Rotate': 164},
+    # Claw e Fingertip: posições MÁXIMAS (slider 0..200) — o
+    # PerfectGrasp interrompe o fechamento antes via lag-detection
+    # quando o dedo encontra o objeto, então estes valores definem o
+    # envelope de contato (não o aperto final).
+    'Claw Grip (tubo)':        {'Thumb':  75, 'Index':  75, 'Middle':  80,
+                                 'Ring':   82, 'Little':  87, 'Rotate': 200},
+    'Fingertip Grip (ampola)': {'Thumb': 104, 'Index':  62, 'Middle':   0,
+                                 'Ring':    0, 'Little':   0, 'Rotate': 146},
 }
 
 # Pré-shape = aprox. 50% de cada grip final. Mantém a assinatura
 # distintiva (palm/claw/fingertip) mas com dedos pré-curvados o
 # suficiente para não varrer o objeto durante a descida.
+# Cup-shape para descida: fingertips ficam ABAIXO do topo do objeto MAS
+# fora da projeção horizontal. Validado numericamente para canonical (0.75, 0, z).
+# Notas:
+#   - Thumb em palm/frasco fica menos curlado (slider 30 vs 70) para
+#     não penetrar a parede +Y do frasco durante a descida.
+#   - Rotate alto em fingertip (=35 final, =20 preshape) abre a mão para
+#     que polegar e indicador convirjam SOBRE a ampola na fase final.
 HAND_PRESHAPE = {
-    'Palm Grip (frasco)':      {'Thumb':  70, 'Index':  80, 'Middle':  80,
+    'Palm Grip (frasco)':      {'Thumb':  30, 'Index':  80, 'Middle':  80,
                                  'Ring':   75, 'Little':  70, 'Rotate':  25},
-    'Claw Grip (tubo)':        {'Thumb':  60, 'Index':  70, 'Middle':  70,
-                                 'Ring':   65, 'Little':  60, 'Rotate':  45},
-    'Fingertip Grip (ampola)': {'Thumb':  55, 'Index':  50, 'Middle':   0,
-                                 'Ring':    0, 'Little':   0, 'Rotate':  82},
+    'Claw Grip (tubo)':        {'Thumb':  40, 'Index':  70, 'Middle':  70,
+                                 'Ring':   65, 'Little':  60, 'Rotate':  40},
+    'Fingertip Grip (ampola)': {'Thumb':  15, 'Index':  50, 'Middle':   0,
+                                 'Ring':    0, 'Little':   0, 'Rotate':  20},
 }
 
 # ── Poses extras (gestos / formas úteis) ──────────────────────────────

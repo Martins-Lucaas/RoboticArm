@@ -20,8 +20,11 @@
   <exec_depend>gazebo_ros2_control</exec_depend>
   <exec_depend>ros2_control</exec_depend>
   <exec_depend>ros2_controllers</exec_depend>
-  
+
   <exec_depend>rqt_joint_trajectory_controller</exec_depend>
+
+  <!-- cage_check do grasp_ml_pack (opcional via soft-import) -->
+  <exec_depend>grasp_ml_pack</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

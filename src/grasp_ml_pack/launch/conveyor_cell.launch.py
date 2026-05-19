@@ -25,6 +25,11 @@ import re
 import xacro
 
 from ament_index_python.packages import get_package_share_directory
+from hand_pack.urdf_helpers import (
+    clamp_hand_joint_limits,
+    inject_visual_skin_layer,
+    INTER_FINGER_COLLISION_LINKS,
+)
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, RegisterEventHandler,
                              TimerAction)
@@ -206,8 +211,13 @@ def _build_robot_urdf():
         '<ros2_control name="HandGazeboSystem"')
 
     hand_body = _fix_virtual_link_inertia(hand_body)
+    # Limites factíveis do manual da COVVI (81° flexão dos dedos) — sem isso
+    # as falanges curvam-se até atravessar a palma quando a mão fecha.
+    hand_body = clamp_hand_joint_limits(hand_body)
     hand_body = _stabilize_hand_joints(hand_body)
     hand_body = _inject_skin_layer(hand_body)
+    # Camada visual "luva COVVI" (cobre o esqueleto branco com Carbon Black).
+    hand_body = inject_visual_skin_layer(hand_body)
 
     # Tag <gazebo reference> por link da mão.
     #
@@ -227,11 +237,22 @@ def _build_robot_urdf():
     # Industry baseline: ROS-Industrial gripper sims usam kp ≈ 1e4–1e5
     # com kd ~ 1–10% de kp para grasping estável.
     hand_link_names = re.findall(r'<link\s+name="([^"]+)"', hand_body)
+    finger_collision_set = set(INTER_FINGER_COLLISION_LINKS)
     for lname in hand_link_names:
+        # Falanges + palma → self_collide=true + mu alto (captura sólida).
+        # Demais links da mão (eixos virtuais) → false e atrito padrão.
+        is_grip = lname in finger_collision_set
+        sc = 'true' if is_grip else 'false'
+        # Coef. de atrito (mu1=longitudinal, mu2=transversal).
+        # Para borracha/silicone real: 1.5-2.5. Usamos 2.5 nos pontos de
+        # captura (falange/palma) → objeto não escorrega mesmo sob
+        # impulso vertical de levantamento.
+        mu = '2.5' if is_grip else '0.8'
         hand_body += (
             f'\n  <gazebo reference="{lname}">'
             f'<gravity>false</gravity>'
-            f'<self_collide>false</self_collide>'
+            f'<self_collide>{sc}</self_collide>'
+            f'<mu1>{mu}</mu1><mu2>{mu}</mu2>'
             f'<kp>5e4</kp><kd>50.0</kd>'
             f'<maxContacts>8</maxContacts>'
             f'<minDepth>0.0005</minDepth>'
