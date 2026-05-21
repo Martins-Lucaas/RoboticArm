@@ -1,0 +1,215 @@
+# ============================================================================
+#  tactile_controllers.yaml — Configuração ros2_control para a célula de
+#  palpação tátil (CR10 + COVVI + bancada vertical).
+#
+#  Define dois controladores comutáveis pelo controller_manager:
+#
+#    cr10_group_controller   joint_trajectory_controller (atual; movimentos
+#                            de bring-up, home e jog manual)
+#    admittance_controller   admittance_controller (palpação — corrige a
+#                            profundidade no eixo de contato com base na
+#                            leitura do FT sensor do dedo)
+#
+#  A coreografia em tactile_explorer.py usa o admittance durante as fases
+#  CONTACT e SLIDING; para HOLD/RETRACT pode ficar no admittance também,
+#  pois o stiffness alto nos eixos tangenciais e rotacionais mantém a pose
+#  comandada quase como um JTC.
+#
+#  Compatibilidade: ros2_controllers Humble. Plugin de cinemática nativo
+#  (kinematics_interface_kdl) — instalar via:
+#      sudo apt install ros-humble-kinematics-interface-kdl \
+#                       ros-humble-admittance-controller
+# ============================================================================
+
+controller_manager:
+  ros__parameters:
+    update_rate: 250   # Hz — combinar com a taxa do FT (250 Hz) p/ evitar aliasing.
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    # Broadcaster do sensor F/T — publica em /ft_sensor_broadcaster/wrench
+    # o pacote de força/torque recebido do hardware_interface (no Gazebo
+    # vem do libgazebo_ros_ft_sensor; no real seria o sensor físico do
+    # flange do CR10 ou do dedo COVVI).
+    ft_sensor_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+    cr10_group_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    hand_position_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    admittance_controller:
+      type: admittance_controller/AdmittanceController
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  joint_trajectory_controller (movimentos rígidos — home, jog, recuo)
+# ────────────────────────────────────────────────────────────────────────────
+cr10_group_controller:
+  ros__parameters:
+    joints:
+      - joint1
+      - joint2
+      - joint3
+      - joint4
+      - joint5
+      - joint6
+    command_interfaces:  [position]
+    state_interfaces:    [position, velocity]
+    state_publish_rate:  100.0
+    action_monitor_rate: 50.0
+    allow_partial_joints_goal: false
+    constraints:
+      stopped_velocity_tolerance: 0.05
+      goal_time: 1.5
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  ft_sensor_broadcaster — encaminha o pacote FT para o admittance_controller
+# ────────────────────────────────────────────────────────────────────────────
+ft_sensor_broadcaster:
+  ros__parameters:
+    sensor_name: ft_sensor
+    frame_id:    fingertip_ft_link   # link onde o FT está afixado (COVVI tip)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  admittance_controller — núcleo do experimento
+#
+#  Modelo: M·ẍ + D·ẋ + K·x = F_ext
+#    M = matriz de inércia aparente (massa virtual)
+#    D = matriz de amortecimento viscoso
+#    K = rigidez (mola virtual) que puxa o TCP de volta para o setpoint
+#    F_ext = wrench do FT — força medida no contato
+#
+#  Eixo de aproximação (palpação horizontal):  X do "control.frame"
+#    → selected_axes[0]=true habilita o cálculo da admitância em X.
+#    → mass[0]=2.0 dá uma inércia baixa (sistema reativo à força externa).
+#    → stiffness[0]=40 N/m (MOLA FRACA) — deixa a força externa dominar
+#       o movimento; sem isso o admittance "lutaria" para voltar ao
+#       setpoint cinemático e o contato perderia estabilidade.
+#    → damping_ratio[0]=1.6 (super-amortecido) — evita oscilação ao tocar
+#       a parede e quando o dedo desliza por irregularidades.
+#
+#  Eixos tangenciais (Y, Z) e rotacionais (rx, ry, rz):
+#    Stiffness alto + damping moderado → trajetória cartesiana é seguida
+#    como num JTC. A diferença só aparece no X (eixo de contato).
+#
+#  Como ajustar:
+#    - Vibração no contato     → aumentar damping_ratio[0] para 2.0+
+#    - Força não atinge alvo   → diminuir stiffness[0] (e.g. 20) ou
+#                                  diminuir mass[0] para 1.5
+#    - Movimento muito mole     → aumentar stiffness em Y/Z para 800+
+# ────────────────────────────────────────────────────────────────────────────
+admittance_controller:
+  ros__parameters:
+    joints:
+      - joint1
+      - joint2
+      - joint3
+      - joint4
+      - joint5
+      - joint6
+
+    command_interfaces:  [position]
+    state_interfaces:    [position, velocity]
+    chainable_command_interfaces:
+      - position
+
+    kinematics:
+      plugin_name:    kinematics_interface_kdl/KinematicsInterfaceKDL
+      plugin_package: kinematics_interface_kdl
+      base:           base_link             # raiz do URDF do CR10
+      tip:            tcp_link              # frame do TCP (ponta do dedo Index COVVI)
+      alpha:          0.0005                # regularização DLS
+
+    ft_sensor:
+      name: ft_sensor                       # mesmo nome do broadcaster acima
+      frame:
+        id: fingertip_ft_link               # link no qual o FT está colado
+        external: false                     # FT já está no chain cinemático
+      filter_coefficient: 0.05              # 0..1 ; baixo = mais filtragem (LPF EWMA)
+
+    control:
+      frame:
+        id: tcp_link                        # admitância calculada no frame do TCP
+
+    fixed_world_frame:
+      frame:
+        id: base_link                       # frame inercial (não rotaciona)
+
+    gravity_compensation:
+      frame:
+        id: tcp_link
+      CoG:
+        # Centroide aproximado do dedo Index + falanges + cabo do FT.
+        # Necessário se o FT estiver MUITO sensível e a gravidade do
+        # próprio dedo for confundida com força externa.
+        pos:   [0.0, 0.0, -0.025]
+        force: 1.20                         # m * g  (m ≈ 0.12 kg)
+
+    admittance:
+      # Eixos cartesianos do `control.frame` (TCP):
+      #   [X,  Y,  Z,  rx, ry, rz]
+      #   X = aproximação horizontal (palpação)
+      #   Y = sliding tangencial lateral (definido pelo explorer)
+      #   Z = vertical
+      selected_axes:  [true,  false, false, false, false, false]
+
+      # Massa virtual (inércia aparente). Translação em kg, rotação em kg·m².
+      mass:           [2.0,   5.0,   5.0,   0.10,  0.10,  0.10]
+
+      # Razão de amortecimento (ζ). 1.0 = crítico; > 1.0 = sobreamortecido.
+      damping_ratio:  [1.6,   1.0,   1.0,   1.0,   1.0,   1.0]
+
+      # Rigidez da mola virtual (N/m ou N·m/rad). Mola fraca em X = força
+      # externa governa a posição ao longo do eixo de contato.
+      stiffness:      [40.0,  500.0, 500.0, 8.0,   8.0,   8.0]
+
+      # Limites de segurança para o setpoint cartesiano antes de mandar
+      # para a IK do kinematics_interface (evita pose inalcançável).
+      enable_parameter_update_without_reactivation: true
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  hand_position_controller (mão COVVI — 31 juntas, mantido idêntico)
+# ────────────────────────────────────────────────────────────────────────────
+hand_position_controller:
+  ros__parameters:
+    joints:
+      - Thumb
+      - Index
+      - Middle
+      - Ring
+      - Little
+      - Rotate
+      - _lisa_j01
+      - _thumb_chassis_j01
+      - _thumb_proximal_j01
+      - _thumb_distal_j01
+      - _thumb_link_j01
+      - _thumb_follower_j01
+      - _index_proximal_j01
+      - _index_distal_j01
+      - _index_link_j01
+      - _index_follower_j01
+      - _middle_proximal_j01
+      - _middle_distal_j01
+      - _middle_link_j01
+      - _middle_follower_j01
+      - _ring_proximal_j01
+      - _ring_distal_j01
+      - _ring_link_j01
+      - _ring_follower_j01
+      - _little_proximal_j01
+      - _little_distal_j01
+      - _little_link_j01
+      - _little_follower_j01
+    command_interfaces: [position]
+    state_interfaces:   [position, velocity]
+    state_publish_rate: 100.0
+    action_monitor_rate: 50.0
+    allow_partial_joints_goal: true

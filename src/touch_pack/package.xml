@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>touch_pack</name>
+  <version>0.3.0</version>
+  <description>
+    Plataforma de palpação tátil — CR10 + COVVI Index com FT no dedo.
+    Reproduz o protocolo de Gupta et al. 2021 (CONTACT → HOLD → SLIDING →
+    RETRACT) com controle de admitância para manter a força normal
+    durante o deslizamento. Inclui driver TCP/IP para o controlador
+    Dobot CR (192.168.5.1) compatível com bring-up real.
+  </description>
+  <maintainer email="lucaspmartins14@gmail.com">Lucas Martins</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>control_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <!-- Controlador opcional ativável via tactile_controllers.yaml -->
+  <exec_depend>admittance_controller</exec_depend>
+  <exec_depend>kinematics_interface_kdl</exec_depend>
+  <exec_depend>force_torque_sensor_broadcaster</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_pep8</test_depend>
+  <test_depend>ament_xmllint</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
