@@ -24,6 +24,7 @@ Comunicação ROS:
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import signal
@@ -57,6 +58,8 @@ except Exception:  # pragma: no cover
     _urdf_to_dobot = None
     _REAL_DRIVER_OK = False
 
+
+log = logging.getLogger('touch_pack.palpation_gui')
 
 # ──────────────────────────────────────────────────────────────────────
 # Tema claro (consistente com a paleta do laboratório).
@@ -268,15 +271,18 @@ class PalpationGUI(Node):
         self._eci_srv = None
         self._eci_msg = None
         self._cli_eci_grip = None
+        self._cli_eci_posn = None
         self._cli_hand_pwr_on = None
         self._cli_hand_pwr_off = None
         self._hand_powered = False
+        self._eci_posn_after: str | None = None
 
         # ─── CR10 real (lazy) ────────────────────────────────────────
         self._real_driver = None    # CR10RealDriver | None
         self._real_lock = threading.Lock()
         self._robot_mode: str = 'SIM_ONLY'
         self._robot_connected: bool = False
+        self._robot_connecting: bool = False
 
         # Pump ServoJ — quando o modo é MIRROR e o socket está aberto,
         # uma thread daemon transmite o último /joint_states a 33 Hz para
@@ -403,7 +409,7 @@ class PalpationGUI(Node):
         tk.Label(conn_rob, text='IP:', font=FONT_LBL,
                  bg=HEADER, fg=HEADER_FG
                  ).grid(row=1, column=0, sticky='w', padx=(0, 6))
-        self._robot_ip_var = tk.StringVar(value='192.168.5.1')
+        self._robot_ip_var = tk.StringVar(value='192.168.5.2')
         tk.Entry(conn_rob, textvariable=self._robot_ip_var,
                   width=14, font=FONT_MONO_S, bg='white', fg=TEXT,
                   relief='flat', bd=0, highlightthickness=1,
@@ -519,8 +525,11 @@ class PalpationGUI(Node):
                          hint='Derivativo — amortece oscilação. '
                               'Aplicado sobre o erro filtrado pelo loop.')
 
-        btn_wrap = tk.Frame(col_left, bg=BG)
-        btn_wrap.pack(fill='x', pady=(14, 0))
+        # ── Coluna direita: botão de início (fixado no fundo) + feedback FT ──
+        # O botão é empacotado primeiro com side='bottom' para ficar visível
+        # independente do tamanho da janela; o fb_card preenche o restante.
+        btn_wrap = tk.Frame(col_right, bg=BG)
+        btn_wrap.pack(fill='x', side='bottom', pady=(14, 0))
         self.start_btn = tk.Button(
             btn_wrap, text='▶  Iniciar Palpação',
             command=self._on_start, bg=PRIMARY, fg='white',
@@ -529,12 +538,6 @@ class PalpationGUI(Node):
             cursor='hand2')
         self.start_btn.pack(fill='x')
 
-        # ── Coluna direita: feedback FT ───────────────────────────────
-        # Mostra um MIRROR de /ft_sensor/wrench. Quando o CR10 real está
-        # conectado, o `_force_bridge_loop` publica nesse tópico a partir
-        # de `read_tcp_force()` (estimativa do controlador via torques
-        # articulares + modelo dinâmico), então este painel representa a
-        # força aplicada no flange/última junta do robô em tempo real.
         fb_card = self._card(col_right,
                               'Sensor de Força — Mirror do Robô (TCP)')
 
@@ -658,7 +661,8 @@ class PalpationGUI(Node):
         btns_hand = tk.Frame(col_hand, bg=BG)
         btns_hand.pack(fill='x', pady=(10, 0))
         tk.Button(btns_hand, text='✋  Abrir',
-                   command=lambda: self._apply_hand_preset(HAND_OPEN_DEG),
+                   command=lambda: self._apply_hand_preset(
+                       HAND_OPEN_DEG, eci_grip_id=11),   # 11 = GLOVE
                    bg=BTN_NEUTRAL, fg=TEXT,
                    activebackground=_shade(BTN_NEUTRAL, -0.08),
                    activeforeground=TEXT,
@@ -666,7 +670,8 @@ class PalpationGUI(Node):
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True, padx=(0, 3))
         tk.Button(btns_hand, text='👉  Apontar',
-                   command=lambda: self._apply_hand_preset(HAND_POINT_DEG),
+                   command=lambda: self._apply_hand_preset(
+                       HAND_POINT_DEG, eci_grip_id=7),    # 7 = FINGER (Index ext.)
                    bg=OK, fg='white',
                    activebackground=_shade(OK, -0.08),
                    activeforeground='white',
@@ -674,7 +679,8 @@ class PalpationGUI(Node):
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True, padx=3)
         tk.Button(btns_hand, text='✊  Fechar',
-                   command=lambda: self._apply_hand_preset(HAND_CLOSE_DEG),
+                   command=lambda: self._apply_hand_preset(
+                       HAND_CLOSE_DEG, eci_grip_id=2),    # 2 = POWER
                    bg=PRIMARY, fg='white',
                    activebackground=PRIMARY_HV, activeforeground='white',
                    font=FONT_LBL, relief='flat', bd=0, padx=12, pady=8,
@@ -753,6 +759,8 @@ class PalpationGUI(Node):
             self._suppressing = False
         positions_rad = [_math.radians(d) for d in positions_deg]
         msg = JointTrajectory()
+        # stamp=zero → controller starts the trajectory immediately,
+        # regardless of whether the node uses sim-time or wall-time.
         msg.joint_names = list(ARM_JOINTS)
         pt = JointTrajectoryPoint()
         pt.positions = [float(v) for v in positions_rad]
@@ -774,8 +782,16 @@ class PalpationGUI(Node):
                           dtype=np.float64)
         except (IndexError, ValueError):
             return
+        first_time = self._latest_q_urdf is None
         # Atribuição atômica (GIL) — pump lê esta referência.
         self._latest_q_urdf = q
+        # Se o pump ainda não iniciou (joint_states chegou depois da conexão),
+        # agenda o start no thread Tkinter.
+        if (first_time
+                and self._robot_mode == 'MIRROR'
+                and self._robot_connected
+                and not self._real_pump_active()):
+            self.root.after(0, self._start_real_pump)
 
     def _real_pump_active(self) -> bool:
         return (self._real_pump_thread is not None
@@ -809,6 +825,10 @@ class PalpationGUI(Node):
             with self._real_lock:
                 self._real_driver.mov_j_joint_deg(q_dobot_deg)
                 self._real_driver.sync()
+                # Reinicia estado interno do servo controller antes de ServoJ.
+                # Sem este reset, firmware V4.5.1 retorna -50001 na primeira
+                # chamada ServoJ após JointMovJ.
+                self._real_driver.prepare_servoj()
         except Exception as exc:
             self.get_logger().error(f'PTP de alinhamento falhou: {exc}')
             self._set_status(
@@ -830,6 +850,8 @@ class PalpationGUI(Node):
     def _real_pump_loop(self) -> None:
         """Loop @33 Hz: ServoJ com o último q_urdf cacheado."""
         period = 0.030
+        consecutive_errors = 0
+        MAX_CONSECUTIVE = 15   # ~450 ms de falhas → stop pump
         while not self._real_pump_stop.is_set():
             t0 = time.time()
             q = self._latest_q_urdf
@@ -838,9 +860,21 @@ class PalpationGUI(Node):
                 try:
                     with self._real_lock:
                         self._real_driver.servo_j_urdf(q.tolist())
-                except Exception as exc:    # pragma: no cover
-                    self.get_logger().error(
-                        f'ServoJ pump erro: {exc}')
+                    consecutive_errors = 0
+                except CR10RealDriverError as exc:
+                    consecutive_errors += 1
+                    if consecutive_errors == 1 or consecutive_errors % 5 == 0:
+                        self.get_logger().warning(
+                            f'ServoJ pump: {exc} '
+                            f'({consecutive_errors}/{MAX_CONSECUTIVE})')
+                    if consecutive_errors >= MAX_CONSECUTIVE:
+                        self.get_logger().error(
+                            'ServoJ pump: muitos erros consecutivos — parando.')
+                        self._set_status(
+                            'Pump ServoJ parado: verifique estado do robô.', DANGER)
+                        return
+                except Exception as exc:
+                    self.get_logger().error(f'ServoJ pump erro: {exc}')
             dt = time.time() - t0
             if dt < period:
                 # Wait responsivo ao stop event.
@@ -924,12 +958,14 @@ class PalpationGUI(Node):
             return
         self._suppressing = True
         try:
+            primary_deg: dict[str, float] = {}
             primary_rad: dict[str, float] = {}
             for j in HAND_JOINTS:
                 lo, hi = HAND_LIMITS_DEG[j]
                 v = self._clamp_var(self.hand_sliders[j], lo, hi)
                 if v is None:
                     return
+                primary_deg[j] = float(v)
                 primary_rad[j] = _math.radians(v)
             duration_s = self._move_duration_seconds()
         finally:
@@ -941,12 +977,51 @@ class PalpationGUI(Node):
             names.append(mimic_name)
             positions.append(primary_rad[driver] * mult)
         msg = JointTrajectory()
+        # stamp=zero → controller starts immediately (sim-time-safe).
         msg.joint_names = names
         pt = JointTrajectoryPoint()
         pt.positions = [float(v) for v in positions]
         pt.time_from_start = self._duration_msg(duration_s)
         msg.points.append(pt)
         self._hand_pub.publish(msg)
+        # Envia para a mão real via ECI (SetDigitPosn) se ativo
+        if self._eci_enabled:
+            self._schedule_eci_posn(primary_deg)
+
+    def _schedule_eci_posn(self, deg_dict: dict) -> None:
+        """Debounce de 60 ms para SetDigitPosn — evita flood de serviço."""
+        if not self._eci_enabled or self._cli_eci_posn is None:
+            return
+        if self._eci_posn_after is not None:
+            try:
+                self.root.after_cancel(self._eci_posn_after)
+            except Exception:
+                pass
+        self._eci_posn_after = self.root.after(
+            60, lambda v=dict(deg_dict): self._send_eci_posn_now(v))
+
+    def _send_eci_posn_now(self, deg_dict: dict) -> None:
+        """Envia SetDigitPosn convertendo graus → escala ECI 0-200."""
+        self._eci_posn_after = None
+        if not self._eci_enabled or self._cli_eci_posn is None:
+            return
+        if not self._cli_eci_posn.service_is_ready():
+            return
+
+        def _to_eci(joint: str, deg: float) -> int:
+            max_deg = 60.0 if joint == 'Rotate' else 90.0
+            return max(0, min(200, int(deg / max_deg * 200)))
+
+        req = self._eci_srv.SetDigitPosn.Request()
+        req.speed = self._eci_msg.Speed()
+        req.speed.value = 50
+        req.thumb  = _to_eci('Thumb',  deg_dict.get('Thumb',  0.0))
+        req.index  = _to_eci('Index',  deg_dict.get('Index',  0.0))
+        req.middle = _to_eci('Middle', deg_dict.get('Middle', 0.0))
+        req.ring   = _to_eci('Ring',   deg_dict.get('Ring',   0.0))
+        req.little = _to_eci('Little', deg_dict.get('Little', 0.0))
+        req.rotate = _to_eci('Rotate', deg_dict.get('Rotate', 0.0))
+        self._cli_eci_posn.call_async(req)
 
     def _apply_arm_home(self):
         """Move o braço para a Home customizada do usuário."""
@@ -1000,8 +1075,36 @@ class PalpationGUI(Node):
                               for j in ARM_JOINTS)
         self._set_status(f'Home salva ({summary}).', OK)
 
-    def _apply_hand_preset(self, preset_deg: dict[str, float]):
-        """Aplica um preset de mão (Abrir/Fechar)."""
+    def _send_eci_grip(self, grip_id: int, label: str = '') -> None:
+        """Chama SetCurrentGrip via ECI de forma assíncrona.
+
+        No-op se ECI não estiver ativo ou serviço indisponível.
+        grip_id deve ser um valor de CurrentGripID (1–14 builtins).
+        """
+        if not self._eci_enabled or self._cli_eci_grip is None:
+            return
+        if not self._cli_eci_grip.service_is_ready():
+            self._set_status('ECI SetCurrentGrip indisponível (aguarde).',
+                              WARN)
+            return
+        try:
+            grip = self._eci_msg.CurrentGripID()
+            grip.value = grip_id
+            req = self._eci_srv.SetCurrentGrip.Request()
+            req.grip_id = grip
+            self._cli_eci_grip.call_async(req)
+            if label:
+                self._set_status(f'ECI > {label} (id={grip_id})', OK)
+        except Exception as exc:
+            self.get_logger().error(f'SetCurrentGrip falhou: {exc}')
+
+    def _apply_hand_preset(self, preset_deg: dict[str, float],
+                            *, eci_grip_id: int | None = None):
+        """Aplica um preset de mão (Abrir/Apontar/Fechar).
+
+        Se `eci_grip_id` for fornecido e ECI estiver ativo, também chama
+        SetCurrentGrip para mover a mão real.
+        """
         self._suppressing = True
         try:
             for j in HAND_JOINTS:
@@ -1009,6 +1112,8 @@ class PalpationGUI(Node):
         finally:
             self._suppressing = False
         self._publish_hand_from_sliders()
+        if eci_grip_id is not None:
+            self._send_eci_grip(eci_grip_id)
 
     def _build_statusbar(self):
         self.status_var = tk.StringVar(value='pronto.')
@@ -1110,8 +1215,16 @@ class PalpationGUI(Node):
         if not ip:
             self._set_status('Informe o IP da mão COVVI.', DANGER)
             return
+        # Quebra o eci_prefix em namespace + node name, igual ao manual_control_node
+        # do grasp_ml_pack (referência funcional). Com __ns:=/covvi e __name:=hand,
+        # o driver expõe os serviços em /covvi/hand/SetCurrentGrip etc.
+        parts = self._eci_prefix.strip('/').split('/')
+        _ns   = '/' + parts[0]
+        _name = parts[1] if len(parts) > 1 else 'server'
         cmd = ['ros2', 'run', 'covvi_hand_driver', 'server', ip,
-                f'--ros-args', '-r', f'__ns:={self._eci_prefix}']
+               '--ros-args',
+               '--remap', f'__ns:={_ns}',
+               '--remap', f'__name:={_name}']
         try:
             self._hand_proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL,
@@ -1133,10 +1246,18 @@ class PalpationGUI(Node):
             self._hand_proc = None
             return
         self._hand_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
+        # Ativa ECI automaticamente (como o manual_control_node do grasp_ml_pack)
+        # _toggle_eci já agenda o auto-power-on em 800 ms
+        if not self._eci_enabled:
+            self._toggle_eci()
         self._set_status(
-            f'Driver da mão ativo no namespace {self._eci_prefix}.', OK)
+            f'Driver da mão ativo ({self._eci_prefix}) — power ON em breve…', OK)
 
     def _disconnect_real_hand(self) -> None:
+        # Desliga ECI + power enquanto o driver ainda está vivo (para o LED apagar)
+        if self._eci_enabled:
+            self._toggle_eci()
+        # Só depois mata o subprocesso
         proc = self._hand_proc
         if proc is not None:
             try:
@@ -1144,24 +1265,30 @@ class PalpationGUI(Node):
             except Exception:
                 pass
         self._hand_proc = None
-        # Desliga ECI/PWR junto.
-        if self._eci_enabled:
-            self._toggle_eci()
-        if self._hand_powered:
-            self._toggle_hand_power()
-        self._hand_connect_btn.set_state(
-            '⚡', 'Conectar', PRIMARY, 'white')
+        self._hand_connect_btn.set_state('⚡', 'Conectar', PRIMARY, 'white')
         self._set_status('Driver da mão desconectado.', TEXT_DIM)
 
     def _toggle_eci(self) -> None:
         """Liga/desliga o canal lógico ECI (cliente dos serviços COVVI).
 
         Precisa do pacote `covvi_interfaces` sourceado no workspace.
+        ECI OFF corta a alimentação da mão imediatamente (LED azul apaga).
+        ECI ON ativa os clientes e auto-liga a alimentação após 800 ms.
         """
         if self._eci_enabled:
+            # Cortar alimentação antes de desativar o canal
+            if self._hand_powered and self._cli_hand_pwr_off is not None:
+                try:
+                    if self._cli_hand_pwr_off.service_is_ready():
+                        self._cli_hand_pwr_off.call_async(
+                            self._eci_srv.SetHandPowerOff.Request())
+                except Exception:
+                    pass
+            self._hand_powered = False
+            self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
             self._eci_enabled = False
             self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
-            self._set_status('Canal ECI desativado.', TEXT_DIM)
+            self._set_status('Canal ECI desativado — alimentação cortada.', TEXT_DIM)
             return
         try:
             import covvi_interfaces.srv as _eci_srv
@@ -1173,21 +1300,42 @@ class PalpationGUI(Node):
             return
         self._eci_srv = _eci_srv
         self._eci_msg = _eci_msg
+        # Nomes CamelCase conforme o covvi_hand_driver expõe no grafo ROS2
         if self._cli_eci_grip is None:
             self._cli_eci_grip = self.create_client(
                 _eci_srv.SetCurrentGrip,
-                f'{self._eci_prefix}/set_current_grip')
+                f'{self._eci_prefix}/SetCurrentGrip')
+        if self._cli_eci_posn is None:
+            self._cli_eci_posn = self.create_client(
+                _eci_srv.SetDigitPosn,
+                f'{self._eci_prefix}/SetDigitPosn')
         if self._cli_hand_pwr_on is None:
             self._cli_hand_pwr_on = self.create_client(
                 _eci_srv.SetHandPowerOn,
-                f'{self._eci_prefix}/set_hand_power_on')
+                f'{self._eci_prefix}/SetHandPowerOn')
         if self._cli_hand_pwr_off is None:
             self._cli_hand_pwr_off = self.create_client(
                 _eci_srv.SetHandPowerOff,
-                f'{self._eci_prefix}/set_hand_power_off')
+                f'{self._eci_prefix}/SetHandPowerOff')
         self._eci_enabled = True
         self._eci_btn.set_state('◉', 'ECI ON', OK, 'white')
-        self._set_status('Canal ECI ativo — pronto para grips e power.', OK)
+        self._set_status('Canal ECI ativo — aguardando power da mão…', OK)
+        # Aguarda o driver registrar os serviços no grafo ROS2 antes de ligar
+        self.root.after(800, self._auto_power_on_hand)
+
+    def _auto_power_on_hand(self) -> None:
+        """Auto-power-on da mão 800 ms após o ECI ser ativado."""
+        if not self._eci_enabled or self._cli_hand_pwr_on is None or self._hand_powered:
+            return
+        if not self._cli_hand_pwr_on.service_is_ready():
+            self._set_status(
+                'ECI ativo — serviço de power indisponível '
+                '(verifique o IP e o driver da mão).', WARN)
+            return
+        self._cli_hand_pwr_on.call_async(self._eci_srv.SetHandPowerOn.Request())
+        self._hand_powered = True
+        self._pwr_btn.set_state('⏻', 'PWR ON', OK, 'white')
+        self._set_status('Canal ECI ativo — alimentação ligada (LED azul aceso).', OK)
 
     def _toggle_hand_power(self) -> None:
         """Liga/desliga a alimentação da mão COVVI via SetHandPowerOn/Off."""
@@ -1233,30 +1381,81 @@ class PalpationGUI(Node):
         if not ip:
             self._set_status('Informe o IP do controlador CR10.', DANGER)
             return
+        if self._robot_connecting:
+            return
+        # Conexão em background — evita congelar a GUI durante os ~5 s de
+        # handshake TCP + sequência ClearError/EnableRobot/SpeedFactor.
+        self._robot_connecting = True
+        self._robot_connect_btn.set_state('⏳', 'Conectando…', BTN_NEUTRAL, TEXT)
+        self._set_status(f'Abrindo sockets para CR10 em {ip}…', PRIMARY)
+        threading.Thread(
+            target=self._connect_robot_worker, args=(ip,), daemon=True).start()
+
+    def _connect_robot_worker(self, ip: str) -> None:
+        """Roda em thread daemon — conecta e habilita o CR10 sem bloquear a GUI."""
+        log.info('[ROBOT] Iniciando conexão com CR10 em %s', ip)
         try:
             cfg = CR10RealDriverConfig(ip=ip)
+            log.info('[ROBOT] Config: timeout=%.1fs, speed=%d%%, '
+                     'payload=%.2fkg, collision=%d',
+                     cfg.connect_timeout_s, cfg.speed_factor,
+                     cfg.payload_kg, cfg.collision_level)
             drv = CR10RealDriver(ip=ip, dry_run=False, config=cfg)
+
+            log.info('[ROBOT] Abrindo sockets TCP '
+                     '(29999 dashboard / 30003 motion / 30004 feedback)…')
+            self.root.after(0, lambda: self._set_status(
+                f'Conectando sockets TCP em {ip}:29999/30003/30004…', PRIMARY))
             drv.connect()
+            log.info('[ROBOT] Sockets abertos com sucesso')
+            self.root.after(0, lambda: self._set_status(
+                f'CR10 {ip}: sockets OK — enviando ClearError/EnableRobot…',
+                PRIMARY))
+
+            log.info('[ROBOT] Executando sequência de enable '
+                     '(ClearError → EnableRobot → SpeedFactor → SetCollisionLevel → PayLoad)…')
             drv.enable()
+            log.info('[ROBOT] Enable concluído')
+
+            # Aguarda o firmware completar EnableRobot antes de ler o modo.
+            log.info('[ROBOT] Aguardando firmware (1.5 s)…')
+            time.sleep(1.5)
+
+            mode_raw = drv.robot_mode() or ''
+            log.info('[ROBOT] RobotMode() → %r', mode_raw)
+            self.root.after(
+                0, lambda d=drv, m=mode_raw: self._finish_robot_connect(ip, d, m))
         except CR10RealDriverError as exc:
-            self._set_status(
-                f'Falha ao conectar CR10 ({ip}): {exc}', DANGER)
-            return
-        except Exception as exc:    # pragma: no cover
-            self._set_status(
-                f'Erro inesperado conectando CR10: {exc}', DANGER)
-            return
+            log.error('[ROBOT] Falha na conexão: %s', exc)
+            self.root.after(0, lambda e=str(exc): self._fail_robot_connect(e))
+        except Exception as exc:
+            log.exception('[ROBOT] Erro inesperado durante conexão')
+            self.root.after(
+                0, lambda e=str(exc): self._fail_robot_connect(
+                    f'Erro inesperado: {e}'))
+
+    def _finish_robot_connect(self, ip: str, drv,
+                               mode_raw: str) -> None:
+        """Callback no thread Tkinter após conexão bem-sucedida."""
+        self._robot_connecting = False
         self._real_driver = drv
         self._robot_connected = True
         self._robot_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
+        # Modo 5 = ENABLE (pronto); 9 = ERROR no Dobot CR.
+        mode_note = f'  [RobotMode: {mode_raw[:60].strip()}]' if mode_raw else ''
+        color = DANGER if '9' in mode_raw and '5' not in mode_raw else OK
         self._set_status(
-            f'CR10 conectado em {ip} (modo {self._robot_mode}).', OK)
-        # Bridge de força sempre que o robô real está conectado — assim a
-        # GUI e o PID do explorer enxergam a estimativa do controlador.
+            f'CR10 conectado em {ip} '
+            f'(SpeedFactor={drv.cfg.speed_factor}%){mode_note}.', color)
         self._start_force_bridge()
-        # Se o usuário já escolheu MIRROR antes de conectar, sobe o pump.
         if self._robot_mode == 'MIRROR':
             self._start_real_pump()
+
+    def _fail_robot_connect(self, error: str) -> None:
+        """Callback no thread Tkinter após falha na conexão."""
+        self._robot_connecting = False
+        self._robot_connect_btn.set_state('⚡', 'Conectar', PRIMARY, 'white')
+        self._set_status(f'Falha ao conectar CR10: {error}', DANGER)
 
     def _disconnect_real_robot(self) -> None:
         # Pump e bridge precisam parar ANTES de fechar os sockets — senão
@@ -1316,11 +1515,10 @@ class PalpationGUI(Node):
         if self._eci_enabled and self._cli_eci_grip is not None \
                 and self._eci_srv is not None:
             try:
+                grip = self._eci_msg.CurrentGripID()
+                grip.value = 11   # 11 = GLOVE (mão totalmente aberta)
                 req = self._eci_srv.SetCurrentGrip.Request()
-                # 11 = Glove (mão totalmente aberta — mesmo ID usado no
-                # manual_control original).
-                req.grip = self._eci_msg.Grip()
-                req.grip.value = 11
+                req.grip_id = grip
                 self._cli_eci_grip.call_async(req)
             except Exception:
                 pass
@@ -1445,6 +1643,10 @@ class PalpationGUI(Node):
         msg = String()
         msg.data = json.dumps(payload)
         self._start_pub.publish(msg)
+        # Quando a mão real está conectada via ECI, aciona o grip FINGER
+        # (Index estendido) automaticamente, já que o tactile_explorer
+        # publica a pose da mão apenas no tópico do sim (ros2_control).
+        self._send_eci_grip(7, 'Finger — palpação (Index estendido)')
         self._set_status(
             f'/palpation/start — v={payload["speed_mms"]:.1f} mm/s, '
             f'F={payload["force_n"]:.2f} N, '
@@ -1490,6 +1692,10 @@ class PalpationGUI(Node):
 
 
 def main(args=None):
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s.%(msecs)03d [%(name)s] %(levelname)s  %(message)s',
+        datefmt='%H:%M:%S')
     rclpy.init(args=args)
     gui = PalpationGUI()
     try:

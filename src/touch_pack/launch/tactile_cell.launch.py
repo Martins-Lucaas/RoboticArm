@@ -13,7 +13,7 @@ Inicia, em ordem, AUTOMATICAMENTE:
 
 Argumentos (todos opcionais):
     control_mode     sim_only | mirror | real_from_sim (default sim_only)
-    robot_ip         IP do controlador CR10 real (default 192.168.5.1)
+    robot_ip         IP do controlador CR10 real (default 192.168.5.2)
     robot_dry_run    true = sockets não abertos (default true)
     no_gui           true = não abrir palpation_gui (default false)
 
@@ -214,7 +214,7 @@ def generate_launch_description():
         'control_mode', default_value='sim_only',
         description='sim_only | mirror | real_from_sim')
     robot_ip_arg  = DeclareLaunchArgument(
-        'robot_ip', default_value='192.168.5.1')
+        'robot_ip', default_value='192.168.5.2')
     robot_dry_arg = DeclareLaunchArgument(
         'robot_dry_run', default_value='true')
     no_gui_arg    = DeclareLaunchArgument('no_gui', default_value='false')
@@ -294,6 +294,7 @@ def generate_launch_description():
 
     gui_node = Node(
         package='touch_pack', executable='palpation_gui',
+        parameters=[{'use_sim_time': True}],
         condition=UnlessCondition(no_gui))
 
     # explorer + GUI sobem quando o último controller (hand) terminar

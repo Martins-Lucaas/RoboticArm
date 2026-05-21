@@ -240,14 +240,25 @@ class TactileExplorer(Node):
     # ──────────────────────────────────────────────────────────────────
     # Callbacks de subscrição
     # ──────────────────────────────────────────────────────────────────
+    # Limite acima do qual o valor do sensor é considerado lixo (Gazebo
+    # publica valores inválidos nos primeiros frames de simulação).
+    _FT_MAX_PLAUSIBLE_N = 500.0
+
     def _cb_wrench(self, msg: WrenchStamped):
+        fx = msg.wrench.force.x
+        fy = msg.wrench.force.y
+        fz = msg.wrench.force.z
+        if not (math.isfinite(fx) and math.isfinite(fy) and math.isfinite(fz)
+                and abs(fx) < self._FT_MAX_PLAUSIBLE_N
+                and abs(fy) < self._FT_MAX_PLAUSIBLE_N
+                and abs(fz) < self._FT_MAX_PLAUSIBLE_N):
+            return
+        tx = msg.wrench.torque.x
+        ty = msg.wrench.torque.y
+        tz = msg.wrench.torque.z
         with self._ft_lock:
-            self._ft_force = np.array([
-                msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
-                dtype=np.float64)
-            self._ft_torque = np.array([
-                msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
-                dtype=np.float64)
+            self._ft_force = np.array([fx, fy, fz], dtype=np.float64)
+            self._ft_torque = np.array([tx, ty, tz], dtype=np.float64)
             self._ft_stamp_s = (
                 msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
 
