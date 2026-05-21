@@ -64,6 +64,13 @@ FEEDBACK_PORT = 30003
 # (dobot_api.py do TCP-IP-CR-Python-V4). Se o controlador retornar valores
 # incoerentes, validar com `read_feedback_raw()` e ajustar.
 FEEDBACK_Q_ACTUAL_OFFSET = 432
+# Offset (em bytes) do campo `actual_TCPForce` (6 × float64 = [Fx,Fy,Fz,Tx,Ty,Tz])
+# dentro do struct de 1440 B do feedback. Assume layout:
+#   q_actual(432) → qd_actual(480) → qdd_actual(528) → i_actual(576)
+#   → tool_vector_actual(624) → TCPSpeed_actual(672) → TCPForce(720)
+# Validar com `read_feedback_raw()` em diferentes firmwares e ajustar se o
+# struct do TCP-IP-CR-Python-V4 desviar nessa versão do controlador.
+FEEDBACK_TCP_FORCE_OFFSET = 720
 FEEDBACK_PACKET_SIZE = 1440
 
 
@@ -299,6 +306,26 @@ class CR10RealDriver:
         if _HAS_CONV:
             q = dobot_to_urdf(q)
         return q
+
+    def read_tcp_force(self) -> np.ndarray:
+        """Lê o wrench externo estimado no TCP a partir do feedback do CR10.
+
+        O controlador da Dobot estima [Fx, Fy, Fz, Tx, Ty, Tz] subtraindo
+        o modelo dinâmico (gravidade + PayLoad declarado) dos torques
+        medidos em cada uma das 6 juntas. NÃO é um F/T externo — a
+        qualidade depende do `PayLoad(...)` estar calibrado e há drift de
+        zero que deve ser compensado externamente (tarar antes do contato).
+
+        Returns:
+            np.ndarray (6,) — [Fx, Fy, Fz, Tx, Ty, Tz] em N / N·m no
+            frame do TCP. Em `dry_run`, retorna zeros.
+        """
+        if self.dry_run:
+            return np.zeros(6, dtype=np.float64)
+        buf = self.read_feedback_raw()
+        return np.frombuffer(
+            buf, offset=FEEDBACK_TCP_FORCE_OFFSET,
+            count=6, dtype='<f8').copy()
 
     # ── diagnóstico ──────────────────────────────────────────────────────
     def robot_mode(self) -> str | None:

@@ -21,7 +21,15 @@ Transições:
             atinge `target_force_n` — não aborta por timeout até o
             tempo planejado da trajetória + margem de segurança.
 
-  HOLD      Pausa rígida de `hold_seconds` segundos.
+  HOLD      Mantém a força normal alvo via PID de Fz por
+            `hold_seconds`. A cada tick (~30 ms) calcula
+            v_cmd = Kp·err + Ki·∫err + Kd·d(err)/dt (err = F* − |Fz|),
+            converte em Δz, resolve Δq via Jacobian-DLS e publica um
+            JointTrajectory de 1 ponto no controller. Se |Fz| nunca
+            ultrapassar `_FORCE_CONTACT_FLOOR_N` durante toda a fase,
+            interpreta como "sem contato — modo calibração" e segue para
+            SLIDING SEM ABORTAR (essa é a saída desejada quando a
+            superfície de palpação ainda não foi posicionada).
 
   SLIDING   Desliza lateralmente girando APENAS joint1 (todas as outras
             juntas, incluindo joint6, ficam congeladas). O arco no plano
@@ -104,6 +112,18 @@ _HAND_POINTING_RAD = {
 
 _HAND_PRIMARY = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
 
+# Limiar abaixo do qual consideramos "sem contato" — usado para decidir
+# se o HOLD-PID está em modo regulação (ever_in_contact=True) ou em modo
+# calibração (nunca tocou nada). 0.05 N é maior que o ruído típico da
+# estimativa de força do CR10 por torque articular, mas menor que o
+# menor target_force_n permitido (0.2 N na GUI).
+_FORCE_CONTACT_FLOOR_N = 0.05
+
+# Saturações de segurança do PID de força no HOLD.
+_PID_V_MAX_MS  = 0.005   # 5 mm/s — velocidade máxima aplicada pelo PID
+_PID_I_MAX_Ns  = 5.0     # anti-windup do termo integral
+_PID_DT_S      = 0.030   # período do loop (33 Hz, mesmo do ServoJ mirror)
+
 # Mimic joints da COVVI (26 — extraído de linear_covvi_hand_gazebo.urdf).
 _MIMIC_LIST = [
     ('_lisa_j01',            'Rotate', 1.07338),
@@ -149,6 +169,11 @@ class TactileExplorer(Node):
         self.declare_parameter('approach_v_min_mms',    5.0)
         self.declare_parameter('controller_action',
             '/cr10_group_controller/follow_joint_trajectory')
+        # Ganhos PID padrão (v_cmd em m/s a partir do erro em N). Valores
+        # conservadores — usuário deve ajustar via GUI durante calibração.
+        self.declare_parameter('kp', 0.001)   # (m/s)/N
+        self.declare_parameter('ki', 0.0)     # (m/s)/(N·s)
+        self.declare_parameter('kd', 0.0)     # m/N
 
         # ─── Estado interno ──────────────────────────────────────────
         self._phase: str = 'IDLE'
@@ -168,6 +193,9 @@ class TactileExplorer(Node):
         # Home customizada vinda da GUI (graus URDF por junta); None até a
         # GUI publicar /palpation/start pela primeira vez.
         self._user_home_q: np.ndarray | None = None
+        self._kp: float = float(self.get_parameter('kp').value)
+        self._ki: float = float(self.get_parameter('ki').value)
+        self._kd: float = float(self.get_parameter('kd').value)
         self._ft_lock = threading.Lock()
         self._ft_force = np.zeros(3, dtype=np.float64)
         self._ft_torque = np.zeros(3, dtype=np.float64)
@@ -195,6 +223,13 @@ class TactileExplorer(Node):
         self._hand_pub = self.create_publisher(
             JointTrajectory,
             '/hand_position_controller/joint_trajectory', 5)
+        # Publisher direto no tópico do joint_trajectory_controller do
+        # braço — usado pelo HOLD-PID para fazer streaming de setpoints
+        # curtos (1 ponto, t≈dt+0.1s) a cada tick, em vez de despachar
+        # um goal de action por correção.
+        self._arm_traj_pub = self.create_publisher(
+            JointTrajectory,
+            '/cr10_group_controller/joint_trajectory', 5)
         self.get_logger().info(
             f'tactile_explorer pronto — action: {action_name}')
 
@@ -243,6 +278,10 @@ class TactileExplorer(Node):
                 payload.get('distance_mm', self._slide_distance_mm))
             self._target_distance_cm = float(
                 payload.get('target_distance_cm', self._target_distance_cm))
+            # Ganhos PID — atualizados ao vivo pela GUI a cada partida.
+            self._kp = float(payload.get('kp', self._kp))
+            self._ki = float(payload.get('ki', self._ki))
+            self._kd = float(payload.get('kd', self._kd))
             # Direção do sliding ('+X' / '-X' / '+Y' / '-Y' em XY mundo).
             slide_dir = str(payload.get('slide_dir', '+Y')).upper().strip()
             _DIR_MAP = {
@@ -289,6 +328,7 @@ class TactileExplorer(Node):
             'fx': float(f[0]), 'fy': float(f[1]), 'fz': float(f[2]),
             'speed_mms': self._slide_speed_mms,
             'distance_mm': self._slide_distance_mm,
+            'kp': self._kp, 'ki': self._ki, 'kd': self._kd,
         })
         self._status_pub.publish(msg)
 
@@ -572,18 +612,114 @@ class TactileExplorer(Node):
         if outcome == 'finished':
             self.get_logger().warn(
                 f'Descida completa ({descent_m*100:.1f} cm) sem leitura '
-                f'de força ≥ {target_force} N; assumindo contato.')
+                f'de força ≥ {target_force} N — modo CALIBRAÇÃO: o HOLD '
+                'detectará F≈0 e o experimento continuará para o SLIDING.')
             return True
         self.get_logger().error(f'CONTACT terminou com estado {outcome}.')
         return False
 
+    def _stream_q(self, q: np.ndarray, dt_s: float) -> None:
+        """Publica 1 ponto no tópico do joint_trajectory_controller.
+
+        `dt_s` é o `time_from_start` do ponto — usar dt_loop + margem
+        (~0.10 s) para que o controller tenha tempo de interpolar e não
+        descarte o setpoint por estar no passado.
+        """
+        msg = JointTrajectory()
+        msg.joint_names = list(_ARM_JOINTS)
+        pt = JointTrajectoryPoint()
+        pt.positions = [float(v) for v in q]
+        sec = int(dt_s)
+        pt.time_from_start = Duration(
+            sec=sec, nanosec=int((dt_s - sec) * 1e9))
+        msg.points.append(pt)
+        self._arm_traj_pub.publish(msg)
+
     def _phase_hold(self) -> bool:
-        """HOLD — pausa rígida; pose mantida pelo controller."""
+        """HOLD — PID de força mantém |Fz|=target_force_n.
+
+        Loop @33 Hz (período `_PID_DT_S`). Para cada tick:
+
+            err     = F* − |Fz|
+            ∫err   += err·dt        (anti-windup ± `_PID_I_MAX_Ns`,
+                                       só integra após o primeiro contato)
+            d(err) = (err − prev)/dt
+            v_cmd  = Kp·err + Ki·∫err + Kd·d(err)
+            v_cmd  ∈ [−`_PID_V_MAX_MS`, +`_PID_V_MAX_MS`]      (saturação)
+            Δz     = −v_cmd·dt      (err>0 → pressionar mais → −Z)
+            twist  = [0, 0, Δz, 0, 0, 0]
+            Δq     = Jᵀ(JJᵀ + λ²I)⁻¹·twist                   (DLS, λ=0.01)
+            q_new  = clip(q + Δq, JMIN, JMAX)
+            stream(q_new, dt+0.10)
+
+        Modo CALIBRAÇÃO — se |Fz| nunca passar de `_FORCE_CONTACT_FLOOR_N`
+        durante toda a fase, o PID fica congelado (não pressiona contra o
+        nada), a fase espera os `hold_seconds` e o experimento continua
+        normalmente para o SLIDING. Esse comportamento é intencional:
+        permite testar o pipeline sem superfície de palpação posicionada.
+        """
         self._set_phase('HOLD')
         hold_s = float(self.get_parameter('hold_seconds').value)
+        with self._params_lock:
+            target_f = float(self._target_force_n)
+            kp, ki, kd = self._kp, self._ki, self._kd
+
+        dt = _PID_DT_S
+        integral = 0.0
+        prev_err = 0.0
+        ever_in_contact = False
+        lam = 0.01
+        I6 = np.eye(6)
+
+        self.get_logger().info(
+            f'HOLD-PID: alvo {target_f:.2f} N, ganhos '
+            f'Kp={kp:.4g}, Ki={ki:.4g}, Kd={kd:.4g}, '
+            f'duração {hold_s:.1f} s.')
+
         t_end = time.time() + hold_s
         while time.time() < t_end:
-            time.sleep(0.05)
+            t0 = time.time()
+            with self._ft_lock:
+                fz = float(abs(self._ft_force[2]))
+            if fz > _FORCE_CONTACT_FLOOR_N:
+                ever_in_contact = True
+
+            err = target_f - fz
+            if ever_in_contact:
+                integral = float(np.clip(
+                    integral + err * dt, -_PID_I_MAX_Ns, _PID_I_MAX_Ns))
+            else:
+                # Sem contato — não acumula viés. PID parado, robô estável.
+                integral = 0.0
+            deriv = (err - prev_err) / dt
+            prev_err = err
+
+            if ever_in_contact:
+                v_cmd = kp * err + ki * integral + kd * deriv
+                v_cmd = float(np.clip(v_cmd, -_PID_V_MAX_MS, _PID_V_MAX_MS))
+                dz = -v_cmd * dt
+                twist = np.array([0., 0., dz, 0., 0., 0.])
+                q = self._q_now()
+                J = jacobian(q)
+                try:
+                    dq = J.T @ np.linalg.solve(
+                        J @ J.T + lam * lam * I6, twist)
+                except np.linalg.LinAlgError:
+                    self.get_logger().warn(
+                        'HOLD-PID: Jacobiano singular — tick descartado.')
+                    dq = np.zeros(6)
+                q_new = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
+                self._stream_q(q_new, dt + 0.10)
+
+            elapsed = time.time() - t0
+            if elapsed < dt:
+                time.sleep(dt - elapsed)
+
+        if not ever_in_contact:
+            self.get_logger().info(
+                f'HOLD-PID: |Fz| nunca excedeu {_FORCE_CONTACT_FLOOR_N} N '
+                '— modo CALIBRAÇÃO, experimento continua sem aplicar '
+                'controle de força. Posicione a superfície e refaça.')
         return True
 
     def _phase_sliding(self) -> bool:

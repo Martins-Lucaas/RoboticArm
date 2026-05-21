@@ -102,6 +102,16 @@ TGT_DIST_CM_MIN, TGT_DIST_CM_MAX, TGT_DIST_CM_DEFAULT = 0.5, 60.0, 5.0  # cm
 # aba Controle Manual (Home, sliders, presets da mão).
 MOVE_TIME_MIN, MOVE_TIME_MAX, MOVE_TIME_DEFAULT = 0.1, 30.0, 1.0  # s
 
+# Ganhos PID padrão do controle de força durante o HOLD. v_cmd (m/s) sai
+# do PID a partir do erro em N; sintonize na própria GUI durante a
+# calibração — defaults conservadores por segurança.
+KP_DEFAULT, KP_MIN, KP_MAX, KP_STEP = 0.0010, 0.0, 0.020,  0.0005   # (m/s)/N
+KI_DEFAULT, KI_MIN, KI_MAX, KI_STEP = 0.0000, 0.0, 0.010,  0.0002   # (m/s)/(N·s)
+KD_DEFAULT, KD_MIN, KD_MAX, KD_STEP = 0.0000, 0.0, 0.005,  0.0001   # m/N
+
+# Período de publicação do bridge de força (real CR10 → /ft_sensor/wrench).
+FORCE_BRIDGE_PERIOD_S = 0.020   # 50 Hz
+
 # ──────────────────────────────────────────────────────────────────────
 # Controle Manual — definições do braço CR10 e da mão COVVI
 # ──────────────────────────────────────────────────────────────────────
@@ -222,6 +232,14 @@ class PalpationGUI(Node):
             String, '/palpation/status', self._cb_status, 10)
         self.create_subscription(
             WrenchStamped, '/ft_sensor/wrench', self._cb_wrench, 30)
+        # Bridge real-CR10 → /ft_sensor/wrench: a thread `_force_bridge_loop`
+        # lê `read_tcp_force()` do driver (estimado por torques articulares
+        # compensados pela dinâmica) e publica como WrenchStamped no mesmo
+        # tópico que o explorer e o painel da GUI já consomem — ou seja,
+        # a leitura da última junta do robô espelha automaticamente para
+        # a tela e para o PID do HOLD.
+        self._wrench_pub = self.create_publisher(
+            WrenchStamped, '/ft_sensor/wrench', 20)
 
         # ─── Publishers para comando direto (aba Controle Manual) ────
         # Os joint_trajectory_controllers expõem um tópico direto
@@ -268,6 +286,8 @@ class PalpationGUI(Node):
         self._latest_q_urdf: np.ndarray | None = None
         self._real_pump_thread: threading.Thread | None = None
         self._real_pump_stop = threading.Event()
+        self._force_bridge_thread: threading.Thread | None = None
+        self._force_bridge_stop = threading.Event()
         self.create_subscription(
             JointState, '/joint_states', self._cb_joint_states, 50)
 
@@ -447,6 +467,11 @@ class PalpationGUI(Node):
         self.force_var       = tk.DoubleVar(value=FORCE_DEFAULT)
         self.dist_var        = tk.DoubleVar(value=DIST_DEFAULT)
         self.target_dist_var = tk.DoubleVar(value=TGT_DIST_CM_DEFAULT)
+        # Ganhos PID enviados a cada /palpation/start; o explorer aplica
+        # no HOLD para manter a força normal alvo. Padrão conservador.
+        self.pid_kp_var      = tk.DoubleVar(value=KP_DEFAULT)
+        self.pid_ki_var      = tk.DoubleVar(value=KI_DEFAULT)
+        self.pid_kd_var      = tk.DoubleVar(value=KD_DEFAULT)
         # Direção XY (mundo) do sliding. O explorer escolhe o sinal de
         # Δθ_joint1 que melhor alinha o arco com esse vetor.
         self.slide_dir_var   = tk.StringVar(value='+Y')
@@ -476,6 +501,24 @@ class PalpationGUI(Node):
         # e o explorer pega o sinal de Δθ que melhor se alinha a ela.
         self._build_slide_dir_selector(params_card)
 
+        # ── Calibração PID (Kp / Ki / Kd) ─────────────────────────────
+        pid_card = self._card(col_left, 'Calibração PID — Controle de Força (HOLD)')
+        self._param_row(pid_card, label='Kp',
+                         unit='(m/s)/N', var=self.pid_kp_var,
+                         vmin=KP_MIN, vmax=KP_MAX, step=KP_STEP,
+                         hint='Proporcional — quanto reage à diferença '
+                              'instantânea entre força medida e alvo.')
+        self._param_row(pid_card, label='Ki',
+                         unit='(m/s)/(N·s)', var=self.pid_ki_var,
+                         vmin=KI_MIN, vmax=KI_MAX, step=KI_STEP,
+                         hint='Integral — elimina offset estacionário '
+                              '(ative aos poucos: causa overshoot).')
+        self._param_row(pid_card, label='Kd',
+                         unit='m/N', var=self.pid_kd_var,
+                         vmin=KD_MIN, vmax=KD_MAX, step=KD_STEP,
+                         hint='Derivativo — amortece oscilação. '
+                              'Aplicado sobre o erro filtrado pelo loop.')
+
         btn_wrap = tk.Frame(col_left, bg=BG)
         btn_wrap.pack(fill='x', pady=(14, 0))
         self.start_btn = tk.Button(
@@ -487,11 +530,17 @@ class PalpationGUI(Node):
         self.start_btn.pack(fill='x')
 
         # ── Coluna direita: feedback FT ───────────────────────────────
-        fb_card = self._card(col_right, 'Feedback do Sensor FT')
+        # Mostra um MIRROR de /ft_sensor/wrench. Quando o CR10 real está
+        # conectado, o `_force_bridge_loop` publica nesse tópico a partir
+        # de `read_tcp_force()` (estimativa do controlador via torques
+        # articulares + modelo dinâmico), então este painel representa a
+        # força aplicada no flange/última junta do robô em tempo real.
+        fb_card = self._card(col_right,
+                              'Sensor de Força — Mirror do Robô (TCP)')
 
         fnrow = tk.Frame(fb_card, bg=PANEL)
         fnrow.pack(fill='x', pady=(6, 4))
-        tk.Label(fnrow, text='Força Normal Executada', font=FONT_LBL,
+        tk.Label(fnrow, text='Força Normal na Última Junta', font=FONT_LBL,
                  bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
         self.force_value_lbl = tk.Label(
             fnrow, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
@@ -807,6 +856,68 @@ class PalpationGUI(Node):
         if thr is not None:
             thr.join(timeout=1.5)
         self._real_pump_thread = None
+
+    # ──────────────────────────────────────────────────────────────────
+    # Bridge real CR10 → /ft_sensor/wrench
+    # ──────────────────────────────────────────────────────────────────
+    def _force_bridge_active(self) -> bool:
+        return (self._force_bridge_thread is not None
+                and self._force_bridge_thread.is_alive())
+
+    def _start_force_bridge(self) -> None:
+        """Sobe a thread que publica /ft_sensor/wrench a partir do TCP
+        force estimado pelo controlador do CR10 real."""
+        if self._force_bridge_active():
+            return
+        if self._real_driver is None or not self._robot_connected:
+            return
+        self._force_bridge_stop.clear()
+        self._force_bridge_thread = threading.Thread(
+            target=self._force_bridge_loop, daemon=True)
+        self._force_bridge_thread.start()
+        self._set_status(
+            'Sensor de força: mirror do CR10 ativo (/ft_sensor/wrench).',
+            OK)
+
+    def _force_bridge_loop(self) -> None:
+        period = FORCE_BRIDGE_PERIOD_S
+        while not self._force_bridge_stop.is_set():
+            t0 = time.time()
+            drv = self._real_driver
+            if drv is None or not self._robot_connected:
+                return
+            try:
+                with self._real_lock:
+                    w = drv.read_tcp_force()
+            except Exception as exc:
+                self.get_logger().error(
+                    f'Force bridge falhou: {exc}')
+                # Backoff curto antes de tentar de novo.
+                self._force_bridge_stop.wait(0.5)
+                continue
+            msg = WrenchStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = 'tcp_link'
+            msg.wrench.force.x  = float(w[0])
+            msg.wrench.force.y  = float(w[1])
+            msg.wrench.force.z  = float(w[2])
+            msg.wrench.torque.x = float(w[3])
+            msg.wrench.torque.y = float(w[4])
+            msg.wrench.torque.z = float(w[5])
+            try:
+                self._wrench_pub.publish(msg)
+            except Exception:
+                pass
+            dt = time.time() - t0
+            if dt < period:
+                self._force_bridge_stop.wait(period - dt)
+
+    def _stop_force_bridge(self) -> None:
+        self._force_bridge_stop.set()
+        thr = self._force_bridge_thread
+        if thr is not None:
+            thr.join(timeout=1.0)
+        self._force_bridge_thread = None
 
     def _publish_hand_from_sliders(self):
         if self._suppressing:
@@ -1140,14 +1251,18 @@ class PalpationGUI(Node):
         self._robot_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
         self._set_status(
             f'CR10 conectado em {ip} (modo {self._robot_mode}).', OK)
+        # Bridge de força sempre que o robô real está conectado — assim a
+        # GUI e o PID do explorer enxergam a estimativa do controlador.
+        self._start_force_bridge()
         # Se o usuário já escolheu MIRROR antes de conectar, sobe o pump.
         if self._robot_mode == 'MIRROR':
             self._start_real_pump()
 
     def _disconnect_real_robot(self) -> None:
-        # Pump precisa parar ANTES de fechar os sockets, senão a thread
-        # ainda tenta `servo_j` num socket morto.
+        # Pump e bridge precisam parar ANTES de fechar os sockets — senão
+        # as threads ainda tentam I/O em socket morto.
         self._stop_real_pump()
+        self._stop_force_bridge()
         drv = self._real_driver
         if drv is None:
             self._robot_connected = False
@@ -1257,7 +1372,10 @@ class PalpationGUI(Node):
         else:
             err = abs(f_normal - tgt)
             if f_normal < 0.05:
-                color, status = DANGER, 'sem contato detectado'
+                # F≈0 é tratado como modo CALIBRAÇÃO (não como erro): o
+                # explorer mantém o experimento rodando mesmo sem contato.
+                color, status = WARN, ('calibração — sem contato; '
+                                        'experimento continua')
             elif err <= 0.10:
                 color, status = OK, 'estável dentro da tolerância (±0.10 N)'
             elif err <= 0.25:
@@ -1301,6 +1419,12 @@ class PalpationGUI(Node):
         if None in (speed, force, dist, tgt):
             self._set_status('Parâmetros inválidos.', DANGER)
             return
+        kp = self._clamp_var(self.pid_kp_var, KP_MIN, KP_MAX,
+                              default=KP_DEFAULT)
+        ki = self._clamp_var(self.pid_ki_var, KI_MIN, KI_MAX,
+                              default=KI_DEFAULT)
+        kd = self._clamp_var(self.pid_kd_var, KD_MIN, KD_MAX,
+                              default=KD_DEFAULT)
         payload = {
             'speed_mms':          float(speed),
             'force_n':            float(force),
@@ -1308,6 +1432,10 @@ class PalpationGUI(Node):
             'target_distance_cm': float(tgt),
             # Direção XY (mundo) do sliding — string '+X' / '-X' / '+Y' / '-Y'.
             'slide_dir':          self.slide_dir_var.get(),
+            # Ganhos do PID de força aplicados no HOLD pelo explorer.
+            'kp': float(kp if kp is not None else KP_DEFAULT),
+            'ki': float(ki if ki is not None else KI_DEFAULT),
+            'kd': float(kd if kd is not None else KD_DEFAULT),
             # Home customizada: explorer leva o braço PARA CÁ antes
             # de descer. Em graus URDF, mesma chave/ordem do
             # `_apply_arm_home`.
@@ -1318,10 +1446,12 @@ class PalpationGUI(Node):
         msg.data = json.dumps(payload)
         self._start_pub.publish(msg)
         self._set_status(
-            f'/palpation/start publicado — v={payload["speed_mms"]:.1f} mm/s, '
+            f'/palpation/start — v={payload["speed_mms"]:.1f} mm/s, '
             f'F={payload["force_n"]:.2f} N, '
             f'slide={payload["distance_mm"]:.0f} mm {payload["slide_dir"]}, '
-            f'descida={payload["target_distance_cm"]:.1f} cm.',
+            f'descida={payload["target_distance_cm"]:.1f} cm | '
+            f'PID Kp={payload["kp"]:.4g} Ki={payload["ki"]:.4g} '
+            f'Kd={payload["kd"]:.4g}.',
             OK)
 
     def _set_status(self, text: str, color: str = TEXT_MUTED):
@@ -1340,6 +1470,7 @@ class PalpationGUI(Node):
     def _on_close(self):
         self._stop_event.set()
         self._stop_real_pump()
+        self._stop_force_bridge()
         # Mata subprocesso da mão (se aberto).
         if self._hand_proc is not None and self._hand_proc.poll() is None:
             try:
