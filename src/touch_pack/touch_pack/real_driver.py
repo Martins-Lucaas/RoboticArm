@@ -92,7 +92,7 @@ class CR10RealDriverConfig:
     connect_timeout_s: float = 3.0
     recv_timeout_s: float = 1.0
     motion_connect_timeout_s: float = 1.0   # timeout curto p/ porto 30003
-    speed_factor: int = 20            # 10–50 nos primeiros bring-ups
+    speed_factor: int = 50            # 50% — responsivo para mirror slider
     collision_level: int = 3          # 0 = off; 3 = padrão CR
     payload_kg: float = 0.5           # mão COVVI ≈ 0.5 kg
     payload_cog_m: tuple = (0.0, 0.0, 0.05)
@@ -342,8 +342,8 @@ class CR10RealDriver:
 
         resp = self._send_dash(f'SpeedFactor({self.cfg.speed_factor})')
         log.info('[DASH] SpeedFactor → %s', resp)
-        resp = self._send_motion(f'SetCollisionLevel({self.cfg.collision_level})')
-        log.info('[MOVE] SetCollisionLevel → %s', resp)
+        resp = self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
+        log.info('[DASH] SetCollisionLevel → %s', resp)
         self._enabled = True
         log.info('CR10 habilitado em %s (motion_port=%s, SpeedFactor=%d, '
                  'Coll=%d, Payload=%.2fkg)',
@@ -369,12 +369,13 @@ class CR10RealDriver:
         log.info('[DASH] RobotMode antes do primeiro ServoJ: %s', mode)
 
     def stop(self) -> None:
-        """Parada por software — StopRobot seguido de DisableRobot.
+        """Parada por software — Stop() seguido de DisableRobot().
 
+        V4 firmware usa Stop() (não StopRobot/ResetRobot, que retornam -10000).
         NÃO substitui o botão físico de E-STOP do controlador.
         """
         try:
-            self._send_dash('StopRobot()', expect_reply=False)
+            self._send_dash('Stop()', expect_reply=False)
         except CR10RealDriverError:
             pass
         try:
@@ -406,9 +407,10 @@ class CR10RealDriver:
         if resp and not resp.startswith('0'):
             code = resp.split(',')[0].strip()
             log.warning('[MOVE] ServoJ erro %s', code)
-            if code in ('-50001', '-1'):
+            if code in ('-50001', '-1', '-2', '-3'):
                 # -50001: servo subsystem não pronto (estado pós-PTP).
                 # -1: robô desabilitado / comando não executável agora.
+                # -2: robô em alarme. -3: modo errado para ServoJ.
                 raise CR10RealDriverError(f'ServoJ não executável ({code})')
 
     def servo_j_urdf(self, q_urdf: Sequence[float]) -> None:
@@ -539,8 +541,8 @@ class CR10RealDriver:
 
     # ── DO da flange (24 V já alimenta a COVVI; ToolDOExecute opcional) ──
     def tool_do(self, index: int, on: bool) -> None:
-        """ToolDOExecute(idx, ON|OFF) — DO_1/DO_2 do conector aviation M8."""
-        self._send_dash(f'ToolDOExecute({index}, {"ON" if on else "OFF"})')
+        """ToolDOExecute(idx, 1|0) — DO_1/DO_2 do conector aviation M8."""
+        self._send_dash(f'ToolDOExecute({index},{1 if on else 0})')
 
     # ── context manager ─────────────────────────────────────────────────
     def __enter__(self):

@@ -138,6 +138,11 @@ def _Rz4(q: float) -> np.ndarray:
 # Cinemática Direta (FK) — convenção URDF
 # ──────────────────────────────────────────────────────────────────────
 
+# Sinal do eixo de junta no URDF: joint1 usa axis="0 0 -1" (sentido CW positivo
+# do CR10 é oposto ao +Z padrão); juntas 2-6 usam axis="0 0 +1" (original).
+_JOINT_AXIS_SIGN = np.array([-1., 1., 1., 1., 1., 1.])
+
+
 def forward_kinematics(q: np.ndarray,
                        include_hand: bool = True) -> np.ndarray:
     """
@@ -151,8 +156,8 @@ def forward_kinematics(q: np.ndarray,
         T: pose do efetuador, matriz homogênea 4×4
     """
     T = np.eye(4)
-    for (xyz, rpy), qi in zip(_URDF_ORIGINS, q):
-        T = T @ _make_T(xyz, rpy) @ _Rz4(float(qi))
+    for (xyz, rpy), qi, asign in zip(_URDF_ORIGINS, q, _JOINT_AXIS_SIGN):
+        T = T @ _make_T(xyz, rpy) @ _Rz4(asign * float(qi))
     if include_hand:
         T = T @ T_HAND_ATTACH
     return T
@@ -163,7 +168,7 @@ def fk_partial(q: np.ndarray, n_links: int) -> np.ndarray:
     T = np.eye(4)
     for i in range(n_links):
         xyz, rpy = _URDF_ORIGINS[i]
-        T = T @ _make_T(xyz, rpy) @ _Rz4(float(q[i]))
+        T = T @ _make_T(xyz, rpy) @ _Rz4(_JOINT_AXIS_SIGN[i] * float(q[i]))
     return T
 
 
@@ -286,15 +291,17 @@ def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
     q2 = th2 - _PI2                                      # q2_urdf = θ2_DH − π/2
     q3 = th3                                              # q3_urdf = θ3_DH
 
-    # ── R36_urdf via fk_partial URDF ───────────────────────────────
+    # ── R36 via fk_partial (j1=−Z, j2/j3=+Z) ──────────────────────
+    # j1 usa −Z: passar −q1 faz Rz(−1·(−q1))=Rz(q1) — rotação física correta.
+    # j2/j3 usam +Z: q2, q3 já estão em convenção URDF, passá-los diretamente.
     R_flange_target = R_tcp @ T_HAND_ATTACH[:3, :3].T
-    q_tmp = np.array([q1, q2, q3, 0., 0., 0.])
+    q_tmp = np.array([-q1, q2, q3, 0., 0., 0.])
     R03 = fk_partial(q_tmp, 3)[:3, :3]
     R36 = R03.T @ R_flange_target
 
     q4, q5, q6 = _wrist_from_R36(R36)
 
-    return np.array([q1, q2, q3, q4, q5, q6])
+    return np.array([-q1, q2, q3, q4, q5, q6])
 
 
 def _set_wrist(q: np.ndarray, R_target: np.ndarray,
@@ -322,8 +329,9 @@ def _set_wrist(q: np.ndarray, R_target: np.ndarray,
         for sign in (+1.0, -1.0):
             s5 = sign * s5p
             q5 = math.atan2(s5, r22)
-            q4_raw = math.atan2(-sign * r12/s5p, -sign * r02/s5p) + _PI2  # +π/2 URDF
-            q4 = (q4_raw + math.pi) % (2*math.pi) - math.pi   # wrap to (−π, π]
+            q4_raw = math.atan2(-sign * r12/s5p, -sign * r02/s5p) + _PI2
+            q4_raw = (q4_raw + math.pi) % (2*math.pi) - math.pi
+            q4 = q4_raw
             q6 = math.atan2(-sign * R36[2,1]/s5p,  sign * R36[2,0]/s5p)
             q_cand = q.copy(); q_cand[3], q_cand[4], q_cand[5] = q4, q5, q6
             T_check = forward_kinematics(q_cand)
@@ -740,24 +748,17 @@ def hand_ik(grasp_type: str, obj_diameter: float = 0.0) -> dict[str, float]:
 
 
 # ─── Conversão URDF ↔ DOBOT ────────────────────────────────────────────────
-# As juntas 2 e 4 do URDF estão deslocadas em −π/2 em relação à convenção
-# original do controlador (DH do CR10). Aplicar SEMPRE antes de enviar ao
-# ServoJ/JointMovJ, e o inverso ao ler o feedback (30003).
-#   q_urdf  = q_dobot - [0, π/2, 0, π/2, 0, 0]
-#   q_dobot = q_urdf  + [0, π/2, 0, π/2, 0, 0]
-# Referência: memória feedback_kinematics_urdf_convention.md
-_URDF_DOBOT_OFFSET = np.array([0.0, np.pi / 2, 0.0, np.pi / 2, 0.0, 0.0])
+# Com eixos URDF em "0 0 -1" (eixo −Z), a convenção de sinal é a mesma do
+# O braço real espelha o Gazebo 1:1 — o valor do slider URDF é igual ao
+# ângulo Dobot. Não há offset entre as duas convenções.
+_URDF_DOBOT_OFFSET = np.zeros(6)
 
 
 def urdf_to_dobot(q_urdf: np.ndarray) -> np.ndarray:
     """Converte ângulos do URDF para a convenção do controlador CR10."""
-    q = np.asarray(q_urdf, dtype=np.float64).copy()
-    q += _URDF_DOBOT_OFFSET
-    return q
+    return np.asarray(q_urdf, dtype=np.float64) + _URDF_DOBOT_OFFSET
 
 
 def dobot_to_urdf(q_dobot: np.ndarray) -> np.ndarray:
     """Converte ângulos lidos do controlador CR10 para a convenção URDF."""
-    q = np.asarray(q_dobot, dtype=np.float64).copy()
-    q -= _URDF_DOBOT_OFFSET
-    return q
+    return np.asarray(q_dobot, dtype=np.float64) - _URDF_DOBOT_OFFSET

@@ -103,7 +103,7 @@
     <child
       link="Link1" />
     <axis
-      xyz="0 0 1" />
+      xyz="0 0 -1" />
     <limit
       lower="-6.27"
       upper="6.27"
@@ -111,7 +111,7 @@
       velocity="100" />
   </joint>
   <link
-    name="Link2">
+    name="Link2"><!-- joint1 keeps axis -1 (CR10 j1 rotates CW-positive, opposite of +Z) -->
     <inertial>
       <origin
         xyz="-0.24631 3.5816E-07 0.19515"
@@ -439,7 +439,7 @@
                 <param name="max">1</param>
             </command_interface>
             <state_interface name="position">
-                <param name="initial_value">0.0</param>
+                <param name="initial_value">-0.7854</param>
             </state_interface>
             <state_interface name="velocity"/>
         </joint>
@@ -449,7 +449,7 @@
                 <param name="max">1</param>
             </command_interface>
             <state_interface name="position">
-                <param name="initial_value">0.0</param>
+                <param name="initial_value">0.5236</param>
             </state_interface>
             <state_interface name="velocity"/>
         </joint>
@@ -459,7 +459,7 @@
                 <param name="max">1</param>
             </command_interface>
             <state_interface name="position">
-                <param name="initial_value">0.0</param>
+                <param name="initial_value">-2.0944</param>
             </state_interface>
             <state_interface name="velocity"/>
         </joint>
@@ -479,7 +479,7 @@
                 <param name="max">1</param>
             </command_interface>
             <state_interface name="position">
-                <param name="initial_value">0.0</param>
+                <param name="initial_value">1.5708</param>
             </state_interface>
             <state_interface name="velocity"/>
         </joint>

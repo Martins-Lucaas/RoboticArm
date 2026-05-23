@@ -104,6 +104,7 @@ TGT_DIST_CM_MIN, TGT_DIST_CM_MAX, TGT_DIST_CM_DEFAULT = 0.5, 60.0, 5.0  # cm
 # da posição atual — controla a "rampa" das trajetórias publicadas pela
 # aba Controle Manual (Home, sliders, presets da mão).
 MOVE_TIME_MIN, MOVE_TIME_MAX, MOVE_TIME_DEFAULT = 0.1, 30.0, 1.0  # s
+SPEED_FACTOR_MIN, SPEED_FACTOR_MAX, SPEED_FACTOR_DEFAULT = 1, 100, 50  # %
 
 # Ganhos PID padrão do controle de força durante o HOLD. v_cmd (m/s) sai
 # do PID a partir do erro em N; sintonize na própria GUI durante a
@@ -284,12 +285,13 @@ class PalpationGUI(Node):
         self._robot_connected: bool = False
         self._robot_connecting: bool = False
 
-        # Pump ServoJ — quando o modo é MIRROR e o socket está aberto,
-        # uma thread daemon transmite o último /joint_states a 33 Hz para
-        # o controlador real. Funciona para sliders manuais E para as
-        # trajetórias do tactile_explorer (ambos atualizam o sim, que
-        # publica /joint_states, que alimenta o pump).
+        # Mirror MovJ — em modo MIRROR, cada mudança de slider envia
+        # MovJ(joint={...}) ao braço real:
+        #   - sliders: debounce 80 ms via _mirror_movj_debounced
+        #   - palpação autônoma: sync periódico @3 Hz via _mirror_sync_loop
         self._latest_q_urdf: np.ndarray | None = None
+        self._mirror_timer: threading.Timer | None = None
+        self._mirror_last_q_sent: np.ndarray | None = None   # controla sync periódico
         self._real_pump_thread: threading.Thread | None = None
         self._real_pump_stop = threading.Event()
         self._force_bridge_thread: threading.Thread | None = None
@@ -591,24 +593,51 @@ class PalpationGUI(Node):
         body = tk.Frame(root, bg=BG)
         body.pack(fill='both', expand=True)
 
-        # ── Top: tempo de movimento (comum a braço e mão) ────────────
-        time_card = tk.Frame(body, bg=PANEL,
-                              highlightthickness=1,
-                              highlightbackground=BORDER,
-                              highlightcolor=BORDER)
-        time_card.pack(fill='x', pady=(0, 10))
-        tk.Label(time_card, text='Tempo de Movimento',
+        # ── Top: controle de velocidade (Duração s + SpeedFactor %) ─────
+        speed_card = tk.Frame(body, bg=PANEL,
+                               highlightthickness=1,
+                               highlightbackground=BORDER,
+                               highlightcolor=BORDER)
+        speed_card.pack(fill='x', pady=(0, 10))
+        tk.Label(speed_card, text='Velocidade de Movimento',
                  bg=PANEL, fg=TEXT, font=FONT_HEAD,
                  anchor='w').pack(fill='x', padx=14, pady=(10, 6))
-        tk.Frame(time_card, bg=BORDER, height=1).pack(fill='x')
-        time_inner = tk.Frame(time_card, bg=PANEL)
-        time_inner.pack(fill='x', padx=14, pady=10)
+        tk.Frame(speed_card, bg=BORDER, height=1).pack(fill='x')
+        speed_inner = tk.Frame(speed_card, bg=PANEL)
+        speed_inner.pack(fill='x', padx=14, pady=10)
+
+        # Linha 1 — Duracao (Gazebo trajectory controller)
+        self._use_duration_var = tk.IntVar(value=1)
+        dur_chk_row = tk.Frame(speed_inner, bg=PANEL)
+        dur_chk_row.pack(fill='x')
+        tk.Checkbutton(dur_chk_row,
+                       text='Duracao (s) — trajetoria Gazebo',
+                       variable=self._use_duration_var,
+                       bg=PANEL, fg=TEXT, font=FONT_LBL,
+                       anchor='w'
+                       ).pack(side='left')
         self.move_time_var = tk.DoubleVar(value=MOVE_TIME_DEFAULT)
-        self._param_row(time_inner, label='Duração do movimento',
-                         unit='s', var=self.move_time_var,
-                         vmin=MOVE_TIME_MIN, vmax=MOVE_TIME_MAX, step=0.1,
-                         hint='Tempo total para a trajetória articular '
-                              '(Home / sliders / presets da mão).')
+        self._param_row(speed_inner, label='Duracao', unit='s',
+                        var=self.move_time_var,
+                        vmin=MOVE_TIME_MIN, vmax=MOVE_TIME_MAX, step=0.1)
+
+        # Linha 2 — SpeedFactor % (braco real via TCP)
+        self._use_speedfactor_var = tk.IntVar(value=0)
+        sf_chk_row = tk.Frame(speed_inner, bg=PANEL)
+        sf_chk_row.pack(fill='x', pady=(8, 0))
+        tk.Checkbutton(sf_chk_row,
+                       text='Velocidade bruta (%) — braco real',
+                       variable=self._use_speedfactor_var,
+                       bg=PANEL, fg=TEXT, font=FONT_LBL,
+                       anchor='w',
+                       command=self._apply_speed_factor_if_active
+                       ).pack(side='left')
+        self.speed_factor_var = tk.DoubleVar(value=SPEED_FACTOR_DEFAULT)
+        self._param_row(speed_inner, label='SpeedFactor', unit='%',
+                        var=self.speed_factor_var,
+                        vmin=SPEED_FACTOR_MIN, vmax=SPEED_FACTOR_MAX, step=5)
+        self.speed_factor_var.trace_add(
+            'write', lambda *_: self._apply_speed_factor_if_active())
 
         cols = tk.Frame(body, bg=BG)
         cols.pack(fill='both', expand=True)
@@ -729,11 +758,34 @@ class PalpationGUI(Node):
         return v_clamped
 
     def _move_duration_seconds(self) -> float:
-        """Lê e satura o slider de Tempo de Movimento (em segundos)."""
-        dur = self._clamp_var(self.move_time_var,
-                                MOVE_TIME_MIN, MOVE_TIME_MAX,
-                                default=MOVE_TIME_DEFAULT)
-        return float(dur if dur is not None else MOVE_TIME_DEFAULT)
+        """Retorna duração em s para a trajetória do Gazebo.
+
+        Se 'Duração' estiver ativa, usa o slider de segundos.
+        Se desativada (só SpeedFactor), usa 0.5 s como mínimo seguro."""
+        if self._use_duration_var.get():
+            dur = self._clamp_var(self.move_time_var,
+                                   MOVE_TIME_MIN, MOVE_TIME_MAX,
+                                   default=MOVE_TIME_DEFAULT)
+            return float(dur if dur is not None else MOVE_TIME_DEFAULT)
+        return 0.5
+
+    def _apply_speed_factor_if_active(self) -> None:
+        """Envia SpeedFactor(%) ao braço real se o checkbox estiver ativo."""
+        if not self._use_speedfactor_var.get():
+            return
+        if not self._robot_connected or self._real_driver is None:
+            return
+        try:
+            v = int(max(SPEED_FACTOR_MIN,
+                        min(SPEED_FACTOR_MAX, self.speed_factor_var.get())))
+        except (ValueError, tk.TclError):
+            return
+        try:
+            with self._real_lock:
+                self._real_driver._send_dash(f'SpeedFactor({v})')
+            self.get_logger().debug('SpeedFactor(%d) aplicado', v)
+        except Exception as exc:
+            self.get_logger().warning('SpeedFactor falhou: %s', exc)
 
     @staticmethod
     def _duration_msg(seconds: float) -> Duration:
@@ -767,13 +819,14 @@ class PalpationGUI(Node):
         pt.time_from_start = self._duration_msg(duration_s)
         msg.points.append(pt)
         self._arm_pub.publish(msg)
-        # Em modo MIRROR o pump (loop ServoJ @33 Hz) já bombeia o
-        # /joint_states do sim para o real — não é preciso despachar
-        # nada extra aqui.
+        # Em modo MIRROR envia MovJ ao braço real com debounce.
+        if (self._robot_mode == 'MIRROR' and self._robot_connected
+                and self._real_driver is not None and _urdf_to_dobot is not None):
+            self._mirror_movj_debounced(positions_rad)
 
     # ── /joint_states → pump ServoJ ───────────────────────────────────
     def _cb_joint_states(self, msg: JointState):
-        """Cacheia o último q (URDF) do braço para o pump consumir."""
+        """Cacheia o último q (URDF) do braço."""
         idx = {n: i for i, n in enumerate(msg.name)}
         if not all(j in idx for j in ARM_JOINTS):
             return
@@ -782,16 +835,63 @@ class PalpationGUI(Node):
                           dtype=np.float64)
         except (IndexError, ValueError):
             return
-        first_time = self._latest_q_urdf is None
-        # Atribuição atômica (GIL) — pump lê esta referência.
         self._latest_q_urdf = q
-        # Se o pump ainda não iniciou (joint_states chegou depois da conexão),
-        # agenda o start no thread Tkinter.
-        if (first_time
-                and self._robot_mode == 'MIRROR'
-                and self._robot_connected
-                and not self._real_pump_active()):
-            self.root.after(0, self._start_real_pump)
+
+    # ── Mirror MovJ (MIRROR mode — braço real segue os sliders) ──────────
+    def _mirror_movj_debounced(self, positions_rad: list[float]) -> None:
+        """Agenda MovJ ao braço real com debounce de 80 ms.
+
+        Enquanto o usuário arrasta o slider, cancela e reagenda — o comando
+        só é enviado 80 ms após o último movimento, evitando flood de MovJ.
+        """
+        if self._mirror_timer is not None:
+            self._mirror_timer.cancel()
+        self._mirror_timer = threading.Timer(
+            0.08, self._mirror_movj_send, args=[list(positions_rad)])
+        self._mirror_timer.daemon = True
+        self._mirror_timer.start()
+
+    def _mirror_movj_send(self, positions_rad: list[float]) -> None:
+        """Converte URDF→DOBOT e envia MovJ(joint={...}) ao braço real."""
+        if (not self._robot_connected or self._real_driver is None
+                or self._robot_mode != 'MIRROR'
+                or _urdf_to_dobot is None):
+            return
+        try:
+            q_dobot_rad = _urdf_to_dobot(
+                np.array(positions_rad, dtype=np.float64))
+            q_dobot_deg = [math.degrees(float(v)) for v in q_dobot_rad]
+            with self._real_lock:
+                self._real_driver.mov_j_joint_deg(q_dobot_deg)
+            self._mirror_last_q_sent = np.array(positions_rad, dtype=np.float64)
+            self.get_logger().debug('Mirror MovJ → %s',
+                                    [f'{v:.2f}' for v in q_dobot_deg])
+        except Exception as exc:
+            self.get_logger().warning('Mirror MovJ falhou: %s', exc)
+
+    # ── Mirror sync periódico (cobre palpação autônoma) ───────────────
+    def _mirror_sync_loop(self) -> None:
+        """Loop @3 Hz no thread Tkinter: envia MovJ se a pose mudou >0.5°.
+
+        Cobre movimentos autônomos (palpação, HOME) que não passam pelos
+        sliders e portanto não disparam o debounce de 80 ms.
+        """
+        if self._robot_mode != 'MIRROR' or not self._robot_connected:
+            return  # sai sem re-agendar — loop para
+        q = self._latest_q_urdf
+        if (q is not None and self._real_driver is not None
+                and _urdf_to_dobot is not None):
+            last = self._mirror_last_q_sent
+            # Envia só se pose mudou > 0.5° em qualquer junta
+            if last is None or np.max(np.abs(q - last)) > 0.0087:
+                threading.Thread(
+                    target=self._mirror_movj_send,
+                    args=[q.tolist()], daemon=True).start()
+        self.root.after(333, self._mirror_sync_loop)  # re-agenda @3 Hz
+
+    def _start_mirror_sync(self) -> None:
+        """Inicia o loop periódico de sync (chamar ao conectar em MIRROR)."""
+        self.root.after(333, self._mirror_sync_loop)
 
     def _real_pump_active(self) -> bool:
         return (self._real_pump_thread is not None
@@ -833,6 +933,18 @@ class PalpationGUI(Node):
             self.get_logger().error(f'PTP de alinhamento falhou: {exc}')
             self._set_status(
                 f'Falha no PTP de alinhamento: {exc}', DANGER)
+            return
+        # Verifica se o robô está em modo 5 (ENABLE/idle) antes de iniciar o pump.
+        # Após o PTP, o braço pode entrar em alarme (modo 9) por colisão ou limite.
+        try:
+            mode_resp = self._real_driver.robot_mode() or ''
+        except Exception:
+            mode_resp = ''
+        if ',{5},' not in mode_resp:
+            self.get_logger().error(
+                f'Robot não está em modo 5 após PTP ({mode_resp.strip()}) — pump não iniciado.')
+            self.root.after(0, lambda: self._set_status(
+                'Robot em alarme após PTP — ClearError e reconecte.', DANGER))
             return
         # Pode ter sido cancelado durante o PTP.
         if self._robot_mode != 'MIRROR' or not self._robot_connected:
@@ -1449,7 +1561,10 @@ class PalpationGUI(Node):
             f'(SpeedFactor={drv.cfg.speed_factor}%){mode_note}.', color)
         self._start_force_bridge()
         if self._robot_mode == 'MIRROR':
-            self._start_real_pump()
+            self._set_status(
+                f'CR10 conectado em {ip} — modo MIRROR ativo: '
+                'mova os sliders para controlar o braço real.', OK)
+            self._start_mirror_sync()
 
     def _fail_robot_connect(self, error: str) -> None:
         """Callback no thread Tkinter após falha na conexão."""
@@ -1458,9 +1573,12 @@ class PalpationGUI(Node):
         self._set_status(f'Falha ao conectar CR10: {error}', DANGER)
 
     def _disconnect_real_robot(self) -> None:
-        # Pump e bridge precisam parar ANTES de fechar os sockets — senão
-        # as threads ainda tentam I/O em socket morto.
+        # Pump, mirror timer e bridge precisam parar ANTES de fechar os
+        # sockets — senão as threads ainda tentam I/O em socket morto.
         self._stop_real_pump()
+        if self._mirror_timer is not None:
+            self._mirror_timer.cancel()
+            self._mirror_timer = None
         self._stop_force_bridge()
         drv = self._real_driver
         if drv is None:
@@ -1483,15 +1601,16 @@ class PalpationGUI(Node):
             return
         self._robot_mode = mode
         if mode == 'MIRROR':
-            # Sobe o pump se já conectado; caso contrário aguarda a
-            # conexão (o `_connect_real_robot` checa o modo no final).
             self._set_status(
-                'Modo MIRROR — robô real espelha o sim @33 Hz (ServoJ).',
-                DANGER)
+                'Modo MIRROR — mova os sliders para controlar o braço real.',
+                WARN if not self._robot_connected else OK)
             if self._robot_connected:
-                self._start_real_pump()
+                self._start_mirror_sync()
         else:
             self._stop_real_pump()
+            if self._mirror_timer is not None:
+                self._mirror_timer.cancel()
+                self._mirror_timer = None
             self._set_status(
                 'Modo SIM_ONLY — comandos só na simulação.', OK)
 
@@ -1692,6 +1811,8 @@ class PalpationGUI(Node):
 
 
 def main(args=None):
+    import faulthandler, sys
+    faulthandler.enable(file=sys.stderr)
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s.%(msecs)03d [%(name)s] %(levelname)s  %(message)s',
