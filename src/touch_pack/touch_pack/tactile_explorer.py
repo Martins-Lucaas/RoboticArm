@@ -69,6 +69,21 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import (
+    QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy,
+)
+
+# Espelho dos perfis usados pela GUI — TRANSIENT_LOCAL no comando para
+# o explorer pegar o último /palpation/start mesmo subindo depois da
+# GUI; BEST_EFFORT depth=1 no sensor stream para baixa latência.
+_QOS_COMMAND = QoSProfile(
+    reliability=QoSReliabilityPolicy.RELIABLE,
+    durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+    history=QoSHistoryPolicy.KEEP_LAST, depth=1)
+_QOS_SENSOR = QoSProfile(
+    reliability=QoSReliabilityPolicy.BEST_EFFORT,
+    durability=QoSDurabilityPolicy.VOLATILE,
+    history=QoSHistoryPolicy.KEEP_LAST, depth=1)
 
 from std_msgs.msg import String
 from geometry_msgs.msg import WrenchStamped
@@ -78,7 +93,8 @@ from control_msgs.action import FollowJointTrajectory
 from builtin_interfaces.msg import Duration
 
 from .kinematics import (
-    forward_kinematics, jacobian, JOINT_MIN, JOINT_MAX,
+    forward_kinematics, inverse_kinematics, jacobian,
+    JOINT_MIN, JOINT_MAX, MIMIC_LIST as _MIMIC_LIST,
 )
 
 
@@ -124,35 +140,7 @@ _PID_V_MAX_MS  = 0.005   # 5 mm/s — velocidade máxima aplicada pelo PID
 _PID_I_MAX_Ns  = 5.0     # anti-windup do termo integral
 _PID_DT_S      = 0.030   # período do loop (33 Hz, mesmo do ServoJ mirror)
 
-# Mimic joints da COVVI (26 — extraído de linear_covvi_hand_gazebo.urdf).
-_MIMIC_LIST = [
-    ('_lisa_j01',            'Rotate', 1.07338),
-    ('_thumb_chassis_j01',   'Rotate', 1.53340),
-    ('_thumb_proximal_j01',  'Thumb',  0.72022),
-    ('_thumb_distal_j01',    'Thumb',  1.06686),
-    ('_thumb_link_j01',      'Thumb',  0.76799),
-    ('_thumb_follower_j01',  'Thumb',  0.93733),
-    ('_index_proximal_j01',  'Index',  1.51604),
-    ('_index_distal_j01',    'Index',  1.33574),
-    ('_index_knuckle_j01',   'Index',  1.25182),
-    ('_index_follower_j01',  'Index',  0.26423),
-    ('_index_link_j01',      'Index',  1.33574),
-    ('_middle_proximal_j01', 'Middle', 1.51604),
-    ('_middle_distal_j01',   'Middle', 1.34986),
-    ('_middle_knuckle_j01',  'Middle', 1.25181),
-    ('_middle_follower_j01', 'Middle', 0.26423),
-    ('_middle_link_j01',     'Middle', 1.34986),
-    ('_ring_proximal_j01',   'Ring',   1.51604),
-    ('_ring_distal_j01',     'Ring',   1.34878),
-    ('_ring_knuckle_j01',    'Ring',   1.25182),
-    ('_ring_follower_j01',   'Ring',   0.26423),
-    ('_ring_link_j01',       'Ring',   1.34878),
-    ('_little_proximal_j01', 'Little', 1.51604),
-    ('_little_distal_j01',   'Little', 1.31664),
-    ('_little_knuckle_j01',  'Little', 1.25182),
-    ('_little_follower_j01', 'Little', 0.26423),
-    ('_little_link_j01',     'Little', 1.31664),
-]
+# MIMIC_LIST está centralizada em kinematics.py.
 
 class TactileExplorer(Node):
 
@@ -206,9 +194,9 @@ class TactileExplorer(Node):
         cb = ReentrantCallbackGroup()
 
         self.create_subscription(String, '/palpation/start',
-                                  self._cb_start, 5, callback_group=cb)
+                                  self._cb_start, _QOS_COMMAND, callback_group=cb)
         self.create_subscription(WrenchStamped, '/ft_sensor/wrench',
-                                  self._cb_wrench, 50, callback_group=cb)
+                                  self._cb_wrench, _QOS_SENSOR, callback_group=cb)
         self.create_subscription(JointState, '/joint_states',
                                   self._cb_joints, 50, callback_group=cb)
 
@@ -289,6 +277,25 @@ class TactileExplorer(Node):
                 payload.get('distance_mm', self._slide_distance_mm))
             self._target_distance_cm = float(
                 payload.get('target_distance_cm', self._target_distance_cm))
+            # Velocidade de aproximação CONTACT/RETRACT — sobrescreve em
+            # runtime os parâmetros declarados approach_v_max_mms/min_mms.
+            # max = valor do slider; min = 20 % do max (limita a desaceleração).
+            approach = payload.get('approach_speed_mms')
+            if approach is not None:
+                try:
+                    v_max = max(1.0, float(approach))
+                    v_min = max(0.5, v_max * 0.2)
+                    self.set_parameters([
+                        rclpy.parameter.Parameter(
+                            'approach_v_max_mms',
+                            rclpy.parameter.Parameter.Type.DOUBLE, v_max),
+                        rclpy.parameter.Parameter(
+                            'approach_v_min_mms',
+                            rclpy.parameter.Parameter.Type.DOUBLE, v_min),
+                    ])
+                except (TypeError, ValueError) as exc:
+                    self.get_logger().warn(
+                        f'approach_speed_mms inválido: {exc}')
             # Ganhos PID — atualizados ao vivo pela GUI a cada partida.
             self._kp = float(payload.get('kp', self._kp))
             self._ki = float(payload.get('ki', self._ki))
@@ -339,6 +346,7 @@ class TactileExplorer(Node):
             'fx': float(f[0]), 'fy': float(f[1]), 'fz': float(f[2]),
             'speed_mms': self._slide_speed_mms,
             'distance_mm': self._slide_distance_mm,
+            'hold_seconds': float(self.get_parameter('hold_seconds').value),
             'kp': self._kp, 'ki': self._ki, 'kd': self._kd,
         })
         self._status_pub.publish(msg)
@@ -507,7 +515,8 @@ class TactileExplorer(Node):
                               *, v_const_ms: float | None = None,
                               v_max_ms: float | None = None,
                               v_min_ms: float | None = None,
-                              n_waypoints: int | None = None
+                              n_waypoints: int | None = None,
+                              lock_orientation: bool = False
                               ) -> tuple[list[np.ndarray], list[float]] | None:
         """Planeja uma trajetória CARTESIANA RETILÍNEA no frame da base
         (= mundo, base_link sem rotação) na direção `dir_world` por
@@ -550,15 +559,47 @@ class TactileExplorer(Node):
 
         lam = 0.01
         I6 = np.eye(6)
-        twist = np.zeros(6)
-        twist[:3] = d * step_m
+        # Trava de POSIÇÃO E ORIENTAÇÃO em closed-loop: a cada step o
+        # twist é o ERRO entre a pose-alvo absoluta (p0 + (i+1)·step·d,
+        # R0) e a pose atual. Sem isso o planner era open-loop e a
+        # integração de Δq acumulava deriva em X/Y ao longo da trajetória
+        # — visível em descidas longas (alvo 30+ cm). Os pesos articulares
+        # foram removidos: todas as 6 juntas trabalham juntas para
+        # manter a perpendicularidade — a closed-loop dá ao solver o
+        # incentivo correto pra cada junta agir só onde precisa.
+        T0 = forward_kinematics(q)
+        p0 = T0[:3, 3].copy()
+        R0_lock: np.ndarray | None = (
+            T0[:3, :3].copy() if lock_orientation else None)
+        POS_GAIN = 1.0
+        ORI_GAIN = 0.5
 
         qs: list[np.ndarray] = [q.copy()]
         times: list[float] = [0.0]
         t = 0.0
         for i in range(n_waypoints):
             J = jacobian(q)
+            twist = np.zeros(6)
+            # Posição-alvo absoluta para o waypoint i+1.
+            p_target = p0 + d * step_m * (i + 1)
+            T_cur = forward_kinematics(q)
+            twist[:3] = POS_GAIN * (p_target - T_cur[:3, 3])
+            if R0_lock is not None:
+                # Erro de orientação no frame world: R_err = R0 · R_curᵀ.
+                # Vetor axial extrai o ângulo·eixo da rotação necessária
+                # para alinhar a orientação atual à inicial.
+                R_err = R0_lock @ T_cur[:3, :3].T
+                err_vec = 0.5 * np.array([
+                    R_err[2, 1] - R_err[1, 2],
+                    R_err[0, 2] - R_err[2, 0],
+                    R_err[1, 0] - R_err[0, 1],
+                ])
+                twist[3:] = ORI_GAIN * err_vec
             try:
+                # DLS sem peso — todas as juntas livres pra contribuir.
+                # O closed-loop sozinho impede joint1 de rotacionar
+                # ociosamente, pois isso geraria erro em X/Y que voltaria
+                # imediatamente como twist corretivo.
                 dq = J.T @ np.linalg.solve(J @ J.T + lam*lam*I6, twist)
             except np.linalg.LinAlgError:
                 self.get_logger().error(
@@ -578,8 +619,41 @@ class TactileExplorer(Node):
             times.append(t)
         return qs, times
 
+    def _align_tcp_perpendicular(self) -> bool:
+        """Re-orienta o TCP para que o eixo Z da ferramenta aponte −Z mundo
+        (perpendicular à mesa-alvo), mantendo a posição XY/Z atual.
+
+        Sem esse passo, se a Home customizada não tiver o dedo apontando
+        exatamente para baixo, a descida em world −Z move o tip em linha
+        reta mas com o dedo numa orientação enviesada — o CONTACT acaba
+        tocando a mesa de lado.
+        """
+        p_now_base = forward_kinematics(self._q_now())[:3, 3].copy()
+        approach_vec = np.array([0.0, 0.0, -1.0])
+        # IK arranca da pose atual para evitar branch flip e manter
+        # solução próxima da geometria já alcançada pelo usuário.
+        q_target, ok = inverse_kinematics(
+            p_now_base, approach_vec, q_seed=self._q_now())
+        if not ok:
+            self.get_logger().warn(
+                'Não consegui re-orientar o TCP para perpendicular '
+                '(IK não convergiu) — seguindo com a orientação da Home.')
+            return True   # não bloqueia o experimento; só perde a correção
+        # Se a Home já estava perpendicular, a diferença é desprezível.
+        delta_rad = float(np.max(np.abs(q_target - self._q_now())))
+        if delta_rad < 0.005:   # < 0.3°
+            return True
+        self.get_logger().info(
+            f'CONTACT: pré-orientando TCP perpendicular à mesa '
+            f'(Δq_max = {math.degrees(delta_rad):.1f}°).')
+        return self._dispatch_traj(q_target, duration_s=2.0)
+
     def _phase_contact(self) -> bool:
         """CONTACT — desce `target_distance_cm` cm em −Z a partir da Home.
+
+        Antes da descida, re-orienta o TCP para perpendicular à mesa (tool
+        z = world −Z), de modo que o tip do dedo Index toca verticalmente
+        sem inclinação — independente da Home customizada.
 
         Planeja a trajetória INTEIRA via Jacobian-DLS uma única vez, envia
         um único goal multi-waypoint ao controller, e monitora |F_z|
@@ -598,15 +672,26 @@ class TactileExplorer(Node):
         v_min_ms = max(0.001, v_min_ms)
         v_max_ms = max(v_min_ms, v_max_ms)
 
+        # NÃO re-orientamos o TCP antes de descer. O experimento parte
+        # da Home customizada pelo usuário; chamar IK pra "perpendicular"
+        # pode invocar branch flip que rotaciona joint1 violentamente.
+        # O que precisamos é APENAS deslocamento vertical do TCP —
+        # garantido pelo `lock_orientation=True` no planner + penalidade
+        # de joint1 na DLS (joint1 só produz movimento horizontal e não
+        # deveria mexer numa descida pura em −Z).
         p_home, _ = self._tcp_now_world()
         self.get_logger().info(
             f'CONTACT: planejando descida de {descent_m*100:.1f} cm '
             f'do TCP_z={p_home[2]:.3f} (alvo de força {target_force} N, '
             f'perfil {v_max_ms*1000:.0f}→{v_min_ms*1000:.0f} mm/s).')
 
+        # 2) Descida PURA em world −Z com travamento de orientação — o
+        # solver não pode mais deixar a orientação derivar ao longo dos
+        # ~150 waypoints da trajetória.
         plan = self._plan_jacobian_cart(
             np.array([0.0, 0.0, -1.0]), descent_m,
-            v_max_ms=v_max_ms, v_min_ms=v_min_ms)
+            v_max_ms=v_max_ms, v_min_ms=v_min_ms,
+            lock_orientation=True)
         if plan is None:
             return False
         qs, times = plan
@@ -783,7 +868,8 @@ class TactileExplorer(Node):
 
         plan = self._plan_jacobian_cart(
             np.array([0.0, 0.0, +1.0]), retract_m,
-            v_max_ms=v_max_ms, v_min_ms=v_min_ms)
+            v_max_ms=v_max_ms, v_min_ms=v_min_ms,
+            lock_orientation=True)
         if plan is None:
             return False
         qs, times = plan

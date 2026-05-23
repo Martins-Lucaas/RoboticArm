@@ -297,13 +297,18 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
         condition=UnlessCondition(no_gui))
 
-    # explorer + GUI sobem quando o último controller (hand) terminar
+    # Logger: grava CSV+JSON de cada palpação em ~/touch_pack_runs/.
+    # Sem use_sim_time — quer wall-clock para timestamp dos arquivos.
+    logger_node = Node(
+        package='touch_pack', executable='palpation_logger')
+
+    # explorer + GUI + logger sobem quando o último controller (hand) terminar
     # de carregar, garantindo que /joint_states e a action do braço já
     # estejam disponíveis.
     after_hand_start = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=load_hand,
-            on_exit=[explorer_node, gui_node]))
+            on_exit=[explorer_node, gui_node, logger_node]))
 
     return LaunchDescription([
         mode_arg, robot_ip_arg, robot_dry_arg,

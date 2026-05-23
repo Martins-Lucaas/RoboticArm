@@ -173,23 +173,41 @@ def fk_partial(q: np.ndarray, n_links: int) -> np.ndarray:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Jacobiano (diferenças finitas)
+# Jacobiano geométrico (forma fechada)
 # ──────────────────────────────────────────────────────────────────────
 
 def jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """Jacobiano geométrico 6×6 via diferenças finitas."""
-    J = np.zeros((6, 6))
-    T0 = forward_kinematics(q)
-    p0, R0 = T0[:3, 3].copy(), T0[:3, :3].copy()
+    """Jacobiano geométrico 6×6 do TCP (include_hand=True) no frame da base.
 
-    for i in range(6):
-        dq = q.copy(); dq[i] += eps
-        T1 = forward_kinematics(dq)
-        J[:3, i] = (T1[:3, 3] - p0) / eps
-        dR = (T1[:3, :3] - R0) / eps
-        J[3, i] = (dR[2, 1] - dR[1, 2]) / 2.0
-        J[4, i] = (dR[0, 2] - dR[2, 0]) / 2.0
-        J[5, i] = (dR[1, 0] - dR[0, 1]) / 2.0
+    Forma fechada — ~50× mais rápida que diferenças finitas e sem erro
+    numérico de truncamento perto de singularidades. O parâmetro `eps`
+    fica preservado por compatibilidade (não é usado).
+
+    Para cada junta revoluta i com eixo local z (axis="0 0 ±1" no URDF):
+        z_i_world = R_before_i · [0,0,1] · sign_i
+        p_i_world = T_before_i[:3, 3]
+        J_v[:, i] = z_i_world × (p_end − p_i_world)
+        J_ω[:, i] = z_i_world
+
+    `T_before_i` é o produto das transformações até a origem da junta i
+    **sem aplicar Rzi(q_i)** — a rotação da própria junta não muda seu
+    eixo, então qi só entra na posição de `p_end` e nas juntas seguintes.
+    """
+    # T_end inclui o offset fixo da mão (T_HAND_ATTACH), igual à FK default.
+    p_end = forward_kinematics(q, include_hand=True)[:3, 3]
+
+    J = np.zeros((6, 6))
+    T_accum = np.eye(4)
+    for i, ((xyz, rpy), qi, asign) in enumerate(
+            zip(_URDF_ORIGINS, q, _JOINT_AXIS_SIGN)):
+        # Aplica origem URDF: este é o frame onde a junta i gira em z.
+        T_before = T_accum @ _make_T(xyz, rpy)
+        z_i = T_before[:3, 2] * asign
+        p_i = T_before[:3, 3]
+        J[:3, i] = np.cross(z_i, p_end - p_i)
+        J[3:, i] = z_i
+        # Avança pela rotação Rzi(q_i) para entrar no frame da próxima junta.
+        T_accum = T_before @ _Rz4(asign * float(qi))
 
     return J
 
@@ -745,6 +763,41 @@ def hand_ik(grasp_type: str, obj_diameter: float = 0.0) -> dict[str, float]:
         cfg[j] = float(np.clip(cfg[j] * scale, HAND_LOWER[j], HAND_LIMITS[j]))
 
     return cfg
+
+
+# ─── Mimic joints da mão COVVI ─────────────────────────────────────────────
+# 26 juntas escravas extraídas de linear_covvi_hand_gazebo.urdf.
+# Formato: (nome_da_junta_mimic, junta_primária, multiplicador)
+# Usado pelo tactile_explorer e palpation_gui para expandir a pose primária
+# (6 graus de liberdade) nas 31 juntas da mão antes de publicar no controller.
+MIMIC_LIST: list[tuple[str, str, float]] = [
+    ('_lisa_j01',            'Rotate', 1.07338),
+    ('_thumb_chassis_j01',   'Rotate', 1.53340),
+    ('_thumb_proximal_j01',  'Thumb',  0.72022),
+    ('_thumb_distal_j01',    'Thumb',  1.06686),
+    ('_thumb_link_j01',      'Thumb',  0.76799),
+    ('_thumb_follower_j01',  'Thumb',  0.93733),
+    ('_index_proximal_j01',  'Index',  1.51604),
+    ('_index_distal_j01',    'Index',  1.33574),
+    ('_index_knuckle_j01',   'Index',  1.25182),
+    ('_index_follower_j01',  'Index',  0.26423),
+    ('_index_link_j01',      'Index',  1.33574),
+    ('_middle_proximal_j01', 'Middle', 1.51604),
+    ('_middle_distal_j01',   'Middle', 1.34986),
+    ('_middle_knuckle_j01',  'Middle', 1.25181),
+    ('_middle_follower_j01', 'Middle', 0.26423),
+    ('_middle_link_j01',     'Middle', 1.34986),
+    ('_ring_proximal_j01',   'Ring',   1.51604),
+    ('_ring_distal_j01',     'Ring',   1.34878),
+    ('_ring_knuckle_j01',    'Ring',   1.25182),
+    ('_ring_follower_j01',   'Ring',   0.26423),
+    ('_ring_link_j01',       'Ring',   1.34878),
+    ('_little_proximal_j01', 'Little', 1.51604),
+    ('_little_distal_j01',   'Little', 1.31664),
+    ('_little_knuckle_j01',  'Little', 1.25182),
+    ('_little_follower_j01', 'Little', 0.26423),
+    ('_little_link_j01',     'Little', 1.31664),
+]
 
 
 # ─── Conversão URDF ↔ DOBOT ────────────────────────────────────────────────

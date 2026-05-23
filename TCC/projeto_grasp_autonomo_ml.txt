@@ -832,6 +832,101 @@ HARDWARE / SOFTWARE
         decisão objeto↔preensão.
 
   ────────────────────────────────────────────────────────────────────────
+  D7) MÓDULO DE PALPAÇÃO TÁTIL — touch_pack (v0.3.x)
+  ────────────────────────────────────────────────────────────────────────
+
+      Em paralelo ao pipeline de grasp autônomo (grasp_ml_pack), foi
+      desenvolvido o pacote `touch_pack` para reproduzir o protocolo
+      de palpação tátil de Gupta et al. (2021): contato controlado em
+      força + arrasto Cartesiano com o dedo Index estendido da COVVI.
+      Compartilha a mesma base CR10 + COVVI, mas evolui de "grasp
+      diferenciado" para "exploração tátil ativa" — uma capacidade
+      relevante para futuras integrações com sensores de pele/EMG.
+
+      D7.1) Arquitetura (3 nós + GUI)
+        - tactile_explorer.py — FSM (IDLE → CONTACT → HOLD → SLIDING →
+          RETRACT → DONE) com PID de força no HOLD (33 Hz), IK
+          analítica + Jacobian numérica para o SLIDING Cartesiano.
+        - palpation_gui.py — Tkinter (tema claro), duas abas: Palpação
+          (parâmetros + FT em tempo real + barra de progresso) e
+          Controle Manual (sliders por junta + presets de mão).
+          Header: IPs da mão e do braço, modos SIM_ONLY ↔ MIRROR,
+          ECI/PWR/E-STOP.
+        - palpation_logger.py — grava CSV (amostras de wrench
+          carimbadas com fase) + JSON (parâmetros) em ~/touch_pack_runs/
+          a cada palpação.
+        - real_driver.py — TCP/IP V4 do CR10 (29999 dashboard, 30003
+          motion, 30004 feedback @8 ms). Espelhamento via MovJ
+          disparado pela GUI quando em modo MIRROR.
+
+      D7.2) Funcionalidades recentes (v0.3.x)
+        - Persistência: ~/.config/touch_pack/robot.json (IPs + último
+          modo) + home_pose.json (home customizada do braço).
+          Default mão = 192.168.5.103, default braço = 192.168.5.2.
+        - QoS explícito: /palpation/start = RELIABLE +
+          TRANSIENT_LOCAL depth=1 (último start sobrevive a restart);
+          /ft_sensor/wrench = BEST_EFFORT VOLATILE depth=1 (baixa
+          latência, só interessa o mais recente).
+        - Desconexão limpa da mão: SetHandPowerOff síncrono com
+          timeout antes do SIGTERM no covvi_hand_driver → LED apaga
+          antes do socket fechar.
+        - Cronômetro + progress bar por fase: SLIDING usa
+          distance/speed; HOLD usa hold_seconds (publicado pelo
+          explorer no status).
+        - Mirror robusto: subscrição em
+          /cr10_group_controller/joint_trajectory captura sliders e
+          trajetórias autônomas numa única rota, com debounce 80 ms +
+          dedup 0.5° → braço real segue comandos sem competir com a
+          pose lagada do simulador.
+        - Troca de modo bloqueada durante palpação ativa e durante
+          conexão em andamento (state guard).
+        - GUI responsiva: minsize 720×460 + scroll vertical em cada
+          aba (Canvas + Scrollbar + bind condicional do mousewheel).
+
+      D7.3) Pré-requisitos específicos
+        - eci_ros-main clonado em src/ (mesmo do grasp_ml_pack) —
+          covvi_interfaces e covvi_hand_driver são imports lazy do
+          palpation_gui ao conectar à mão real.
+        - cra_description (URDF do CR10) — mesmo do hand_pack.
+        - Sem dependências de visão (touch_pack é puramente tátil).
+
+      D7.4) Comandos
+        ros2 launch touch_pack tactile_cell.launch.py
+          (Gazebo + URDF combinado + controllers + 3 nós + GUI)
+
+        ros2 launch touch_pack tactile_cell.launch.py no_gui:=true
+          (headless: sem Tkinter, mantém explorer + logger)
+
+        ros2 run touch_pack palpation_gui      (GUI isolada)
+        ros2 run touch_pack tactile_explorer   (FSM isolada)
+        ros2 run touch_pack palpation_logger   (data logger isolado)
+
+        Disparo manual da palpação (JSON em /palpation/start):
+          ros2 topic pub --once /palpation/start std_msgs/msg/String \
+            "data: '{\"speed_mms\": 10.0, \"force_n\": 1.0,
+                      \"distance_mm\": 90.0, \"slide_dir\": \"+Y\"}'"
+
+      D7.5) Saída do logger
+        Cada run gera dois arquivos em ~/touch_pack_runs/:
+          <timestamp>__samples.csv  — t_rel_s, phase, fx, fy, fz,
+                                       tx, ty, tz (header explícito)
+          <timestamp>__params.json — parâmetros do /palpation/start
+                                       (força alvo, velocidade,
+                                       distância, ganhos PID, etc.)
+        Encerramento: status DONE/ABORTED do explorer, ou watchdog
+        de 5 min sem wrench. Flush a cada 50 amostras evita perda
+        em SIGKILL.
+
+      D7.6) Relação com o gêmeo digital (grasp_ml_pack)
+        São pacotes irmãos, sem dependências cruzadas em runtime.
+        Compartilham o mesmo URDF combinado (CR10 + COVVI), os mesmos
+        controllers ros2_control e a mesma camada de comunicação
+        TCP/IP com a mão real (covvi_hand_driver). A separação foi
+        intencional: grasp_ml_pack é pipeline cego-de-tato (pick &
+        place por visão), enquanto touch_pack é "olhos fechados,
+        tato aberto" (palpação ativa).
+
+  ────────────────────────────────────────────────────────────────────────
   E) FIGURAS RECOMENDADAS NO TEXTO DO TCC (referências por nome de arquivo)
   ────────────────────────────────────────────────────────────────────────
 

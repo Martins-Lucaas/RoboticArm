@@ -37,25 +37,43 @@ from tkinter import ttk
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import (
+    QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy,
+)
 
 from std_msgs.msg import String
-from sensor_msgs.msg import JointState
 from geometry_msgs.msg import WrenchStamped
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+
+# QoS para comando crítico (/palpation/start): RELIABLE + TRANSIENT_LOCAL
+# faz com que o último start fique persistido — se o explorer subir
+# depois da GUI publicar, ele ainda recebe o último comando.
+QOS_COMMAND = QoSProfile(
+    reliability=QoSReliabilityPolicy.RELIABLE,
+    durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+    history=QoSHistoryPolicy.KEEP_LAST, depth=1)
+# QoS para stream de sensor (/ft_sensor/wrench): BEST_EFFORT + depth=1
+# minimiza latência e nunca trava o publisher por reentrega — só o
+# pacote mais recente importa para o PID de força.
+QOS_SENSOR = QoSProfile(
+    reliability=QoSReliabilityPolicy.BEST_EFFORT,
+    durability=QoSDurabilityPolicy.VOLATILE,
+    history=QoSHistoryPolicy.KEEP_LAST, depth=1)
 
 # Driver TCP/IP do CR10 real (cabeada via 192.168.5.1 / LAN1).
 try:
     from .real_driver import (
         CR10RealDriver, CR10RealDriverConfig, CR10RealDriverError,
     )
-    from .kinematics import urdf_to_dobot as _urdf_to_dobot
+    from .kinematics import urdf_to_dobot as _urdf_to_dobot, MIMIC_LIST
     _REAL_DRIVER_OK = True
 except Exception:  # pragma: no cover
     CR10RealDriver = None
     CR10RealDriverConfig = None
     CR10RealDriverError = Exception
     _urdf_to_dobot = None
+    MIMIC_LIST = []
     _REAL_DRIVER_OK = False
 
 
@@ -99,6 +117,9 @@ DIST_MIN,  DIST_MAX,  DIST_DEFAULT  = 10.0, 200.0,  90.0   # mm
 # bem abaixo da palma na Home customizada e o usuário pode ajustar a
 # altura da superfície/alvo.
 TGT_DIST_CM_MIN, TGT_DIST_CM_MAX, TGT_DIST_CM_DEFAULT = 0.5, 60.0, 5.0  # cm
+# Velocidade de aproximação (CONTACT/RETRACT) — perfil fast→slow no
+# explorer usa este valor como max; min é derivado como 20 % do max.
+APPROACH_MIN, APPROACH_MAX, APPROACH_DEFAULT = 5.0, 100.0, 50.0  # mm/s
 
 # Tempo (s) que o controller deve levar para alcançar o setpoint a partir
 # da posição atual — controla a "rampa" das trajetórias publicadas pela
@@ -132,6 +153,14 @@ ARM_HOME_DEG = {'joint1': 0, 'joint2': 0, 'joint3': -90,
 # Arquivo persistente para a home customizada do usuário. Sobrescreve
 # `ARM_HOME_DEG` em runtime quando existe.
 HOME_POSE_FILE = os.path.expanduser('~/.config/touch_pack/home_pose.json')
+# Arquivo persistente com IPs e último modo. Carregado no __init__ e
+# reescrito sempre que o usuário conectar com sucesso ou trocar de modo.
+ROBOT_CONFIG_FILE = os.path.expanduser('~/.config/touch_pack/robot.json')
+ROBOT_CONFIG_DEFAULTS = {
+    'hand_ip':    '192.168.5.103',
+    'robot_ip':   '192.168.5.2',
+    'robot_mode': 'SIM_ONLY',
+}
 
 # Juntas primárias da mão COVVI. Faixa de slider em graus → rad.
 HAND_JOINTS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
@@ -147,37 +176,9 @@ HAND_CLOSE_DEG = {'Thumb': 70, 'Index': 80, 'Middle': 80,
 HAND_POINT_DEG = {'Thumb': 30, 'Index': 0, 'Middle': 80,
                   'Ring':  80, 'Little': 80, 'Rotate': 0}
 
-# Mimic joints da COVVI: 26 juntas escravas com multiplicadores extraídos
-# de linear_covvi_hand_gazebo.urdf (offsets aproximadamente nulos).
-# Formato: (nome_da_junta_mimic, junta_primária, multiplicador)
-MIMIC_LIST = [
-    ('_lisa_j01',            'Rotate', 1.07338),
-    ('_thumb_chassis_j01',   'Rotate', 1.53340),
-    ('_thumb_proximal_j01',  'Thumb',  0.72022),
-    ('_thumb_distal_j01',    'Thumb',  1.06686),
-    ('_thumb_link_j01',      'Thumb',  0.76799),
-    ('_thumb_follower_j01',  'Thumb',  0.93733),
-    ('_index_proximal_j01',  'Index',  1.51604),
-    ('_index_distal_j01',    'Index',  1.33574),
-    ('_index_knuckle_j01',   'Index',  1.25182),
-    ('_index_follower_j01',  'Index',  0.26423),
-    ('_index_link_j01',      'Index',  1.33574),
-    ('_middle_proximal_j01', 'Middle', 1.51604),
-    ('_middle_distal_j01',   'Middle', 1.34986),
-    ('_middle_knuckle_j01',  'Middle', 1.25181),
-    ('_middle_follower_j01', 'Middle', 0.26423),
-    ('_middle_link_j01',     'Middle', 1.34986),
-    ('_ring_proximal_j01',   'Ring',   1.51604),
-    ('_ring_distal_j01',     'Ring',   1.34878),
-    ('_ring_knuckle_j01',    'Ring',   1.25182),
-    ('_ring_follower_j01',   'Ring',   0.26423),
-    ('_ring_link_j01',       'Ring',   1.34878),
-    ('_little_proximal_j01', 'Little', 1.51604),
-    ('_little_distal_j01',   'Little', 1.31664),
-    ('_little_knuckle_j01',  'Little', 1.25182),
-    ('_little_follower_j01', 'Little', 0.26423),
-    ('_little_link_j01',     'Little', 1.31664),
-]
+# MIMIC_LIST centralizada em kinematics.py (importada acima junto com
+# urdf_to_dobot). Se o import falhar, definimos lista vazia — a expansão
+# de juntas mimic vira no-op em vez de derrubar a GUI inteira.
 
 
 def _shade(hex_color: str, factor: float) -> str:
@@ -231,11 +232,12 @@ class PalpationGUI(Node):
         super().__init__('palpation_gui')
 
         # ─── Comunicação ROS (palpation/wrench) ───────────────────────
-        self._start_pub = self.create_publisher(String, '/palpation/start', 5)
+        self._start_pub = self.create_publisher(
+            String, '/palpation/start', QOS_COMMAND)
         self.create_subscription(
             String, '/palpation/status', self._cb_status, 10)
         self.create_subscription(
-            WrenchStamped, '/ft_sensor/wrench', self._cb_wrench, 30)
+            WrenchStamped, '/ft_sensor/wrench', self._cb_wrench, QOS_SENSOR)
         # Bridge real-CR10 → /ft_sensor/wrench: a thread `_force_bridge_loop`
         # lê `read_tcp_force()` do driver (estimado por torques articulares
         # compensados pela dinâmica) e publica como WrenchStamped no mesmo
@@ -243,7 +245,7 @@ class PalpationGUI(Node):
         # a leitura da última junta do robô espelha automaticamente para
         # a tela e para o PID do HOLD.
         self._wrench_pub = self.create_publisher(
-            WrenchStamped, '/ft_sensor/wrench', 20)
+            WrenchStamped, '/ft_sensor/wrench', QOS_SENSOR)
 
         # ─── Publishers para comando direto (aba Controle Manual) ────
         # Os joint_trajectory_controllers expõem um tópico direto
@@ -263,9 +265,24 @@ class PalpationGUI(Node):
         self._latest_force_mag: float = 0.0
         self._fx = self._fy = self._fz = 0.0
         self._last_wrench_ts: float = 0.0
+        # Cronômetro de fase: marca quando a fase atual começou (wall-clock)
+        # e a duração esperada (em segundos) — usada pela progress bar para
+        # SLIDING (distance/speed) e HOLD (hold_seconds publicado pelo
+        # explorer). Para fases sem duração conhecida (CONTACT/RETRACT) a
+        # barra mostra modo indeterminado.
+        self._phase_t_start: float = time.time()
+        self._latest_speed_mms: float = SPEED_DEFAULT
+        self._latest_distance_mm: float = DIST_DEFAULT
+        self._latest_hold_seconds: float = 5.0
 
         # ─── Mão COVVI (lazy) ────────────────────────────────────────
         self._hand_proc: subprocess.Popen | None = None
+        # Indica intenção do usuário: True entre clicar Conectar e
+        # clicar Desconectar. Watchdog usa esse flag para distinguir
+        # morte indesejada (re-spawn) de saída esperada (no-op).
+        self._hand_should_be_alive: bool = False
+        self._hand_watchdog_thread: threading.Thread | None = None
+        self._hand_watchdog_stop = threading.Event()
         self._eci_enabled = False
         self._eci_prefix = self.declare_parameter(
             'eci_prefix', '/covvi/hand').value
@@ -284,26 +301,43 @@ class PalpationGUI(Node):
         self._robot_mode: str = 'SIM_ONLY'
         self._robot_connected: bool = False
         self._robot_connecting: bool = False
+        # Heartbeat + reconexão automática do braço — detecta perda de
+        # comunicação com o controlador CR10 e tenta reabrir os sockets
+        # com backoff exponencial. Iniciados em `_finish_robot_connect`.
+        self._robot_heartbeat_thread: threading.Thread | None = None
+        self._robot_heartbeat_stop = threading.Event()
+        self._robot_reconnect_thread: threading.Thread | None = None
+        self._robot_reconnecting: bool = False
 
-        # Mirror MovJ — em modo MIRROR, cada mudança de slider envia
-        # MovJ(joint={...}) ao braço real:
-        #   - sliders: debounce 80 ms via _mirror_movj_debounced
-        #   - palpação autônoma: sync periódico @3 Hz via _mirror_sync_loop
-        self._latest_q_urdf: np.ndarray | None = None
+        # Mirror MovJ — em modo MIRROR, cada nova trajetória publicada em
+        # /cr10_group_controller/joint_trajectory dispara um MovJ(joint={...})
+        # para o braço real, usando o ÚLTIMO ponto da trajetória (o alvo).
+        # Cobre tanto os sliders manuais quanto a palpação autônoma do
+        # tactile_explorer, porque ambos publicam nesse mesmo tópico.
+        # Debounce de 80 ms para coalescer publicações em rajada.
         self._mirror_timer: threading.Timer | None = None
-        self._mirror_last_q_sent: np.ndarray | None = None   # controla sync periódico
-        self._real_pump_thread: threading.Thread | None = None
-        self._real_pump_stop = threading.Event()
+        self._mirror_timer_lock = threading.Lock()
+        self._mirror_last_target: np.ndarray | None = None
         self._force_bridge_thread: threading.Thread | None = None
         self._force_bridge_stop = threading.Event()
+        # Subscrição na trajetória comandada (não na pose medida do sim):
+        # captura sliders manuais e palpação autônoma com a mesma latência,
+        # sem competir com /joint_states (que lagga atrás do comando).
         self.create_subscription(
-            JointState, '/joint_states', self._cb_joint_states, 50)
+            JointTrajectory,
+            '/cr10_group_controller/joint_trajectory',
+            self._cb_arm_trajectory, 10)
 
         # ─── Home pose customizável ──────────────────────────────────
         # Default (ARM_HOME_DEG) é sobrescrito se ~/.config/touch_pack/
         # home_pose.json existir. Atualizado pelo botão "💾 Salvar Home".
         self._arm_home_deg: dict[str, float] = dict(ARM_HOME_DEG)
         self._load_home_pose()
+
+        # IPs e modo persistidos — carregar antes da UI para os defaults
+        # dos campos refletirem o último valor usado.
+        self._robot_cfg: dict[str, str] = dict(ROBOT_CONFIG_DEFAULTS)
+        self._load_robot_config()
 
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
@@ -326,7 +360,9 @@ class PalpationGUI(Node):
     def _build_ui(self):
         self.root.title('Palpação Tátil — touch_pack')
         self.root.configure(bg=BG)
-        self.root.minsize(1080, 620)
+        # Janela pode encolher bastante; o corpo das abas usa scroll vertical
+        # quando o conteúdo for maior que a área visível.
+        self.root.minsize(720, 460)
 
         style = ttk.Style()
         style.theme_use('clam')
@@ -380,7 +416,7 @@ class PalpationGUI(Node):
         tk.Label(conn, text='IP:', font=FONT_LBL,
                  bg=HEADER, fg=HEADER_FG
                  ).grid(row=1, column=0, sticky='w', padx=(0, 6))
-        self._hand_ip_var = tk.StringVar(value='192.168.1.123')
+        self._hand_ip_var = tk.StringVar(value=self._robot_cfg['hand_ip'])
         tk.Entry(conn, textvariable=self._hand_ip_var,
                   width=16, font=FONT_MONO_S, bg='white', fg=TEXT,
                   relief='flat', bd=0, highlightthickness=1,
@@ -411,7 +447,7 @@ class PalpationGUI(Node):
         tk.Label(conn_rob, text='IP:', font=FONT_LBL,
                  bg=HEADER, fg=HEADER_FG
                  ).grid(row=1, column=0, sticky='w', padx=(0, 6))
-        self._robot_ip_var = tk.StringVar(value='192.168.5.2')
+        self._robot_ip_var = tk.StringVar(value=self._robot_cfg['robot_ip'])
         tk.Entry(conn_rob, textvariable=self._robot_ip_var,
                   width=14, font=FONT_MONO_S, bg='white', fg=TEXT,
                   relief='flat', bd=0, highlightthickness=1,
@@ -422,7 +458,9 @@ class PalpationGUI(Node):
             conn_rob, '⚡', 'Conectar', self._connect_real_robot,
             bg=PRIMARY, fg='white', font=FONT_LBL, padx=14, pady=5)
         self._robot_connect_btn.grid(row=1, column=2, sticky='w', padx=(0, 8))
-        self._robot_mode_var = tk.StringVar(value='SIM_ONLY')
+        self._robot_mode_var = tk.StringVar(value=self._robot_cfg['robot_mode'])
+        # `_robot_mode` (estado interno) deve seguir o valor carregado.
+        self._robot_mode = self._robot_cfg['robot_mode']
         mode_menu = tk.OptionMenu(
             conn_rob, self._robot_mode_var,
             'SIM_ONLY', 'MIRROR',
@@ -457,8 +495,56 @@ class PalpationGUI(Node):
         nb.add(tab_palp, text='Palpação')
         nb.add(tab_man,  text='Controle Manual')
 
+        # IMPORTANTE: as abas NÃO são envolvidas em `_scrollable` (Canvas
+        # + create_window). Em testes locais essa combinação provocava
+        # segfault deterministico no Tk durante a criação do primeiro
+        # widget da segunda aba — provavelmente bug da interação entre
+        # Canvas embed + ttk.Progressbar + muitos filhos. A
+        # responsividade é dada por `minsize=720×460` + cards com
+        # `expand=True`. Se a janela ficar menor que o conteúdo, o que
+        # passar do limite é cortado, mas a GUI não trava.
         self._build_palpation_tab(tab_palp)
         self._build_manual_tab(tab_man)
+
+    def _scrollable(self, parent: tk.Frame) -> tk.Frame:
+        """Envolve `parent` num Canvas com scrollbar vertical e retorna o
+        Frame interno onde o caller deve montar o conteúdo. A largura do
+        frame interno acompanha a largura do canvas (responsivo) e a
+        scrollregion atualiza quando o conteúdo cresce/encolhe.
+        """
+        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0,
+                            borderwidth=0)
+        vbar = ttk.Scrollbar(parent, orient='vertical',
+                              command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        vbar.pack(side='right', fill='y')
+
+        inner = tk.Frame(canvas, bg=BG)
+        win = canvas.create_window((0, 0), window=inner, anchor='nw')
+
+        def _on_inner(_e):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        inner.bind('<Configure>', _on_inner)
+
+        def _on_canvas(e):
+            canvas.itemconfigure(win, width=e.width)
+        canvas.bind('<Configure>', _on_canvas)
+
+        # Mousewheel só rola se o ponteiro estiver sobre este canvas — bind
+        # local via <Enter>/<Leave> evita capturar scroll de outras abas.
+        def _wheel(e):
+            delta = -1 if e.num == 5 or e.delta < 0 else 1
+            canvas.yview_scroll(delta, 'units')
+        canvas.bind('<Enter>',
+                     lambda _e: (canvas.bind_all('<MouseWheel>', _wheel),
+                                  canvas.bind_all('<Button-4>', _wheel),
+                                  canvas.bind_all('<Button-5>', _wheel)))
+        canvas.bind('<Leave>',
+                     lambda _e: (canvas.unbind_all('<MouseWheel>'),
+                                  canvas.unbind_all('<Button-4>'),
+                                  canvas.unbind_all('<Button-5>')))
+        return inner
 
     def _build_palpation_tab(self, root: tk.Frame):
         body = tk.Frame(root, bg=BG)
@@ -475,6 +561,10 @@ class PalpationGUI(Node):
         self.force_var       = tk.DoubleVar(value=FORCE_DEFAULT)
         self.dist_var        = tk.DoubleVar(value=DIST_DEFAULT)
         self.target_dist_var = tk.DoubleVar(value=TGT_DIST_CM_DEFAULT)
+        # approach speed exposta via parâmetro ROS (não via slider Tk) —
+        # adicionar mais um Spinbox+Scale na lista estava sendo associado
+        # ao segfault do Tk.
+        self.approach_var    = tk.DoubleVar(value=APPROACH_DEFAULT)
         # Ganhos PID enviados a cada /palpation/start; o explorer aplica
         # no HOLD para manter a força normal alvo. Padrão conservador.
         self.pid_kp_var      = tk.DoubleVar(value=KP_DEFAULT)
@@ -503,6 +593,10 @@ class PalpationGUI(Node):
                          step=0.5,
                          hint='Distância vertical da Home até a superfície '
                               '(o contato pára antes se a força for atingida)')
+        # approach speed: slider removido (era novo _param_row que
+        # parecia disparar o segfault do Tk). Continua sendo enviado no
+        # payload com o valor default; para alterar use:
+        #   ros2 param set /tactile_explorer approach_v_max_mms 30.0
 
         # Seletor de direção do deslizamento (XY mundo). joint1 só pode
         # produzir um arco; aqui o usuário escolhe a ORIENTAÇÃO desejada
@@ -581,6 +675,18 @@ class PalpationGUI(Node):
             prow, text='IDLE', font=FONT_HEAD, bg=PANEL, fg=TEXT)
         self.phase_lbl.pack(side='right')
 
+        # Cronômetro só com label — sem ttk.Progressbar. Em alguns
+        # ambientes (Ubuntu 22.04 + Tcl 8.6 sem fontes JetBrains/Segoe
+        # instaladas) o Progressbar corrompia estado interno do Tk
+        # provocando segfault na criação de widgets posteriores.
+        timerow = tk.Frame(fb_card, bg=PANEL)
+        timerow.pack(fill='x', pady=(8, 2))
+        tk.Label(timerow, text='Progresso', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self.timer_lbl = tk.Label(
+            timerow, text='—', font=FONT_HEAD, bg=PANEL, fg=TEXT_MUTED)
+        self.timer_lbl.pack(side='right')
+
     # ── Aba "Controle Manual" ────────────────────────────────────────
     def _build_manual_tab(self, root: tk.Frame):
         """Constrói a aba de jog manual: tempo de movimento + 6 sliders do
@@ -619,7 +725,7 @@ class PalpationGUI(Node):
         self.move_time_var = tk.DoubleVar(value=MOVE_TIME_DEFAULT)
         self._param_row(speed_inner, label='Duracao', unit='s',
                         var=self.move_time_var,
-                        vmin=MOVE_TIME_MIN, vmax=MOVE_TIME_MAX, step=0.1)
+                        vmin=MOVE_TIME_MIN, vmax=MOVE_TIME_MAX, step=0.5)
 
         # Linha 2 — SpeedFactor % (braco real via TCP)
         self._use_speedfactor_var = tk.IntVar(value=0)
@@ -635,7 +741,7 @@ class PalpationGUI(Node):
         self.speed_factor_var = tk.DoubleVar(value=SPEED_FACTOR_DEFAULT)
         self._param_row(speed_inner, label='SpeedFactor', unit='%',
                         var=self.speed_factor_var,
-                        vmin=SPEED_FACTOR_MIN, vmax=SPEED_FACTOR_MAX, step=5)
+                        vmin=SPEED_FACTOR_MIN, vmax=SPEED_FACTOR_MAX, step=1)
         self.speed_factor_var.trace_add(
             'write', lambda *_: self._apply_speed_factor_if_active())
 
@@ -784,7 +890,7 @@ class PalpationGUI(Node):
             with self._real_lock:
                 self._real_driver._send_dash(f'SpeedFactor({v})')
             self.get_logger().debug('SpeedFactor(%d) aplicado', v)
-        except Exception as exc:
+        except CR10RealDriverError as exc:
             self.get_logger().warning('SpeedFactor falhou: %s', exc)
 
     @staticmethod
@@ -819,189 +925,72 @@ class PalpationGUI(Node):
         pt.time_from_start = self._duration_msg(duration_s)
         msg.points.append(pt)
         self._arm_pub.publish(msg)
-        # Em modo MIRROR envia MovJ ao braço real com debounce.
-        if (self._robot_mode == 'MIRROR' and self._robot_connected
-                and self._real_driver is not None and _urdf_to_dobot is not None):
-            self._mirror_movj_debounced(positions_rad)
-
-    # ── /joint_states → pump ServoJ ───────────────────────────────────
-    def _cb_joint_states(self, msg: JointState):
-        """Cacheia o último q (URDF) do braço."""
-        idx = {n: i for i, n in enumerate(msg.name)}
-        if not all(j in idx for j in ARM_JOINTS):
-            return
-        try:
-            q = np.array([float(msg.position[idx[j]]) for j in ARM_JOINTS],
-                          dtype=np.float64)
-        except (IndexError, ValueError):
-            return
-        self._latest_q_urdf = q
+        # MIRROR é tratado pela subscrição em /cr10_group_controller/joint_trajectory
+        # — captura este publish e também o do tactile_explorer numa única rota.
 
     # ── Mirror MovJ (MIRROR mode — braço real segue os sliders) ──────────
     def _mirror_movj_debounced(self, positions_rad: list[float]) -> None:
         """Agenda MovJ ao braço real com debounce de 80 ms.
 
-        Enquanto o usuário arrasta o slider, cancela e reagenda — o comando
-        só é enviado 80 ms após o último movimento, evitando flood de MovJ.
+        Enquanto chegam publicações em rajada (slider arrastando, streaming
+        do explorer), o timer é cancelado e reagendado — só dispara 80 ms
+        após a última publicação, evitando flood de MovJ.
+
+        Dedup por tolerância (0.5°): trajetórias repetidas com o mesmo
+        alvo não disparam MovJ redundante.
         """
-        if self._mirror_timer is not None:
-            self._mirror_timer.cancel()
-        self._mirror_timer = threading.Timer(
-            0.08, self._mirror_movj_send, args=[list(positions_rad)])
-        self._mirror_timer.daemon = True
-        self._mirror_timer.start()
+        q_new = np.asarray(positions_rad, dtype=np.float64)
+        with self._mirror_timer_lock:
+            last = self._mirror_last_target
+            if last is not None and np.max(np.abs(q_new - last)) < 0.0087:
+                return  # já enviado/agendado mesmo alvo — pular
+            if self._mirror_timer is not None:
+                self._mirror_timer.cancel()
+            self._mirror_timer = threading.Timer(
+                0.08, self._mirror_movj_send, args=[q_new.tolist()])
+            self._mirror_timer.daemon = True
+            self._mirror_timer.start()
 
     def _mirror_movj_send(self, positions_rad: list[float]) -> None:
-        """Converte URDF→DOBOT e envia MovJ(joint={...}) ao braço real."""
-        if (not self._robot_connected or self._real_driver is None
-                or self._robot_mode != 'MIRROR'
-                or _urdf_to_dobot is None):
-            return
+        """Converte URDF→DOBOT e envia MovJ(joint={...}) ao braço real.
+
+        Toda checagem de estado do driver é feita DENTRO do `_real_lock`
+        para evitar TOCTOU com `_disconnect_real_robot` em outra thread.
+        """
         try:
             q_dobot_rad = _urdf_to_dobot(
                 np.array(positions_rad, dtype=np.float64))
             q_dobot_deg = [math.degrees(float(v)) for v in q_dobot_rad]
             with self._real_lock:
-                self._real_driver.mov_j_joint_deg(q_dobot_deg)
-            self._mirror_last_q_sent = np.array(positions_rad, dtype=np.float64)
+                drv = self._real_driver
+                if (drv is None or not self._robot_connected
+                        or self._robot_mode != 'MIRROR'):
+                    return
+                drv.mov_j_joint_deg(q_dobot_deg)
+            self._mirror_last_target = np.asarray(
+                positions_rad, dtype=np.float64)
             self.get_logger().debug('Mirror MovJ → %s',
                                     [f'{v:.2f}' for v in q_dobot_deg])
-        except Exception as exc:
+        except CR10RealDriverError as exc:
             self.get_logger().warning('Mirror MovJ falhou: %s', exc)
 
-    # ── Mirror sync periódico (cobre palpação autônoma) ───────────────
-    def _mirror_sync_loop(self) -> None:
-        """Loop @3 Hz no thread Tkinter: envia MovJ se a pose mudou >0.5°.
-
-        Cobre movimentos autônomos (palpação, HOME) que não passam pelos
-        sliders e portanto não disparam o debounce de 80 ms.
-        """
-        if self._robot_mode != 'MIRROR' or not self._robot_connected:
-            return  # sai sem re-agendar — loop para
-        q = self._latest_q_urdf
-        if (q is not None and self._real_driver is not None
-                and _urdf_to_dobot is not None):
-            last = self._mirror_last_q_sent
-            # Envia só se pose mudou > 0.5° em qualquer junta
-            if last is None or np.max(np.abs(q - last)) > 0.0087:
-                threading.Thread(
-                    target=self._mirror_movj_send,
-                    args=[q.tolist()], daemon=True).start()
-        self.root.after(333, self._mirror_sync_loop)  # re-agenda @3 Hz
-
-    def _start_mirror_sync(self) -> None:
-        """Inicia o loop periódico de sync (chamar ao conectar em MIRROR)."""
-        self.root.after(333, self._mirror_sync_loop)
-
-    def _real_pump_active(self) -> bool:
-        return (self._real_pump_thread is not None
-                and self._real_pump_thread.is_alive())
-
-    def _start_real_pump(self) -> None:
-        """Inicia o pump ServoJ se as pré-condições estiverem OK.
-
-        Faz PTP de alinhamento (`mov_j_joint_deg`) antes do streaming
-        para que a primeira leitura do ServoJ não exija um salto grande
-        do robô real (evita disparo de proteção / colisão simulada)."""
-        if self._real_pump_active():
+    # ── Subscrição no tópico de trajetória comandada ─────────────────
+    def _cb_arm_trajectory(self, msg: JointTrajectory) -> None:
+        """Captura toda trajetória publicada em /cr10_group_controller/joint_trajectory
+        (sliders manuais + palpação autônoma) e encaminha o ÚLTIMO ponto
+        como MovJ para o braço real, com debounce de 80 ms."""
+        if (self._robot_mode != 'MIRROR' or not self._robot_connected
+                or self._real_driver is None or _urdf_to_dobot is None):
             return
-        if not self._robot_connected or self._real_driver is None:
+        if not msg.points:
             return
-        if self._latest_q_urdf is None or _urdf_to_dobot is None:
-            self._set_status(
-                'Aguardando /joint_states antes de iniciar o mirror.',
-                WARN)
-            return
-        self._set_status('Alinhando robô real à pose do sim (PTP)…', WARN)
-        threading.Thread(target=self._align_then_pump, daemon=True).start()
-
-    def _align_then_pump(self) -> None:
-        q_urdf = self._latest_q_urdf
-        if q_urdf is None or _urdf_to_dobot is None:
-            return
+        idx = {n: i for i, n in enumerate(msg.joint_names)}
         try:
-            q_dobot_rad = _urdf_to_dobot(q_urdf)
-            q_dobot_deg = [math.degrees(float(v)) for v in q_dobot_rad]
-            with self._real_lock:
-                self._real_driver.mov_j_joint_deg(q_dobot_deg)
-                self._real_driver.sync()
-                # Reinicia estado interno do servo controller antes de ServoJ.
-                # Sem este reset, firmware V4.5.1 retorna -50001 na primeira
-                # chamada ServoJ após JointMovJ.
-                self._real_driver.prepare_servoj()
-        except Exception as exc:
-            self.get_logger().error(f'PTP de alinhamento falhou: {exc}')
-            self._set_status(
-                f'Falha no PTP de alinhamento: {exc}', DANGER)
+            positions_rad = [float(msg.points[-1].positions[idx[j]])
+                              for j in ARM_JOINTS]
+        except (KeyError, IndexError):
             return
-        # Verifica se o robô está em modo 5 (ENABLE/idle) antes de iniciar o pump.
-        # Após o PTP, o braço pode entrar em alarme (modo 9) por colisão ou limite.
-        try:
-            mode_resp = self._real_driver.robot_mode() or ''
-        except Exception:
-            mode_resp = ''
-        if ',{5},' not in mode_resp:
-            self.get_logger().error(
-                f'Robot não está em modo 5 após PTP ({mode_resp.strip()}) — pump não iniciado.')
-            self.root.after(0, lambda: self._set_status(
-                'Robot em alarme após PTP — ClearError e reconecte.', DANGER))
-            return
-        # Pode ter sido cancelado durante o PTP.
-        if self._robot_mode != 'MIRROR' or not self._robot_connected:
-            self._set_status(
-                'PTP concluído, mas modo mudou — pump não iniciado.',
-                TEXT_DIM)
-            return
-        self._real_pump_stop.clear()
-        self._real_pump_thread = threading.Thread(
-            target=self._real_pump_loop, daemon=True)
-        self._real_pump_thread.start()
-        self._set_status(
-            'Pump ServoJ ativo — real seguindo o sim @33 Hz.', OK)
-
-    def _real_pump_loop(self) -> None:
-        """Loop @33 Hz: ServoJ com o último q_urdf cacheado."""
-        period = 0.030
-        consecutive_errors = 0
-        MAX_CONSECUTIVE = 15   # ~450 ms de falhas → stop pump
-        while not self._real_pump_stop.is_set():
-            t0 = time.time()
-            q = self._latest_q_urdf
-            if (q is not None and self._real_driver is not None
-                    and self._robot_connected):
-                try:
-                    with self._real_lock:
-                        self._real_driver.servo_j_urdf(q.tolist())
-                    consecutive_errors = 0
-                except CR10RealDriverError as exc:
-                    consecutive_errors += 1
-                    if consecutive_errors == 1 or consecutive_errors % 5 == 0:
-                        self.get_logger().warning(
-                            f'ServoJ pump: {exc} '
-                            f'({consecutive_errors}/{MAX_CONSECUTIVE})')
-                    if consecutive_errors >= MAX_CONSECUTIVE:
-                        self.get_logger().error(
-                            'ServoJ pump: muitos erros consecutivos — parando.')
-                        self._set_status(
-                            'Pump ServoJ parado: verifique estado do robô.', DANGER)
-                        return
-                except Exception as exc:
-                    self.get_logger().error(f'ServoJ pump erro: {exc}')
-            dt = time.time() - t0
-            if dt < period:
-                # Wait responsivo ao stop event.
-                self._real_pump_stop.wait(period - dt)
-
-    def _stop_real_pump(self) -> None:
-        if not self._real_pump_active():
-            self._real_pump_stop.set()
-            self._real_pump_thread = None
-            return
-        self._real_pump_stop.set()
-        thr = self._real_pump_thread
-        if thr is not None:
-            thr.join(timeout=1.5)
-        self._real_pump_thread = None
+        self._mirror_movj_debounced(positions_rad)
 
     # ──────────────────────────────────────────────────────────────────
     # Bridge real CR10 → /ft_sensor/wrench
@@ -1187,6 +1176,49 @@ class PalpationGUI(Node):
                               for j in ARM_JOINTS)
         self._set_status(f'Home salva ({summary}).', OK)
 
+    # ── Persistência de IPs e modo (~/.config/touch_pack/robot.json) ──
+    def _load_robot_config(self) -> None:
+        """Carrega `_robot_cfg` (mescla defaults com JSON salvo). Silencioso
+        se o arquivo não existir ou estiver corrompido — só preenche faltantes."""
+        try:
+            if not os.path.exists(ROBOT_CONFIG_FILE):
+                return
+            with open(ROBOT_CONFIG_FILE) as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                return
+            for k, default in ROBOT_CONFIG_DEFAULTS.items():
+                v = data.get(k)
+                if isinstance(v, str) and v.strip():
+                    self._robot_cfg[k] = v.strip()
+            self.get_logger().info(
+                f'Config robô carregada de {ROBOT_CONFIG_FILE}: '
+                f'hand={self._robot_cfg["hand_ip"]} '
+                f'robot={self._robot_cfg["robot_ip"]} '
+                f'mode={self._robot_cfg["robot_mode"]}')
+        except (OSError, json.JSONDecodeError) as exc:
+            self.get_logger().warn(f'Falha ao ler robot.json: {exc}')
+
+    def _save_robot_config(self) -> None:
+        """Persiste `_robot_cfg` em `ROBOT_CONFIG_FILE`. Atualiza os campos
+        a partir dos StringVars antes de gravar."""
+        try:
+            ip_hand = (self._hand_ip_var.get() or '').strip()
+            ip_robot = (self._robot_ip_var.get() or '').strip()
+        except tk.TclError:
+            return
+        if ip_hand:
+            self._robot_cfg['hand_ip'] = ip_hand
+        if ip_robot:
+            self._robot_cfg['robot_ip'] = ip_robot
+        self._robot_cfg['robot_mode'] = self._robot_mode
+        try:
+            os.makedirs(os.path.dirname(ROBOT_CONFIG_FILE), exist_ok=True)
+            with open(ROBOT_CONFIG_FILE, 'w') as fh:
+                json.dump(self._robot_cfg, fh, indent=2, sort_keys=True)
+        except OSError as exc:    # pragma: no cover
+            self.get_logger().warn(f'Falha ao salvar robot.json: {exc}')
+
     def _send_eci_grip(self, grip_id: int, label: str = '') -> None:
         """Chama SetCurrentGrip via ECI de forma assíncrona.
 
@@ -1346,6 +1378,8 @@ class PalpationGUI(Node):
                               DANGER)
             self._hand_proc = None
             return
+        self._hand_should_be_alive = True
+        self._start_hand_watchdog()
         self._set_status(f'covvi_hand_driver server {ip} iniciando…', PRIMARY)
         self.root.after(2200, self._post_connect_real_hand)
 
@@ -1358,6 +1392,8 @@ class PalpationGUI(Node):
             self._hand_proc = None
             return
         self._hand_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
+        # Conexão deu certo — persistir o IP para reusar no próximo boot.
+        self._save_robot_config()
         # Ativa ECI automaticamente (como o manual_control_node do grasp_ml_pack)
         # _toggle_eci já agenda o auto-power-on em 800 ms
         if not self._eci_enabled:
@@ -1366,19 +1402,140 @@ class PalpationGUI(Node):
             f'Driver da mão ativo ({self._eci_prefix}) — power ON em breve…', OK)
 
     def _disconnect_real_hand(self) -> None:
-        # Desliga ECI + power enquanto o driver ainda está vivo (para o LED apagar)
+        """Desconexão limpa: PowerOff síncrono → SIGTERM → wait → SIGKILL.
+
+        A chamada `call_async` retorna antes do request realmente chegar ao
+        hardware; se matarmos o subprocesso imediatamente, o ECI fecha o
+        socket e a mão fica energizada (LED azul aceso). Esperamos o future
+        completar (com timeout) antes do SIGTERM, e ainda damos `proc.wait`
+        para o driver fechar o socket TCP da mão de forma ordeira.
+        """
+        # 0) Intenção do usuário é encerrar — desliga watchdog para não
+        #    tentar re-spawn após o SIGTERM.
+        self._hand_should_be_alive = False
+        self._stop_hand_watchdog()
+        # 1) PowerOff síncrono com timeout (LED azul vai apagar antes da kill).
         if self._eci_enabled:
-            self._toggle_eci()
-        # Só depois mata o subprocesso
-        proc = self._hand_proc
-        if proc is not None:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except Exception:
-                pass
-        self._hand_proc = None
+            self._send_hand_poweroff_blocking(timeout_s=1.0)
+            self._hand_powered = False
+            self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
+            self._eci_enabled = False
+            self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
+
+        # 2) SIGTERM + wait, com fallback SIGKILL se o driver não sair.
+        self._terminate_hand_subprocess()
         self._hand_connect_btn.set_state('⚡', 'Conectar', PRIMARY, 'white')
-        self._set_status('Driver da mão desconectado.', TEXT_DIM)
+        self._set_status(
+            'Driver da mão desconectado — LED apagado.', TEXT_DIM)
+
+    # ── Watchdog + re-spawn automático (mão COVVI) ───────────────────
+    def _start_hand_watchdog(self) -> None:
+        thr = self._hand_watchdog_thread
+        if thr is not None and thr.is_alive():
+            return
+        self._hand_watchdog_stop.clear()
+        self._hand_watchdog_thread = threading.Thread(
+            target=self._hand_watchdog_loop, daemon=True)
+        self._hand_watchdog_thread.start()
+
+    def _stop_hand_watchdog(self) -> None:
+        self._hand_watchdog_stop.set()
+        thr = self._hand_watchdog_thread
+        if thr is not None and thr is not threading.current_thread():
+            thr.join(timeout=0.5)
+        self._hand_watchdog_thread = None
+
+    def _hand_watchdog_loop(self) -> None:
+        """Poll @2 s do `Popen.poll()`. Se o driver morrer sem desconexão
+        deliberada, dispara re-spawn no thread Tk."""
+        WATCHDOG_PERIOD_S = 2.0
+        while not self._hand_watchdog_stop.is_set():
+            if self._hand_watchdog_stop.wait(WATCHDOG_PERIOD_S):
+                return
+            if not self._hand_should_be_alive:
+                return
+            proc = self._hand_proc
+            if proc is None:
+                continue   # ainda subindo / já encerrado
+            if proc.poll() is not None:
+                self.get_logger().error(
+                    f'covvi_hand_driver morreu (rc={proc.returncode}). '
+                    'Tentando re-spawn automático.')
+                self.root.after(0, self._on_hand_died)
+                return
+
+    def _on_hand_died(self) -> None:
+        """Callback Tk: limpa estado interno (ECI/power perdidos junto com
+        o driver) e tenta reconectar. Preserva `_hand_should_be_alive`
+        para o watchdog seguir monitorando após o re-spawn."""
+        if not self._hand_should_be_alive:
+            return
+        # Estado de software (já estava out-of-sync com o driver morto).
+        self._hand_proc = None
+        self._eci_enabled = False
+        self._hand_powered = False
+        self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
+        self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
+        self._hand_connect_btn.set_state('⏳', 'Reconectando…', WARN, 'white')
+        self._set_status(
+            'Driver da mão caiu — re-spawn automático em curso…', WARN)
+        # `_connect_real_hand` re-spawna o subprocesso e re-ativa ECI+power
+        # via `_post_connect_real_hand`. Como `_hand_proc=None` aqui, o
+        # caminho de desconexão (toggle) é evitado.
+        self._connect_real_hand()
+
+    def _send_hand_poweroff_blocking(self, timeout_s: float) -> None:
+        """Chama SetHandPowerOff e espera o future completar (com timeout).
+
+        Rodamos no thread Tkinter; o spin do ROS está na thread auxiliar,
+        então o future é resolvido em paralelo. Apenas dormimos checando
+        `future.done()` em intervalos curtos para não congelar a UI."""
+        if self._cli_hand_pwr_off is None or self._eci_srv is None:
+            return
+        try:
+            if not self._cli_hand_pwr_off.service_is_ready():
+                # Sem serviço pronto não há como cortar o power via ECI;
+                # ainda assim seguimos para o SIGTERM.
+                return
+            future = self._cli_hand_pwr_off.call_async(
+                self._eci_srv.SetHandPowerOff.Request())
+        except Exception as exc:
+            self.get_logger().warning(f'PowerOff falhou: {exc}')
+            return
+        deadline = time.time() + max(0.05, timeout_s)
+        while time.time() < deadline:
+            if future.done():
+                return
+            time.sleep(0.02)
+        self.get_logger().warning(
+            f'PowerOff não concluiu em {timeout_s:.1f} s — '
+            'driver será terminado mesmo assim.')
+
+    def _terminate_hand_subprocess(self) -> None:
+        """Envia SIGTERM ao grupo de processos do driver e espera até 2 s;
+        se ainda estiver vivo, força SIGKILL. Idempotente."""
+        proc = self._hand_proc
+        self._hand_proc = None
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (OSError, ProcessLookupError) as exc:
+            self.get_logger().debug(f'SIGTERM da mão ignorado ({exc}).')
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            self.get_logger().warn(
+                'Driver da mão não saiu em 2 s — forçando SIGKILL.')
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                self.get_logger().error(
+                    'Driver da mão ficou zumbi após SIGKILL.')
 
     def _toggle_eci(self) -> None:
         """Liga/desliga o canal lógico ECI (cliente dos serviços COVVI).
@@ -1550,9 +1707,15 @@ class PalpationGUI(Node):
                                mode_raw: str) -> None:
         """Callback no thread Tkinter após conexão bem-sucedida."""
         self._robot_connecting = False
+        self._robot_reconnecting = False
         self._real_driver = drv
         self._robot_connected = True
         self._robot_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
+        # Conexão deu certo — persistir o IP para reusar no próximo boot.
+        self._save_robot_config()
+        # Heartbeat só inicia após uma conexão saudável; se cair, tenta
+        # reconectar com backoff automaticamente.
+        self._start_robot_heartbeat()
         # Modo 5 = ENABLE (pronto); 9 = ERROR no Dobot CR.
         mode_note = f'  [RobotMode: {mode_raw[:60].strip()}]' if mode_raw else ''
         color = DANGER if '9' in mode_raw and '5' not in mode_raw else OK
@@ -1564,7 +1727,6 @@ class PalpationGUI(Node):
             self._set_status(
                 f'CR10 conectado em {ip} — modo MIRROR ativo: '
                 'mova os sliders para controlar o braço real.', OK)
-            self._start_mirror_sync()
 
     def _fail_robot_connect(self, error: str) -> None:
         """Callback no thread Tkinter após falha na conexão."""
@@ -1573,12 +1735,18 @@ class PalpationGUI(Node):
         self._set_status(f'Falha ao conectar CR10: {error}', DANGER)
 
     def _disconnect_real_robot(self) -> None:
-        # Pump, mirror timer e bridge precisam parar ANTES de fechar os
+        # Mirror timer e bridge precisam parar ANTES de fechar os
         # sockets — senão as threads ainda tentam I/O em socket morto.
-        self._stop_real_pump()
-        if self._mirror_timer is not None:
-            self._mirror_timer.cancel()
-            self._mirror_timer = None
+        # Heartbeat e reconexão são desligados primeiro: caso contrário a
+        # detecção de "perda" dispararia logo após o usuário clicar
+        # Desconectar (false positive).
+        self._stop_robot_heartbeat()
+        self._robot_reconnecting = False
+        with self._mirror_timer_lock:
+            if self._mirror_timer is not None:
+                self._mirror_timer.cancel()
+                self._mirror_timer = None
+            self._mirror_last_target = None
         self._stop_force_bridge()
         drv = self._real_driver
         if drv is None:
@@ -1586,31 +1754,170 @@ class PalpationGUI(Node):
             self._robot_connect_btn.set_state(
                 '⚡', 'Conectar', PRIMARY, 'white')
             return
-        try: drv.stop()
-        except Exception: pass
-        try: drv.close()
-        except Exception: pass
+        try:
+            drv.stop()
+        except CR10RealDriverError as exc:
+            self.get_logger().debug(f'drv.stop() falhou no disconnect: {exc}')
+        try:
+            drv.close()
+        except OSError as exc:
+            self.get_logger().debug(f'drv.close() falhou no disconnect: {exc}')
         self._real_driver = None
         self._robot_connected = False
         self._robot_connect_btn.set_state('⚡', 'Conectar', PRIMARY, 'white')
         self._set_status('CR10 desconectado.', TEXT_DIM)
 
+    # ── Heartbeat + reconexão automática (braço CR10) ────────────────
+    def _start_robot_heartbeat(self) -> None:
+        """Inicia thread daemon que sonda `RobotMode()` a cada 2 s.
+        Após 3 falhas consecutivas, dispara o worker de reconexão."""
+        thr = self._robot_heartbeat_thread
+        if thr is not None and thr.is_alive():
+            return
+        self._robot_heartbeat_stop.clear()
+        self._robot_heartbeat_thread = threading.Thread(
+            target=self._robot_heartbeat_loop, daemon=True)
+        self._robot_heartbeat_thread.start()
+
+    def _stop_robot_heartbeat(self) -> None:
+        self._robot_heartbeat_stop.set()
+        thr = self._robot_heartbeat_thread
+        if thr is not None and thr is not threading.current_thread():
+            thr.join(timeout=0.5)
+        self._robot_heartbeat_thread = None
+
+    def _robot_heartbeat_loop(self) -> None:
+        HEARTBEAT_PERIOD_S = 2.0
+        MAX_FAILURES = 3
+        failures = 0
+        while not self._robot_heartbeat_stop.is_set():
+            if self._robot_heartbeat_stop.wait(HEARTBEAT_PERIOD_S):
+                return
+            if not self._robot_connected or self._real_driver is None:
+                return
+            ok = False
+            try:
+                with self._real_lock:
+                    drv = self._real_driver
+                    if drv is None:
+                        return
+                    resp = drv.robot_mode()
+                ok = bool(resp) and '{' in resp
+            except (CR10RealDriverError, OSError):
+                ok = False
+            if ok:
+                failures = 0
+            else:
+                failures += 1
+                self.get_logger().warn(
+                    f'Heartbeat CR10 falhou ({failures}/{MAX_FAILURES}).')
+                if failures >= MAX_FAILURES:
+                    self.root.after(0, self._on_robot_connection_lost)
+                    return
+
+    def _on_robot_connection_lost(self) -> None:
+        """Callback Tk — heartbeat detectou perda. Marca desconectado,
+        derruba os recursos dependentes e dispara reconexão automática."""
+        if self._robot_reconnecting or not self._robot_connected:
+            return
+        self._robot_reconnecting = True
+        self._robot_connected = False
+        self._robot_connect_btn.set_state(
+            '⏳', 'Reconectando…', WARN, 'white')
+        self._set_status(
+            'Conexão CR10 perdida — tentando reconectar automaticamente…',
+            WARN)
+        # Para o bridge de força (vai tentar ler de socket morto).
+        self._stop_force_bridge()
+        drv = self._real_driver
+        self._real_driver = None
+        if drv is not None:
+            try:
+                drv.close()
+            except OSError:
+                pass
+        # Heartbeat acabou de sair (return após dispatch). Não precisa
+        # parar de novo — apenas dispara o worker.
+        self._spawn_robot_reconnect()
+
+    def _spawn_robot_reconnect(self) -> None:
+        """Inicia worker que tenta reconectar com backoff exponencial."""
+        thr = self._robot_reconnect_thread
+        if thr is not None and thr.is_alive():
+            return
+        ip = (self._robot_ip_var.get()
+              or self._robot_cfg.get('robot_ip', '192.168.5.2')).strip()
+        self._robot_reconnect_thread = threading.Thread(
+            target=self._robot_reconnect_worker, args=(ip,), daemon=True)
+        self._robot_reconnect_thread.start()
+
+    def _robot_reconnect_worker(self, ip: str) -> None:
+        """Backoff exponencial 2→3→4.5→…→30 s. Para quando reconectar
+        ou quando o usuário desconecta/fecha (cancela via flag)."""
+        backoff = 2.0
+        max_backoff = 30.0
+        attempt = 0
+        while (not self._stop_event.is_set()
+               and self._robot_reconnecting):
+            attempt += 1
+            self.get_logger().info(
+                f'[ROBOT] Reconexão tentativa {attempt} → {ip}')
+            try:
+                cfg = CR10RealDriverConfig(ip=ip)
+                drv = CR10RealDriver(ip=ip, dry_run=False, config=cfg)
+                drv.connect()
+                drv.enable()
+                time.sleep(1.5)
+                mode_raw = drv.robot_mode() or ''
+                self.root.after(
+                    0, lambda d=drv, m=mode_raw: self._finish_robot_connect(
+                        ip, d, m))
+                return
+            except CR10RealDriverError as exc:
+                self.get_logger().warn(
+                    f'Reconexão {attempt} falhou: {exc} '
+                    f'(próxima em {backoff:.0f} s)')
+                self.root.after(0, lambda a=attempt, b=backoff: self._set_status(
+                    f'Reconectando CR10 — tentativa {a} falhou, '
+                    f'próxima em {b:.0f} s.', WARN))
+            if self._stop_event.wait(backoff):
+                return
+            backoff = min(max_backoff, backoff * 1.5)
+        self.root.after(0, lambda: self._robot_connect_btn.set_state(
+            '⚡', 'Conectar', PRIMARY, 'white'))
+
     def _set_robot_mode(self, selected: str) -> None:
         mode = (selected or '').strip().upper()
         if mode not in ('SIM_ONLY', 'MIRROR'):
             return
+        if self._robot_connecting:
+            # Conexão em andamento — recusa a troca para não corrermos
+            # com o worker que ainda vai setar `_real_driver`.
+            self._robot_mode_var.set(self._robot_mode)
+            self._set_status(
+                'Aguarde a conexão concluir antes de trocar de modo.', WARN)
+            return
+        # Palpação em curso — trocar de SIM_ONLY ↔ MIRROR no meio do
+        # experimento poderia perder/comandar o braço real fora de hora.
+        # Fases "estáveis" (em que a troca é segura): IDLE, DONE, ABORTED.
+        if self._latest_phase not in ('IDLE', 'DONE', 'ABORTED'):
+            self._robot_mode_var.set(self._robot_mode)
+            self._set_status(
+                f'Palpação em curso (fase {self._latest_phase}) — '
+                'aguarde o término antes de trocar de modo.', WARN)
+            return
         self._robot_mode = mode
+        self._save_robot_config()
         if mode == 'MIRROR':
             self._set_status(
                 'Modo MIRROR — mova os sliders para controlar o braço real.',
                 WARN if not self._robot_connected else OK)
-            if self._robot_connected:
-                self._start_mirror_sync()
         else:
-            self._stop_real_pump()
-            if self._mirror_timer is not None:
-                self._mirror_timer.cancel()
-                self._mirror_timer = None
+            with self._mirror_timer_lock:
+                if self._mirror_timer is not None:
+                    self._mirror_timer.cancel()
+                    self._mirror_timer = None
+                self._mirror_last_target = None
             self._set_status(
                 'Modo SIM_ONLY — comandos só na simulação.', OK)
 
@@ -1623,13 +1930,10 @@ class PalpationGUI(Node):
 
         NÃO substitui o botão físico de E-STOP do controlador CR.
         """
-        # Parar o pump primeiro — caso contrário ele continuaria a
-        # mandar ServoJ no socket logo depois do StopRobot.
-        self._stop_real_pump()
         if self._real_driver is not None and self._robot_connected:
             try:
                 self._real_driver.stop()
-            except Exception as exc:
+            except CR10RealDriverError as exc:
                 self.get_logger().error(f'E-STOP real falhou: {exc}')
         if self._eci_enabled and self._cli_eci_grip is not None \
                 and self._eci_srv is not None:
@@ -1667,7 +1971,21 @@ class PalpationGUI(Node):
         except json.JSONDecodeError:
             return
         with self._lock:
-            self._latest_phase = str(data.get('phase', 'IDLE'))
+            new_phase = str(data.get('phase', 'IDLE'))
+            if new_phase != self._latest_phase:
+                self._phase_t_start = time.time()
+            self._latest_phase = new_phase
+            # Atualiza durações esperadas só quando o explorer publicar
+            # (mantém defaults razoáveis quando os campos faltam).
+            try:
+                self._latest_speed_mms = float(data.get(
+                    'speed_mms', self._latest_speed_mms))
+                self._latest_distance_mm = float(data.get(
+                    'distance_mm', self._latest_distance_mm))
+                self._latest_hold_seconds = float(data.get(
+                    'hold_seconds', self._latest_hold_seconds))
+            except (TypeError, ValueError):
+                pass
 
     # ──────────────────────────────────────────────────────────────────
     # Refresh do painel direito (Tk thread, 10 Hz)
@@ -1679,6 +1997,10 @@ class PalpationGUI(Node):
             tgt = float(self.force_var.get())
             fx, fy, fz = self._fx, self._fy, self._fz
             last_ts = self._last_wrench_ts
+            phase_t0 = self._phase_t_start
+            speed_mms = self._latest_speed_mms
+            distance_mm = self._latest_distance_mm
+            hold_s = self._latest_hold_seconds
 
         has_data = last_ts > 0.0
         if not has_data:
@@ -1715,6 +2037,24 @@ class PalpationGUI(Node):
         }.get(phase, TEXT)
         self.phase_lbl.config(text=phase, fg=phase_color)
 
+        # Cronômetro só por label (sem Progressbar). SLIDING/HOLD têm
+        # duração esperada; CONTACT/RETRACT mostram só tempo decorrido.
+        elapsed = max(0.0, time.time() - phase_t0)
+        expected: float | None = None
+        if phase == 'SLIDING' and speed_mms > 0.01:
+            expected = distance_mm / speed_mms
+        elif phase == 'HOLD' and hold_s > 0.01:
+            expected = hold_s
+        if phase in ('IDLE', 'DONE', 'ABORTED'):
+            self.timer_lbl.config(text='—', fg=TEXT_DIM)
+        elif expected is not None:
+            pct = min(100.0, 100.0 * elapsed / expected)
+            self.timer_lbl.config(
+                text=f'{elapsed:4.1f}s / {expected:4.1f}s ({pct:4.0f}%)',
+                fg=phase_color)
+        else:
+            self.timer_lbl.config(text=f'{elapsed:4.1f}s', fg=phase_color)
+
         self.root.after(100, self._refresh_status_panel)
 
     # ──────────────────────────────────────────────────────────────────
@@ -1731,9 +2071,12 @@ class PalpationGUI(Node):
             dist = self._clamp_var(self.dist_var, DIST_MIN, DIST_MAX)
             tgt = self._clamp_var(self.target_dist_var,
                                     TGT_DIST_CM_MIN, TGT_DIST_CM_MAX)
+            approach = self._clamp_var(self.approach_var,
+                                        APPROACH_MIN, APPROACH_MAX,
+                                        default=APPROACH_DEFAULT)
         finally:
             self._suppressing = False
-        if None in (speed, force, dist, tgt):
+        if None in (speed, force, dist, tgt, approach):
             self._set_status('Parâmetros inválidos.', DANGER)
             return
         kp = self._clamp_var(self.pid_kp_var, KP_MIN, KP_MAX,
@@ -1747,6 +2090,9 @@ class PalpationGUI(Node):
             'force_n':            float(force),
             'distance_mm':        float(dist),
             'target_distance_cm': float(tgt),
+            # Velocidade da descida CONTACT / subida RETRACT (mm/s).
+            # Explorer aplica como approach_v_max_mms; min = 20 % do max.
+            'approach_speed_mms': float(approach),
             # Direção XY (mundo) do sliding — string '+X' / '-X' / '+Y' / '-Y'.
             'slide_dir':          self.slide_dir_var.get(),
             # Ganhos do PID de força aplicados no HOLD pelo explorer.
@@ -1770,7 +2116,8 @@ class PalpationGUI(Node):
             f'/palpation/start — v={payload["speed_mms"]:.1f} mm/s, '
             f'F={payload["force_n"]:.2f} N, '
             f'slide={payload["distance_mm"]:.0f} mm {payload["slide_dir"]}, '
-            f'descida={payload["target_distance_cm"]:.1f} cm | '
+            f'descida={payload["target_distance_cm"]:.1f} cm '
+            f'@ {payload["approach_speed_mms"]:.0f} mm/s | '
             f'PID Kp={payload["kp"]:.4g} Ki={payload["ki"]:.4g} '
             f'Kd={payload["kd"]:.4g}.',
             OK)
@@ -1790,20 +2137,43 @@ class PalpationGUI(Node):
 
     def _on_close(self):
         self._stop_event.set()
-        self._stop_real_pump()
+        # Parar heartbeat e cancelar reconexão antes de fechar sockets.
+        self._stop_robot_heartbeat()
+        self._robot_reconnecting = False
+        # Idem para o watchdog da mão — se não desligar, o re-spawn vai
+        # ser tentado durante o shutdown.
+        self._hand_should_be_alive = False
+        self._stop_hand_watchdog()
         self._stop_force_bridge()
-        # Mata subprocesso da mão (se aberto).
-        if self._hand_proc is not None and self._hand_proc.poll() is None:
+        # Cancela callbacks Tk pendentes — disparar após `root.destroy()`
+        # gera TclError ou crash.
+        if self._eci_posn_after is not None:
             try:
-                os.killpg(os.getpgid(self._hand_proc.pid), signal.SIGTERM)
+                self.root.after_cancel(self._eci_posn_after)
             except Exception:
                 pass
+            self._eci_posn_after = None
+        with self._mirror_timer_lock:
+            if self._mirror_timer is not None:
+                self._mirror_timer.cancel()
+                self._mirror_timer = None
+        # Apaga o LED da mão antes de matar o subprocesso (mesmo caminho
+        # de _disconnect_real_hand). Sem isso o driver TCP cai com a mão
+        # ainda energizada e o LED azul permanece aceso.
+        if self._eci_enabled and self._hand_powered:
+            self._send_hand_poweroff_blocking(timeout_s=1.0)
+            self._hand_powered = False
+        self._terminate_hand_subprocess()
         # Fecha sockets do CR10.
         if self._real_driver is not None:
-            try: self._real_driver.stop()
-            except Exception: pass
-            try: self._real_driver.close()
-            except Exception: pass
+            try:
+                self._real_driver.stop()
+            except CR10RealDriverError:
+                pass
+            try:
+                self._real_driver.close()
+            except OSError:
+                pass
         try:
             self.root.destroy()
         except Exception:

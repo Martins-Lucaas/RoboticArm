@@ -598,6 +598,66 @@ GUI com sliders + botões `+`/`−` por junta e:
 
 ---
 
+## 🩺 `touch_pack` — célula de palpação tátil (CR10 + COVVI Index)
+
+Pacote independente do `grasp_ml_pack`. Reproduz o protocolo de **Gupta et al. 2021** de palpação por força/deslizamento, com o dedo Index estendido tocando uma superfície, controle de força no HOLD e arrasto Cartesiano no SLIDING. Funciona em SIM_ONLY ou MIRROR (sim + braço real CR10 espelhando os comandos via TCP/IP).
+
+> **Pré-requisito**: este pacote também depende do `eci_ros-main` (passo 2️⃣ da instalação) para falar com a mão COVVI real. Se você ainda não clonou, faça agora — caso contrário a GUI sobe sem o canal ECI e os botões de power/grip ficam inativos.
+
+### Subir a célula completa
+
+```bash
+ros2 launch touch_pack tactile_cell.launch.py
+```
+
+Sobe Gazebo + URDF combinado (CR10 + COVVI + alias `tcp_link` na ponta do Index), controllers ros2_control, `tactile_explorer` (FSM da palpação) e `palpation_gui` (Tkinter). O novo nó `palpation_logger` também sobe automaticamente — cada palpação é gravada em `~/touch_pack_runs/`.
+
+### Argumentos do launch
+
+```bash
+# Headless (sem Tkinter)
+ros2 launch touch_pack tactile_cell.launch.py no_gui:=true
+```
+
+### GUI da palpação
+
+Duas abas:
+
+| Aba **Palpação** | Aba **Controle Manual** |
+|---|---|
+| Sliders de Velocidade (mm/s), Força Normal (N), Distância de Sliding (mm), Distância dedo→alvo (cm), direção XY do arrasto | 6 sliders do braço CR10 + 6 da mão COVVI + presets Abrir/Apontar/Fechar |
+| Calibração PID (Kp/Ki/Kd) do HOLD | Duração da trajetória (s) e SpeedFactor (%) do braço real |
+| Feedback FT em tempo real + barra de progresso/cronômetro da fase atual | Botões Home e 💾 Salvar Home |
+
+Header: campos de IP da mão e do braço CR10, botões Conectar/Desconectar, dropdown SIM_ONLY ↔ MIRROR, ECI ON/OFF, PWR ON/OFF, E-STOP.
+
+### Funcionalidades recentes (v0.3.x)
+
+- **Persistência de configuração** — IPs da mão (default `192.168.5.103`) e do braço (`192.168.5.2`) + último modo são gravados em `~/.config/touch_pack/robot.json` e recarregados no próximo boot. A home customizada do braço continua em `~/.config/touch_pack/home_pose.json`.
+- **Mirror robusto via tópico** — A subscrição em `/cr10_group_controller/joint_trajectory` captura o **último ponto** de cada trajetória publicada (sliders ou explorer) e envia `MovJ` ao braço real com debounce de 80 ms e dedup por tolerância de 0.5°. Substitui o antigo `sync_loop` que disputava com `/joint_states` (sim lagado) e puxava o braço real de volta pra HOME.
+- **Desconexão limpa da mão** — `SetHandPowerOff` é chamado **síncrono com timeout** antes do SIGTERM no `covvi_hand_driver`. Resultado: o LED azul da mão apaga ao desconectar ou fechar a GUI, deixando-a pronta para a próxima conexão.
+- **Data logger** — Nó `palpation_logger` assina `/palpation/start` (TRANSIENT_LOCAL), `/palpation/status` e `/ft_sensor/wrench` (BEST_EFFORT). Cada run gera `~/touch_pack_runs/<timestamp>__samples.csv` (`t_rel_s, phase, fx, fy, fz, tx, ty, tz`) + `__params.json` com os parâmetros do start. Fecha em `DONE`/`ABORTED` ou após 5 min sem wrench (timeout watchdog). Flush a cada 50 amostras — não perde dados se o nó morrer.
+- **QoS explícito** — `/palpation/start` agora é RELIABLE + TRANSIENT_LOCAL (último start sobrevive a restart do explorer); `/ft_sensor/wrench` é BEST_EFFORT depth=1 (baixa latência, só interessa o mais recente).
+- **Troca de modo protegida** — SIM_ONLY ↔ MIRROR é bloqueada durante conexão em andamento E durante palpação ativa (fases CONTACT/HOLD/SLIDING/RETRACT). Dropdown reverte sozinho com warning.
+- **Cronômetro + progress bar** — Aba Palpação mostra `elapsed / expected` e barra de progresso: SLIDING usa `distance_mm / speed_mms`, HOLD usa `hold_seconds` (publicado pelo explorer no status). CONTACT/RETRACT mostram só o tempo decorrido com barra animada.
+- **GUI responsiva** — `minsize` reduzido para 720×460. As duas abas estão envolvidas em `Canvas + Scrollbar` — rola com a roda do mouse quando o conteúdo é maior que a janela.
+- **Exceções tipadas** — Catch genérico `except Exception` foi substituído por `CR10RealDriverError` (driver TCP), `OSError`/`ProcessLookupError` (sinais), `subprocess.TimeoutExpired` (wait) nos caminhos críticos. Falhas reais agora aparecem no log em vez de serem silenciadas.
+
+### Disparar palpação por terminal
+
+```bash
+ros2 topic pub --once /palpation/start std_msgs/msg/String \
+  "data: '{\"speed_mms\": 10.0, \"force_n\": 1.0, \"distance_mm\": 90.0, \"target_distance_cm\": 5.0, \"slide_dir\": \"+Y\", \"kp\": 0.001, \"ki\": 0.0, \"kd\": 0.0}'"
+```
+
+Status FSM (`IDLE`/`CONTACT`/`HOLD`/`SLIDING`/`RETRACT`/`DONE`/`ABORTED`) em `/palpation/status`.
+
+### Conectar à mão COVVI nesta célula
+
+Mesmo fluxo do `grasp_ml_pack` (passo 2 do tutorial mais abaixo): o subprocesso `covvi_hand_driver server <IP>` é iniciado **pela própria GUI** quando você clica em "Conectar" no header da mão. O ECI é ativado automaticamente 2.2 s depois, e o power-on dispara mais 800 ms à frente. Persiste o IP usado no `robot.json`.
+
+---
+
 ## 📚 Catálogo completo de comandos
 
 ### 🧠 `grasp_ml_pack` — pacote principal
@@ -683,6 +743,21 @@ ros2 run covvi_hand_driver server <IP_DA_MÃO> \
 # Exemplo concreto:
 ros2 run covvi_hand_driver server 192.168.1.123 \
     --ros-args --remap __ns:=/covvi --remap __name:=hand
+```
+
+### 🩺 `touch_pack` — palpação tátil
+
+```bash
+# Célula completa (Gazebo + URDF combinado + controllers + explorer + GUI + logger)
+ros2 launch touch_pack tactile_cell.launch.py
+
+# Headless (sem Tkinter, mantém explorer + logger)
+ros2 launch touch_pack tactile_cell.launch.py no_gui:=true
+
+# Componentes isolados
+ros2 run touch_pack palpation_gui        # apenas a GUI Tkinter (precisa do explorer rodando)
+ros2 run touch_pack tactile_explorer     # FSM da palpação (CONTACT/HOLD/SLIDING/RETRACT)
+ros2 run touch_pack palpation_logger     # grava CSV+JSON em ~/touch_pack_runs/
 ```
 
 ---

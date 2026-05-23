@@ -31,6 +31,7 @@ setup(
         'console_scripts': [
             'palpation_gui     = touch_pack.palpation_gui:main',
             'tactile_explorer  = touch_pack.tactile_explorer:main',
+            'palpation_logger  = touch_pack.palpation_logger:main',
         ],
     },
 )
