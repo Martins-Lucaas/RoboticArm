@@ -168,24 +168,35 @@ def fk_partial(q: np.ndarray, n_links: int) -> np.ndarray:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Jacobiano (diferenças finitas)
+# Jacobiano analítico (geométrico)
 # ──────────────────────────────────────────────────────────────────────
 
-def jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """Jacobiano geométrico 6×6 via diferenças finitas."""
+def jacobian(q: np.ndarray) -> np.ndarray:
+    """Jacobiano geométrico analítico 6×6.
+
+    Para cada junta revoluta Rz_i, a coluna i é:
+        J_v[:,i] = z_i × (p_e − p_i)   (contribuição linear)
+        J_w[:,i] = z_i                   (contribuição angular)
+
+    onde z_i e p_i são, respectivamente, o eixo z e a origem do frame
+    da junta i expressos no frame base — obtidos diretamente das matrizes
+    de transformação acumuladas, sem perturbações numéricas.
+    """
+    T = np.eye(4)
+    z_axes  = np.empty((6, 3))
+    origins = np.empty((6, 3))
+    for i, ((xyz, rpy), qi) in enumerate(zip(_URDF_ORIGINS, q)):
+        T = T @ _make_T(xyz, rpy)   # frame da junta ANTES da rotação Rz
+        z_axes[i]  = T[:3, 2]       # eixo de rotação no frame base
+        origins[i] = T[:3, 3]       # origem da junta no frame base
+        T = T @ _Rz4(float(qi))
+
+    p_e = (T @ T_HAND_ATTACH)[:3, 3]
+
     J = np.zeros((6, 6))
-    T0 = forward_kinematics(q)
-    p0, R0 = T0[:3, 3].copy(), T0[:3, :3].copy()
-
     for i in range(6):
-        dq = q.copy(); dq[i] += eps
-        T1 = forward_kinematics(dq)
-        J[:3, i] = (T1[:3, 3] - p0) / eps
-        dR = (T1[:3, :3] - R0) / eps
-        J[3, i] = (dR[2, 1] - dR[1, 2]) / 2.0
-        J[4, i] = (dR[0, 2] - dR[2, 0]) / 2.0
-        J[5, i] = (dR[1, 0] - dR[0, 1]) / 2.0
-
+        J[:3, i] = np.cross(z_axes[i], p_e - origins[i])
+        J[3:, i] = z_axes[i]
     return J
 
 

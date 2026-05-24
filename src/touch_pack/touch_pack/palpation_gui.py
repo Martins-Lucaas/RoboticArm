@@ -43,6 +43,7 @@ from rclpy.qos import (
 
 from std_msgs.msg import String
 from geometry_msgs.msg import WrenchStamped
+from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
@@ -121,11 +122,10 @@ TGT_DIST_CM_MIN, TGT_DIST_CM_MAX, TGT_DIST_CM_DEFAULT = 0.5, 60.0, 5.0  # cm
 # explorer usa este valor como max; min é derivado como 20 % do max.
 APPROACH_MIN, APPROACH_MAX, APPROACH_DEFAULT = 5.0, 100.0, 50.0  # mm/s
 
-# Tempo (s) que o controller deve levar para alcançar o setpoint a partir
-# da posição atual — controla a "rampa" das trajetórias publicadas pela
-# aba Controle Manual (Home, sliders, presets da mão).
-MOVE_TIME_MIN, MOVE_TIME_MAX, MOVE_TIME_DEFAULT = 0.1, 30.0, 1.0  # s
-SPEED_FACTOR_MIN, SPEED_FACTOR_MAX, SPEED_FACTOR_DEFAULT = 1, 100, 50  # %
+SPEED_FACTOR_MIN, SPEED_FACTOR_MAX, SPEED_FACTOR_DEFAULT = 1, 100, 10  # %
+# At SPEED_FACTOR_DEFAULT (10 %), Gazebo trajectory duration = 3.0 s.
+# Scales inversely: 100 % → 0.3 s, 1 % → 30 s.
+_VEL_BASE_S = 3.0   # duration at 10 %
 
 # Ganhos PID padrão do controle de força durante o HOLD. v_cmd (m/s) sai
 # do PID a partir do erro em N; sintonize na própria GUI durante a
@@ -234,6 +234,8 @@ class PalpationGUI(Node):
         # ─── Comunicação ROS (palpation/wrench) ───────────────────────
         self._start_pub = self.create_publisher(
             String, '/palpation/start', QOS_COMMAND)
+        self._stop_pub = self.create_publisher(
+            String, '/palpation/stop', 10)
         self.create_subscription(
             String, '/palpation/status', self._cb_status, 10)
         self.create_subscription(
@@ -320,13 +322,24 @@ class PalpationGUI(Node):
         self._mirror_last_target: np.ndarray | None = None
         self._force_bridge_thread: threading.Thread | None = None
         self._force_bridge_stop = threading.Event()
+        # Poll loop a 33 Hz: lê /joint_states (posição simulada) e espelha
+        # para o braço real via MovJ. Captura TANTO sliders manuais QUANTO
+        # trajetórias via action server (tactile_explorer), ao contrário de
+        # _cb_arm_trajectory que só vê publicações diretas no tópico.
+        # NOTA: a thread é iniciada APÓS _stop_event ser criado (fim do __init__).
+        self._latest_joint_rad: list[float] | None = None
+        self._mirror_poll_thread: threading.Thread | None = None
         # Subscrição na trajetória comandada (não na pose medida do sim):
         # captura sliders manuais e palpação autônoma com a mesma latência,
         # sem competir com /joint_states (que lagga atrás do comando).
         self.create_subscription(
             JointTrajectory,
             '/cr10_group_controller/joint_trajectory',
-            self._cb_arm_trajectory, 10)
+            self._cb_arm_trajectory, 5)  # depth=5 igual ao publisher
+        # /joint_states: posição real (simulada) do braço — usado pelo
+        # mirror poll loop para capturar palpação via action server.
+        self.create_subscription(
+            JointState, '/joint_states', self._cb_joint_states, 5)
 
         # ─── Home pose customizável ──────────────────────────────────
         # Default (ARM_HOME_DEG) é sobrescrito se ~/.config/touch_pack/
@@ -351,6 +364,10 @@ class PalpationGUI(Node):
         self._spin_thread = threading.Thread(
             target=self._spin_ros, daemon=True)
         self._spin_thread.start()
+        # Poll loop iniciado AQUI para garantir que _stop_event já existe.
+        self._mirror_poll_thread = threading.Thread(
+            target=self._mirror_poll_loop, daemon=True, name='mirror-poll')
+        self._mirror_poll_thread.start()
 
         self.root.after(100, self._refresh_status_panel)
 
@@ -626,6 +643,13 @@ class PalpationGUI(Node):
         # independente do tamanho da janela; o fb_card preenche o restante.
         btn_wrap = tk.Frame(col_right, bg=BG)
         btn_wrap.pack(fill='x', side='bottom', pady=(14, 0))
+        self.stop_palp_btn = tk.Button(
+            btn_wrap, text='⏹  Parar Palpação',
+            command=self._on_stop_palpation, bg=WARN, fg='white',
+            activebackground=_shade(WARN, -0.1), activeforeground='white',
+            font=FONT_HEAD, relief='flat', bd=0, padx=18, pady=10,
+            cursor='hand2')
+        self.stop_palp_btn.pack(fill='x', pady=(0, 6))
         self.start_btn = tk.Button(
             btn_wrap, text='▶  Iniciar Palpação',
             command=self._on_start, bg=PRIMARY, fg='white',
@@ -699,7 +723,7 @@ class PalpationGUI(Node):
         body = tk.Frame(root, bg=BG)
         body.pack(fill='both', expand=True)
 
-        # ── Top: controle de velocidade (Duração s + SpeedFactor %) ─────
+        # ── Top: controle de velocidade (SpeedFactor %) ─────────────────
         speed_card = tk.Frame(body, bg=PANEL,
                                highlightthickness=1,
                                highlightbackground=BORDER,
@@ -712,36 +736,12 @@ class PalpationGUI(Node):
         speed_inner = tk.Frame(speed_card, bg=PANEL)
         speed_inner.pack(fill='x', padx=14, pady=10)
 
-        # Linha 1 — Duracao (Gazebo trajectory controller)
-        self._use_duration_var = tk.IntVar(value=1)
-        dur_chk_row = tk.Frame(speed_inner, bg=PANEL)
-        dur_chk_row.pack(fill='x')
-        tk.Checkbutton(dur_chk_row,
-                       text='Duracao (s) — trajetoria Gazebo',
-                       variable=self._use_duration_var,
-                       bg=PANEL, fg=TEXT, font=FONT_LBL,
-                       anchor='w'
-                       ).pack(side='left')
-        self.move_time_var = tk.DoubleVar(value=MOVE_TIME_DEFAULT)
-        self._param_row(speed_inner, label='Duracao', unit='s',
-                        var=self.move_time_var,
-                        vmin=MOVE_TIME_MIN, vmax=MOVE_TIME_MAX, step=0.5)
-
-        # Linha 2 — SpeedFactor % (braco real via TCP)
-        self._use_speedfactor_var = tk.IntVar(value=0)
-        sf_chk_row = tk.Frame(speed_inner, bg=PANEL)
-        sf_chk_row.pack(fill='x', pady=(8, 0))
-        tk.Checkbutton(sf_chk_row,
-                       text='Velocidade bruta (%) — braco real',
-                       variable=self._use_speedfactor_var,
-                       bg=PANEL, fg=TEXT, font=FONT_LBL,
-                       anchor='w',
-                       command=self._apply_speed_factor_if_active
-                       ).pack(side='left')
         self.speed_factor_var = tk.DoubleVar(value=SPEED_FACTOR_DEFAULT)
-        self._param_row(speed_inner, label='SpeedFactor', unit='%',
+        self._param_row(speed_inner, label='Velocidade', unit='%',
                         var=self.speed_factor_var,
-                        vmin=SPEED_FACTOR_MIN, vmax=SPEED_FACTOR_MAX, step=1)
+                        vmin=SPEED_FACTOR_MIN, vmax=SPEED_FACTOR_MAX, step=1,
+                        hint='10 % recomendado — aplica SpeedFactor ao braço '
+                             'real e escala a duração da trajetória no Gazebo')
         self.speed_factor_var.trace_add(
             'write', lambda *_: self._apply_speed_factor_if_active())
 
@@ -781,6 +781,17 @@ class PalpationGUI(Node):
                    font=FONT_LBL, relief='flat', bd=0, padx=14, pady=8,
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True, padx=(4, 0))
+
+        btns_arm2 = tk.Frame(col_arm, bg=BG)
+        btns_arm2.pack(fill='x', pady=(4, 0))
+        tk.Button(btns_arm2, text='📍  Capturar do Robô',
+                   command=self._capture_arm_from_robot,
+                   bg=_shade(PRIMARY, 0.25), fg=PRIMARY,
+                   activebackground=_shade(PRIMARY, 0.15),
+                   activeforeground=PRIMARY,
+                   font=FONT_LBL, relief='flat', bd=0, padx=14, pady=6,
+                   cursor='hand2'
+                   ).pack(side='left', fill='x', expand=True)
 
         # ── MÃO COVVI ─────────────────────────────────────────────────
         card_hand = self._card(col_hand, 'Mão COVVI — juntas primárias (graus)')
@@ -864,21 +875,18 @@ class PalpationGUI(Node):
         return v_clamped
 
     def _move_duration_seconds(self) -> float:
-        """Retorna duração em s para a trajetória do Gazebo.
+        """Duração da trajetória Gazebo derivada do slider de velocidade.
 
-        Se 'Duração' estiver ativa, usa o slider de segundos.
-        Se desativada (só SpeedFactor), usa 0.5 s como mínimo seguro."""
-        if self._use_duration_var.get():
-            dur = self._clamp_var(self.move_time_var,
-                                   MOVE_TIME_MIN, MOVE_TIME_MAX,
-                                   default=MOVE_TIME_DEFAULT)
-            return float(dur if dur is not None else MOVE_TIME_DEFAULT)
-        return 0.5
+        Inversamente proporcional à velocidade: 10 % → 3.0 s, 100 % → 0.3 s."""
+        try:
+            speed_pct = float(self.speed_factor_var.get())
+            speed_pct = max(SPEED_FACTOR_MIN, min(SPEED_FACTOR_MAX, speed_pct))
+        except (ValueError, tk.TclError):
+            speed_pct = SPEED_FACTOR_DEFAULT
+        return max(0.3, _VEL_BASE_S * (10.0 / speed_pct))
 
     def _apply_speed_factor_if_active(self) -> None:
-        """Envia SpeedFactor(%) ao braço real se o checkbox estiver ativo."""
-        if not self._use_speedfactor_var.get():
-            return
+        """Envia SpeedFactor(%) ao braço real sempre que o slider mudar."""
         if not self._robot_connected or self._real_driver is None:
             return
         try:
@@ -889,9 +897,10 @@ class PalpationGUI(Node):
         try:
             with self._real_lock:
                 self._real_driver._send_dash(f'SpeedFactor({v})')
-            self.get_logger().debug('SpeedFactor(%d) aplicado', v)
+            self.get_logger().warning(
+                f'[SPEED] SpeedFactor({v})%% enviado ao CR10 real')
         except CR10RealDriverError as exc:
-            self.get_logger().warning('SpeedFactor falhou: %s', exc)
+            self.get_logger().warning(f'SpeedFactor falhou: {exc}')
 
     @staticmethod
     def _duration_msg(seconds: float) -> Duration:
@@ -935,15 +944,9 @@ class PalpationGUI(Node):
         Enquanto chegam publicações em rajada (slider arrastando, streaming
         do explorer), o timer é cancelado e reagendado — só dispara 80 ms
         após a última publicação, evitando flood de MovJ.
-
-        Dedup por tolerância (0.5°): trajetórias repetidas com o mesmo
-        alvo não disparam MovJ redundante.
         """
         q_new = np.asarray(positions_rad, dtype=np.float64)
         with self._mirror_timer_lock:
-            last = self._mirror_last_target
-            if last is not None and np.max(np.abs(q_new - last)) < 0.0087:
-                return  # já enviado/agendado mesmo alvo — pular
             if self._mirror_timer is not None:
                 self._mirror_timer.cancel()
             self._mirror_timer = threading.Timer(
@@ -952,45 +955,122 @@ class PalpationGUI(Node):
             self._mirror_timer.start()
 
     def _mirror_movj_send(self, positions_rad: list[float]) -> None:
-        """Converte URDF→DOBOT e envia MovJ(joint={...}) ao braço real.
+        """Converte URDF→DOBOT, define SpeedFactor e envia MovJ ao braço real.
 
-        Toda checagem de estado do driver é feita DENTRO do `_real_lock`
-        para evitar TOCTOU com `_disconnect_real_robot` em outra thread.
+        SpeedFactor é sempre enviado antes do MovJ para garantir que a
+        velocidade está correta — igual ao padrão da DobotAPI do fabricante.
         """
         try:
             q_dobot_rad = _urdf_to_dobot(
                 np.array(positions_rad, dtype=np.float64))
             q_dobot_deg = [math.degrees(float(v)) for v in q_dobot_rad]
+            try:
+                speed_pct = int(max(SPEED_FACTOR_MIN,
+                                    min(SPEED_FACTOR_MAX,
+                                        self.speed_factor_var.get())))
+            except (ValueError, tk.TclError):
+                speed_pct = SPEED_FACTOR_DEFAULT
             with self._real_lock:
                 drv = self._real_driver
                 if (drv is None or not self._robot_connected
                         or self._robot_mode != 'MIRROR'):
                     return
+                drv._send_dash(f'SpeedFactor({speed_pct})')
                 drv.mov_j_joint_deg(q_dobot_deg)
             self._mirror_last_target = np.asarray(
                 positions_rad, dtype=np.float64)
-            self.get_logger().debug('Mirror MovJ → %s',
-                                    [f'{v:.2f}' for v in q_dobot_deg])
         except CR10RealDriverError as exc:
-            self.get_logger().warning('Mirror MovJ falhou: %s', exc)
+            self.get_logger().warning(f'Mirror MovJ falhou: {exc}')
 
     # ── Subscrição no tópico de trajetória comandada ─────────────────
     def _cb_arm_trajectory(self, msg: JointTrajectory) -> None:
-        """Captura toda trajetória publicada em /cr10_group_controller/joint_trajectory
-        (sliders manuais + palpação autônoma) e encaminha o ÚLTIMO ponto
-        como MovJ para o braço real, com debounce de 80 ms."""
-        if (self._robot_mode != 'MIRROR' or not self._robot_connected
-                or self._real_driver is None or _urdf_to_dobot is None):
+        """Captura trajetórias publicadas em /cr10_group_controller/joint_trajectory.
+
+        Em MIRROR + IDLE (jog manual): dispara MovJ debounced (SpeedFactor já
+        incluído em _mirror_movj_send). Durante palpação ativa o poll loop
+        via /joint_states + ServoJ cobre o mirroring.
+        """
+        if self._robot_mode != 'MIRROR':
             return
+        with self._lock:
+            phase = self._latest_phase
+        if phase not in ('IDLE', 'DONE', 'ABORTED'):
+            return  # palpação ativa → ServoJ poll loop assume
         if not msg.points:
             return
-        idx = {n: i for i, n in enumerate(msg.joint_names)}
-        try:
-            positions_rad = [float(msg.points[-1].positions[idx[j]])
-                              for j in ARM_JOINTS]
-        except (KeyError, IndexError):
+        positions_rad = list(msg.points[-1].positions)
+        if len(positions_rad) < 6:
             return
-        self._mirror_movj_debounced(positions_rad)
+        self._mirror_movj_debounced(positions_rad[:6])
+
+    def _cb_joint_states(self, msg: JointState) -> None:
+        """Armazena posições URDF das juntas do braço — alimenta o mirror poll."""
+        pos = dict(zip(msg.name, msg.position))
+        try:
+            self._latest_joint_rad = [float(pos[j]) for j in ARM_JOINTS]
+        except KeyError:
+            pass  # msg parcial (mão ou outra cadeia) — ignorar
+
+    def _mirror_poll_loop(self) -> None:
+        """Envia ServoJ ao braço real a 33 Hz APENAS durante palpação ativa.
+
+        Durante jog manual (fase IDLE/DONE/ABORTED) o mirroring é feito por
+        _cb_arm_trajectory → _mirror_movj_debounced com SpeedFactor + MovJ,
+        idêntico ao padrão da DobotAPI do fabricante.
+
+        ServoJ é usado apenas durante palpação contínua (CONTACT/HOLD/
+        SLIDING/RETRACT) onde a latência baixa supera a vantagem do SpeedFactor.
+        """
+        _servoj_ready = False
+        _diag_count = 0
+        while not self._stop_event.is_set():
+            self._stop_event.wait(0.030)   # 33 Hz
+            if (self._robot_mode != 'MIRROR' or not self._robot_connected
+                    or self._real_driver is None or _urdf_to_dobot is None):
+                _servoj_ready = False
+                continue
+            # Jog manual: MovJ via _cb_arm_trajectory cuida do espelhamento.
+            with self._lock:
+                phase = self._latest_phase
+            if phase in ('IDLE', 'DONE', 'ABORTED'):
+                _servoj_ready = False
+                continue
+            positions = self._latest_joint_rad
+            if positions is None:
+                continue
+            q_new = np.asarray(positions, dtype=np.float64)
+            last = self._mirror_last_target
+            if last is not None and np.max(np.abs(q_new - last)) < 0.0001:
+                continue   # braço estacionário — sem ServoJ redundante
+            try:
+                with self._real_lock:
+                    drv = self._real_driver
+                    if drv is None or not self._robot_connected:
+                        continue
+                    try:
+                        drv.servo_j_urdf(positions)
+                        _servoj_ready = True
+                    except CR10RealDriverError:
+                        drv.prepare_servoj()
+                        drv.servo_j_urdf(positions)
+                        _servoj_ready = True
+            except CR10RealDriverError as exc:
+                self.get_logger().warning(f'ServoJ falhou: {exc}')
+                _servoj_ready = False
+                continue
+            self._mirror_last_target = q_new
+            _diag_count += 1
+            if _diag_count >= 90:
+                _diag_count = 0
+                try:
+                    with self._real_lock:
+                        drv = self._real_driver
+                        if drv is not None:
+                            ang = drv.get_angle_deg()
+                            self.get_logger().warning(
+                                f'[MIRROR-POS] GetAngle real: {ang}')
+                except Exception:
+                    pass
 
     # ──────────────────────────────────────────────────────────────────
     # Bridge real CR10 → /ft_sensor/wrench
@@ -1175,6 +1255,56 @@ class PalpationGUI(Node):
         summary = ' / '.join(f'{j[-1]}={new_home[j]:+.0f}°'
                               for j in ARM_JOINTS)
         self._set_status(f'Home salva ({summary}).', OK)
+
+    def _capture_arm_from_robot(self) -> None:
+        """Lê a posição atual do robô real, atualiza os sliders e salva
+        como Home. O Gazebo iniciará nessa configuração na próxima vez
+        que o launch file for executado (lê o mesmo home_pose.json)."""
+        if not self._robot_connected or self._real_driver is None:
+            self._set_status(
+                'Conecte o robô CR10 antes de capturar a posição.', WARN)
+            return
+        if not _REAL_DRIVER_OK or _urdf_to_dobot is None:
+            self._set_status('Driver real não disponível.', DANGER)
+            return
+        try:
+            from .kinematics import dobot_to_urdf as _dobot_to_urdf
+        except Exception:
+            self._set_status('kinematics não disponível.', DANGER)
+            return
+        try:
+            with self._real_lock:
+                q_dobot_rad = self._real_driver.read_joints_rad()
+        except CR10RealDriverError as exc:
+            self._set_status(f'Falha ao ler juntas: {exc}', DANGER)
+            return
+        q_urdf_rad = _dobot_to_urdf(q_dobot_rad)
+        new_home = {
+            j: float(_math.degrees(q_urdf_rad[i]))
+            for i, j in enumerate(ARM_JOINTS)
+        }
+        # Atualiza sliders (suprime o callback de publish).
+        self._suppressing = True
+        try:
+            for j in ARM_JOINTS:
+                lo, hi = ARM_LIMITS_DEG[j]
+                clamped = max(lo, min(hi, new_home[j]))
+                self.arm_sliders[j].set(clamped)
+        finally:
+            self._suppressing = False
+        # Persiste em home_pose.json.
+        try:
+            os.makedirs(os.path.dirname(HOME_POSE_FILE), exist_ok=True)
+            with open(HOME_POSE_FILE, 'w') as fh:
+                json.dump(new_home, fh, indent=2, sort_keys=True)
+        except Exception as exc:
+            self._set_status(f'Falha ao salvar home capturada: {exc}', DANGER)
+            return
+        self._arm_home_deg = new_home
+        summary = ' / '.join(f'{j[-1]}={new_home[j]:+.0f}°' for j in ARM_JOINTS)
+        self._set_status(
+            f'Home capturada do robô real e salva ({summary}). '
+            'Reinicie o Gazebo para aplicar.', OK)
 
     # ── Persistência de IPs e modo (~/.config/touch_pack/robot.json) ──
     def _load_robot_config(self) -> None:
@@ -1369,10 +1499,18 @@ class PalpationGUI(Node):
                '--ros-args',
                '--remap', f'__ns:={_ns}',
                '--remap', f'__name:={_name}']
+        log.warning('[DBG] _connect_real_hand: cmd=%s', cmd)
         try:
             self._hand_proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+                cmd, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, preexec_fn=os.setsid)
+            # Thread daemon lê stdout+stderr do driver e redireciona para o log
+            def _pipe_hand_log(proc=self._hand_proc):
+                for raw in proc.stdout:
+                    line = raw.decode('utf-8', errors='replace').rstrip()
+                    log.warning('[HAND-PROC] %s', line)
+            threading.Thread(target=_pipe_hand_log, daemon=True,
+                             name='hand-proc-log').start()
         except FileNotFoundError:
             self._set_status('ros2 não está no PATH (source o workspace).',
                               DANGER)
@@ -1402,31 +1540,46 @@ class PalpationGUI(Node):
             f'Driver da mão ativo ({self._eci_prefix}) — power ON em breve…', OK)
 
     def _disconnect_real_hand(self) -> None:
-        """Desconexão limpa: PowerOff síncrono → SIGTERM → wait → SIGKILL.
+        """Inicia desconexão limpa da mão COVVI.
 
-        A chamada `call_async` retorna antes do request realmente chegar ao
-        hardware; se matarmos o subprocesso imediatamente, o ECI fecha o
-        socket e a mão fica energizada (LED azul aceso). Esperamos o future
-        completar (com timeout) antes do SIGTERM, e ainda damos `proc.wait`
-        para o driver fechar o socket TCP da mão de forma ordeira.
+        A UI é atualizada imediatamente; PowerOff + SIGTERM/wait correm em
+        thread daemon para não congelar o Tkinter (wait do subprocesso pode
+        levar até ~3 s quando o driver está ocupado).
         """
-        # 0) Intenção do usuário é encerrar — desliga watchdog para não
-        #    tentar re-spawn após o SIGTERM.
         self._hand_should_be_alive = False
         self._stop_hand_watchdog()
-        # 1) PowerOff síncrono com timeout (LED azul vai apagar antes da kill).
-        if self._eci_enabled:
-            self._send_hand_poweroff_blocking(timeout_s=1.0)
-            self._hand_powered = False
-            self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
-            self._eci_enabled = False
-            self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
 
-        # 2) SIGTERM + wait, com fallback SIGKILL se o driver não sair.
+        eci_was_enabled = self._eci_enabled
+        self._eci_enabled = False
+        self._hand_powered = False
+        self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
+        self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
+        self._hand_connect_btn.set_state('⏳', 'Desconectando…', BTN_NEUTRAL, TEXT)
+        self._set_status('Desconectando mão COVVI…', TEXT_DIM)
+
+        threading.Thread(
+            target=self._disconnect_hand_worker,
+            args=(eci_was_enabled,), daemon=True).start()
+
+    def _disconnect_hand_worker(self, eci_was_enabled: bool) -> None:
+        """Thread daemon: PowerOff síncrono → SIGINT/SIGTERM → wait → pausa — não bloqueia a GUI."""
+        if eci_was_enabled:
+            self._send_hand_poweroff_blocking(timeout_s=3.0)
         self._terminate_hand_subprocess()
+        # A caixa ECI precisa de ~15 s para liberar o estado TCP (TIME_WAIT)
+        # após a conexão ser quebrada — conectar antes causa
+        # ExistingConnectionError. Exibimos contagem regressiva na status bar.
+        ECI_RESET_S = 15
+        for remaining in range(ECI_RESET_S, 0, -1):
+            self.root.after(0, lambda r=remaining: self._set_status(
+                f'Aguardando reset da caixa ECI — ainda {r} s…', TEXT_DIM))
+            time.sleep(1.0)
+        self.root.after(0, self._finish_hand_disconnect)
+
+    def _finish_hand_disconnect(self) -> None:
+        """Callback Tkinter: atualiza botão após o worker de desconexão concluir."""
         self._hand_connect_btn.set_state('⚡', 'Conectar', PRIMARY, 'white')
-        self._set_status(
-            'Driver da mão desconectado — LED apagado.', TEXT_DIM)
+        self._set_status('Driver da mão desconectado — LED apagado.', TEXT_DIM)
 
     # ── Watchdog + re-spawn automático (mão COVVI) ───────────────────
     def _start_hand_watchdog(self) -> None:
@@ -1477,11 +1630,17 @@ class PalpationGUI(Node):
         self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
         self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
         self._hand_connect_btn.set_state('⏳', 'Reconectando…', WARN, 'white')
+        # Aguarda 15 s antes de re-spawnar: a caixa ECI precisa desse tempo
+        # para liberar o estado TCP após a conexão quebrada (ExistingConnectionError).
         self._set_status(
-            'Driver da mão caiu — re-spawn automático em curso…', WARN)
-        # `_connect_real_hand` re-spawna o subprocesso e re-ativa ECI+power
-        # via `_post_connect_real_hand`. Como `_hand_proc=None` aqui, o
-        # caminho de desconexão (toggle) é evitado.
+            'Driver da mão caiu — re-spawn automático em 15 s…', WARN)
+        self.root.after(15000, self._on_hand_respawn)
+
+    def _on_hand_respawn(self) -> None:
+        """Callback Tk: re-spawn da mão após o delay de reset da caixa ECI."""
+        if not self._hand_should_be_alive:
+            return
+        self._set_status('Re-spawn automático do driver da mão…', WARN)
         self._connect_real_hand()
 
     def _send_hand_poweroff_blocking(self, timeout_s: float) -> None:
@@ -1512,30 +1671,42 @@ class PalpationGUI(Node):
             'driver será terminado mesmo assim.')
 
     def _terminate_hand_subprocess(self) -> None:
-        """Envia SIGTERM ao grupo de processos do driver e espera até 2 s;
-        se ainda estiver vivo, força SIGKILL. Idempotente."""
+        """SIGINT → espera 2 s (shutdown ROS2 gracioso, fecha sockets ECI);
+        se ainda vivo, SIGTERM → espera 2 s; por último SIGKILL. Idempotente."""
         proc = self._hand_proc
         self._hand_proc = None
         if proc is None or proc.poll() is not None:
             return
+        # SIGINT first: triggers rclpy shutdown handlers → sockets closed cleanly
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+        except (OSError, ProcessLookupError) as exc:
+            self.get_logger().debug(f'SIGINT da mão ignorado ({exc}).')
+        try:
+            proc.wait(timeout=2.0)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        # Fallback: SIGTERM
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except (OSError, ProcessLookupError) as exc:
             self.get_logger().debug(f'SIGTERM da mão ignorado ({exc}).')
         try:
             proc.wait(timeout=2.0)
+            return
         except subprocess.TimeoutExpired:
             self.get_logger().warn(
-                'Driver da mão não saiu em 2 s — forçando SIGKILL.')
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                pass
-            try:
-                proc.wait(timeout=1.0)
-            except subprocess.TimeoutExpired:
-                self.get_logger().error(
-                    'Driver da mão ficou zumbi após SIGKILL.')
+                'Driver da mão não saiu em 2 s após SIGTERM — forçando SIGKILL.')
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            self.get_logger().error(
+                'Driver da mão ficou zumbi após SIGKILL.')
 
     def _toggle_eci(self) -> None:
         """Liga/desliga o canal lógico ECI (cliente dos serviços COVVI).
@@ -1672,9 +1843,9 @@ class PalpationGUI(Node):
             drv = CR10RealDriver(ip=ip, dry_run=False, config=cfg)
 
             log.info('[ROBOT] Abrindo sockets TCP '
-                     '(29999 dashboard / 30003 motion / 30004 feedback)…')
+                     '(29999 dashboard / 30004 feedback)…')
             self.root.after(0, lambda: self._set_status(
-                f'Conectando sockets TCP em {ip}:29999/30003/30004…', PRIMARY))
+                f'Conectando sockets TCP em {ip}:29999/30004…', PRIMARY))
             drv.connect()
             log.info('[ROBOT] Sockets abertos com sucesso')
             self.root.after(0, lambda: self._set_status(
@@ -1706,27 +1877,42 @@ class PalpationGUI(Node):
     def _finish_robot_connect(self, ip: str, drv,
                                mode_raw: str) -> None:
         """Callback no thread Tkinter após conexão bem-sucedida."""
+        log.warning('[DBG] _finish_robot_connect: ip=%s mode_raw=%r robot_mode=%r',
+                    ip, mode_raw, self._robot_mode)
         self._robot_connecting = False
         self._robot_reconnecting = False
         self._real_driver = drv
         self._robot_connected = True
+        log.warning('[DBG] _finish_robot_connect: _robot_connected=True drv=%s', drv)
         self._robot_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
         # Conexão deu certo — persistir o IP para reusar no próximo boot.
         self._save_robot_config()
         # Heartbeat só inicia após uma conexão saudável; se cair, tenta
         # reconectar com backoff automaticamente.
         self._start_robot_heartbeat()
+        # Aplica SpeedFactor do slider GUI ao braço real imediatamente após a
+        # conexão (enable() usa o default 50%; aqui sincronizamos com o slider).
+        try:
+            sf = int(max(SPEED_FACTOR_MIN,
+                         min(SPEED_FACTOR_MAX, self.speed_factor_var.get())))
+            with self._real_lock:
+                drv._send_dash(f'SpeedFactor({sf})')
+            log.warning('[CONNECT] SpeedFactor(%d)%% aplicado ao CR10', sf)
+        except Exception as exc:
+            log.warning('[CONNECT] SpeedFactor falhou na conexão: %s', exc)
+            sf = drv.cfg.speed_factor
         # Modo 5 = ENABLE (pronto); 9 = ERROR no Dobot CR.
         mode_note = f'  [RobotMode: {mode_raw[:60].strip()}]' if mode_raw else ''
         color = DANGER if '9' in mode_raw and '5' not in mode_raw else OK
         self._set_status(
             f'CR10 conectado em {ip} '
-            f'(SpeedFactor={drv.cfg.speed_factor}%){mode_note}.', color)
-        self._start_force_bridge()
+            f'(SpeedFactor={sf}%){mode_note}.', color)
+        # Force bridge desativado: sensor de força externo será usado no lugar.
+        # _start_force_bridge() — manter _wrench_pub e GUI de força intactos.
         if self._robot_mode == 'MIRROR':
             self._set_status(
-                f'CR10 conectado em {ip} — modo MIRROR ativo: '
-                'mova os sliders para controlar o braço real.', OK)
+                f'CR10 conectado em {ip} — modo MIRROR ativo '
+                f'(SpeedFactor={sf}%): mova os sliders ou inicie palpação.', OK)
 
     def _fail_robot_connect(self, error: str) -> None:
         """Callback no thread Tkinter após falha na conexão."""
@@ -2060,6 +2246,26 @@ class PalpationGUI(Node):
     # ──────────────────────────────────────────────────────────────────
     # Disparo da palpação
     # ──────────────────────────────────────────────────────────────────
+    def _on_stop_palpation(self) -> None:
+        """Interrompe o experimento em curso: publica /palpation/stop e
+        pausa o braço real imediatamente via Halt()."""
+        msg = String()
+        msg.data = 'stop'
+        self._stop_pub.publish(msg)
+        # Halt paralisa o movimento atual do braço real sem desabilitar.
+        if self._robot_connected and self._real_driver is not None:
+            try:
+                with self._real_lock:
+                    self._real_driver.halt()
+            except CR10RealDriverError as exc:
+                self.get_logger().warning(f'Halt após stop falhou: {exc}')
+        # Congela o poll loop: define last_target = posição atual para que
+        # o dedup bloqueie novos ServoJ até o braço realmente se mover de novo.
+        cur = self._latest_joint_rad
+        if cur is not None:
+            self._mirror_last_target = np.asarray(cur, dtype=np.float64)
+        self._set_status('Palpação interrompida pelo operador.', WARN)
+
     def _on_start(self):
         # Satura cada parâmetro ao seu intervalo válido antes de enviar,
         # tanto para a publicação quanto para o que o usuário vê nos
@@ -2105,6 +2311,22 @@ class PalpationGUI(Node):
             'home_deg': {j: float(self._arm_home_deg[j])
                           for j in ARM_JOINTS},
         }
+        # Garante SpeedFactor=10% no braço real durante a palpação.
+        # Velocidades altas são perigosas nesse protocolo — impõe aqui
+        # independente do slider de "Velocidade bruta" da aba manual.
+        if self._robot_connected and self._real_driver is not None:
+            try:
+                with self._real_lock:
+                    self._real_driver._send_dash('SpeedFactor(10)')
+                self.get_logger().info('[PALP] SpeedFactor(10) aplicado para palpação')
+            except CR10RealDriverError as exc:
+                self.get_logger().warning(f'SpeedFactor(10) falhou: {exc}')
+
+        # Limpa o log de movimentos da sessão anterior para que o dedup do
+        # mirror poll não bloqueie os primeiros ServoJ desta sessão.
+        with self._mirror_timer_lock:
+            self._mirror_last_target = None
+
         msg = String()
         msg.data = json.dumps(payload)
         self._start_pub.publish(msg)
@@ -2132,8 +2354,11 @@ class PalpationGUI(Node):
         while not self._stop_event.is_set() and rclpy.ok():
             try:
                 rclpy.spin_once(self, timeout_sec=0.05)
-            except Exception:
-                break
+            except Exception as exc:
+                log.error('[SPIN] spin_once falhou: %s', exc)
+                if not rclpy.ok():
+                    break
+                # Continua girando — uma exceção isolada não deve parar o executor.
 
     def _on_close(self):
         self._stop_event.set()
@@ -2161,7 +2386,7 @@ class PalpationGUI(Node):
         # de _disconnect_real_hand). Sem isso o driver TCP cai com a mão
         # ainda energizada e o LED azul permanece aceso.
         if self._eci_enabled and self._hand_powered:
-            self._send_hand_poweroff_blocking(timeout_s=1.0)
+            self._send_hand_poweroff_blocking(timeout_s=3.0)
             self._hand_powered = False
         self._terminate_hand_subprocess()
         # Fecha sockets do CR10.
@@ -2189,6 +2414,17 @@ def main(args=None):
         datefmt='%H:%M:%S')
     rclpy.init(args=args)
     gui = PalpationGUI()
+
+    def _sighandler(sig, frame):
+        # Fechar a janela Tkinter de forma limpa (roda _on_close via protocol).
+        try:
+            gui.root.after(0, gui._on_close)
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGTERM, _sighandler)
+    signal.signal(signal.SIGINT, _sighandler)
+
     try:
         gui.root.mainloop()
     finally:

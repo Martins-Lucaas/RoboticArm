@@ -254,6 +254,14 @@ def generate_launch_description():
                    '-x', '0', '-y', '0', '-z', '0.75'],
         parameters=[{'use_sim_time': True}])
 
+    # ── Home setter: posiciona as juntas no Gazebo logo após o spawn ──
+    # Chama /gazebo/set_model_configuration com os ângulos de
+    # ~/.config/touch_pack/home_pose.json (salvo pelo botão da GUI
+    # "Capturar do Robô"). Encerra sozinho após a chamada.
+    home_setter = Node(
+        package='touch_pack', executable='gazebo_home_setter',
+        parameters=[{'use_sim_time': True}])
+
     # ── Controladores ros2_control (cadeia de dependência) ───────────
     load_jsb = Node(
         package='controller_manager', executable='spawner',
@@ -268,8 +276,12 @@ def generate_launch_description():
         arguments=['hand_position_controller',
                    '--controller-manager', '/controller_manager'])
 
-    after_spawn_load_jsb = RegisterEventHandler(
+    # spawn → home_setter → joint_state_broadcaster → ...
+    after_spawn_home_setter = RegisterEventHandler(
         event_handler=OnProcessExit(target_action=spawn_robot,
+                                     on_exit=[home_setter]))
+    after_home_setter_load_jsb = RegisterEventHandler(
+        event_handler=OnProcessExit(target_action=home_setter,
                                      on_exit=[load_jsb]))
     after_jsb_load_arm = RegisterEventHandler(
         event_handler=OnProcessExit(target_action=load_jsb,
@@ -317,7 +329,8 @@ def generate_launch_description():
         gazebo,
         rsp,
         spawn_robot,
-        after_spawn_load_jsb,
+        after_spawn_home_setter,
+        after_home_setter_load_jsb,
         after_jsb_load_arm,
         after_arm_load_hand,
         after_hand_start,

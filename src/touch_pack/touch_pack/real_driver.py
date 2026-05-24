@@ -11,9 +11,6 @@ Portas TCP — firmware V4.x (CR10a V4.5.1):
     30004  feedback @8 ms       struct 1440 B com q_actual, TCPForce (125 Hz)
     30005  feedback @200 ms     mesmo struct, taxa reduzida
 
-  !! O porto 30003 (motion queue V3) NÃO existe no firmware V4. O driver
-     tenta ligação por compatibilidade mas cai imediatamente para 29999.
-
 Sintaxe dos comandos de motion no firmware V4 (DIFERENTE do V3):
     ServoJ  →  ServoJ(J1,...,J6,t=<s>,aheadtime=<n>,gain=<n>)  [keyword args]
     MovJ    →  MovJ(joint={J1,...,J6})                           [braces obrigatórias]
@@ -63,10 +60,9 @@ except Exception:  # pragma: no cover
 log = logging.getLogger('touch_pack.real_driver')
 
 
-# ─── Portas oficiais (protocolo V3) ────────────────────────────────────────
-DASH_PORT = 29999      # dashboard (Immediate commands)
-MOTION_PORT = 30003    # motion queue commands (MovJ, ServoJ, JointMovJ…)
-FEEDBACK_PORT = 30004  # struct 1440 B @ 8 ms (125 Hz)
+# ─── Portas TCP do controlador CR10 ────────────────────────────────────────
+DASH_PORT     = 29999   # todos os comandos (dashboard + motion)
+FEEDBACK_PORT = 30004   # struct 1440 B @ 8 ms (125 Hz)
 
 # Offset (em bytes) do campo `q_actual` (6 × float64) dentro do struct de
 # 1440 B do feedback. O valor 432 é o offset referenciado no SDK oficial
@@ -86,13 +82,11 @@ FEEDBACK_PACKET_SIZE = 1440
 @dataclass
 class CR10RealDriverConfig:
     ip: str = '192.168.5.2'
-    dashboard_port: int = DASH_PORT      # 29999
-    motion_port: int = MOTION_PORT       # 30003 (queue commands)
-    feedback_port: int = FEEDBACK_PORT   # 30004
+    dashboard_port: int = DASH_PORT      # 29999 — todos os comandos
+    feedback_port: int = FEEDBACK_PORT   # 30004 — struct 1440 B
     connect_timeout_s: float = 3.0
     recv_timeout_s: float = 1.0
-    motion_connect_timeout_s: float = 1.0   # timeout curto p/ porto 30003
-    speed_factor: int = 50            # 50% — responsivo para mirror slider
+    speed_factor: int = 10            # 10% — responsivo para mirror slider
     collision_level: int = 3          # 0 = off; 3 = padrão CR
     payload_kg: float = 0.5           # mão COVVI ≈ 0.5 kg
     payload_cog_m: tuple = (0.0, 0.0, 0.05)
@@ -106,15 +100,11 @@ class CR10RealDriverError(RuntimeError):
 
 
 class CR10RealDriver:
-    """Encapsula os três sockets TCP do controlador CR10 (protocolo V3).
+    """Encapsula os dois sockets TCP do controlador CR10.
 
-    Arquitetura de portas (doc TCP/IP Remote Control Interface Guide V3):
-      - 29999 (dashboard):  Immediate commands — EnableRobot, RobotMode, …
-      - 30003 (motion):     Queue commands — MovJ, ServoJ, JointMovJ, …
-      - 30004 (feedback):   struct 1440 B @ 8 ms com q_actual, TCPForce
-
-    O porto 30003 pode estar fechado antes de EnableRobot() ser chamado.
-    O driver tenta ligação em connect() e novamente após enable().
+    Arquitetura de portas (igual ao SDK de referência DobotAPI):
+      - 29999 : TODOS os comandos — dashboard + motion (MovJ, ServoJ, …)
+      - 30004 : struct 1440 B @ 8 ms com q_actual, TCPForce (125 Hz)
 
     Pode operar em três regimes:
       * conectado, real:    `dry_run=False`, sockets abertos, comandos vão pro robô.
@@ -129,14 +119,15 @@ class CR10RealDriver:
         self.dry_run = dry_run
 
         self._dash: socket.socket | None = None
-        self._move: socket.socket | None = None   # porto 30003 (motion queue)
         self._feed: socket.socket | None = None
 
         self._dash_lock = threading.Lock()    # serializa sends/recvs em 29999
-        self._move_lock = threading.Lock()    # serializa sends/recvs em 30003
         self._feed_lock = threading.Lock()    # serializa recv no feedback (30004)
         self._enabled = False
         self._last_send_t = 0.0
+
+        self._keepalive_thread: threading.Thread | None = None
+        self._keepalive_stop = threading.Event()
 
     # ── conexão ──────────────────────────────────────────────────────────
     def is_connected(self) -> bool:
@@ -145,33 +136,8 @@ class CR10RealDriver:
             return True
         return self._dash is not None and self._feed is not None
 
-    def motion_port_open(self) -> bool:
-        """True se o porto de motion (30003) está conectado."""
-        if self.dry_run:
-            return True
-        return self._move is not None
-
-    def _try_connect_motion_port(self) -> bool:
-        """Tenta abrir o porto 30003. Retorna True se conseguiu."""
-        if self.dry_run:
-            return True
-        if self._move is not None:
-            return True
-        try:
-            s = socket.create_connection(
-                (self.cfg.ip, self.cfg.motion_port),
-                timeout=self.cfg.motion_connect_timeout_s)
-            s.settimeout(self.cfg.recv_timeout_s)
-            self._move = s
-            log.info('[MOVE] Porto 30003 (motion) conectado')
-            return True
-        except OSError as e:
-            log.warning('[MOVE] Porto 30003 indisponível (%s) — motion via 29999', e)
-            self._move = None
-            return False
-
     def connect(self) -> None:
-        """Abre as conexões TCP. Idempotente — chamada repetida é no-op."""
+        """Abre as conexões TCP nas portas 29999 e 30004. Idempotente."""
         if self.dry_run:
             log.info('[DRY-RUN] connect() → noop')
             return
@@ -189,9 +155,12 @@ class CR10RealDriver:
             # O dashboard envia um banner na conexão; descartá-lo antes de
             # enviar comandos para não deslocar o emparelhamento cmd→resposta.
             self._drain_welcome()
-            # Porto 30003 pode já estar aberto; se não estiver, tentamos
-            # novamente em enable() após EnableRobot().
-            self._try_connect_motion_port()
+            # RequestControl() é exigido por alguns firmwares CR V4 para que
+            # comandos de motion sejam aceitos.
+            resp = self._send_dash('RequestControl()')
+            log.info('[DASH] RequestControl → %s', resp)
+            # Keep-alive: envia RobotMode() a cada 50 s para evitar timeout.
+            self._start_keepalive()
         except OSError as exc:
             self.close()
             raise CR10RealDriverError(
@@ -199,7 +168,8 @@ class CR10RealDriver:
 
     def close(self) -> None:
         """Fecha as conexões TCP. Não desabilita o robô — chame stop() antes."""
-        for attr in ('_dash', '_move', '_feed'):
+        self._stop_keepalive()
+        for attr in ('_dash', '_feed'):
             s = getattr(self, attr)
             if s is not None:
                 try:
@@ -208,6 +178,36 @@ class CR10RealDriver:
                     pass
             setattr(self, attr, None)
         self._enabled = False
+
+    # ── keep-alive ──────────────────────────────────────────────────────────
+    def _start_keepalive(self) -> None:
+        """Inicia thread daemon que envia RobotMode() a cada 50 s."""
+        if self.dry_run:
+            return
+        self._keepalive_stop.clear()
+        self._keepalive_thread = threading.Thread(
+            target=self._keepalive_loop, daemon=True, name='cr10-keepalive')
+        self._keepalive_thread.start()
+
+    def _stop_keepalive(self) -> None:
+        self._keepalive_stop.set()
+        t = self._keepalive_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=1.0)
+        self._keepalive_thread = None
+
+    def _keepalive_loop(self) -> None:
+        while not self._keepalive_stop.wait(timeout=50.0):
+            if not self.is_connected():
+                break
+            try:
+                # MUST read response (expect_reply=True default); sending without
+                # reading leaves the response in the socket buffer and the next
+                # command reads the wrong (stale) response.
+                resp = self._send_dash('RobotMode()')
+                log.debug('[KA] RobotMode → %s', resp.strip())
+            except CR10RealDriverError:
+                break
 
     def _drain_welcome(self) -> None:
         """Descarta o banner inicial enviado pelo dashboard (porta 29999)."""
@@ -254,32 +254,17 @@ class CR10RealDriver:
         if self._dash is None:
             raise CR10RealDriverError('Dashboard não conectado')
         with self._dash_lock:
+            log.debug('[DASH→] %s', cmd)
             self._dash.sendall((cmd + '\n').encode('ascii'))
             if not expect_reply:
                 return ''
-            return self._recv_line(self._dash)
-
-    def _send_move(self, cmd: str) -> str:
-        """Envia Queue command pelo porto de motion (30003) e devolve a resposta."""
-        if self.dry_run:
-            log.info('[DRY-RUN move] %s', cmd)
-            return ''
-        if self._move is None:
-            raise CR10RealDriverError('Porto de motion (30003) não conectado')
-        with self._move_lock:
-            self._move.sendall((cmd + '\n').encode('ascii'))
-            return self._recv_line(self._move)
+            resp = self._recv_line(self._dash)
+            log.debug('[DASH←] %s', resp)
+            return resp
 
     def _send_motion(self, cmd: str) -> str:
-        """Envia queue command de motion e devolve a resposta.
-
-        Usa porto 30003 (protocolo V3) quando disponível; recorre a 29999
-        como fallback (pode retornar -30001 em algumas versões de firmware).
-        """
+        """Envia comando de motion pela porta 29999 (igual ao SDK de referência)."""
         self._last_send_t = time.time()
-        if self._move is not None:
-            return self._send_move(cmd)
-        log.debug('[MOTION via 29999] %s', cmd)
         return self._send_dash(cmd, expect_reply=True)
 
     # ── sequência de bring-up ────────────────────────────────────────────
@@ -310,6 +295,11 @@ class CR10RealDriver:
 
         resp = self._send_dash('ClearError()')
         log.info('[DASH] ClearError → %s', resp)
+        # Continue() after ClearError is required: ClearError clears the alarm
+        # but leaves the motion queue paused — Continue() resumes it so MovJ
+        # commands actually execute instead of being silently queued forever.
+        resp = self._send_dash('Continue()')
+        log.info('[DASH] Continue (pós-ClearError) → %s', resp)
 
         # PowerOn() ativa o subsistema de potência em V4. Ignorar erro se
         # já estiver ligado (pode retornar -2 / "already on").
@@ -336,20 +326,13 @@ class CR10RealDriver:
                     f'EnableRobot falhou — modo atual: {mode}. '
                     f'Verifique E-STOP / botão físico no controlador.')
 
-        # Porto 30003 pode só abrir após EnableRobot() — tentar novamente
-        if not self.motion_port_open():
-            self._try_connect_motion_port()
-
         resp = self._send_dash(f'SpeedFactor({self.cfg.speed_factor})')
         log.info('[DASH] SpeedFactor → %s', resp)
         resp = self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
         log.info('[DASH] SetCollisionLevel → %s', resp)
         self._enabled = True
-        log.info('CR10 habilitado em %s (motion_port=%s, SpeedFactor=%d, '
-                 'Coll=%d, Payload=%.2fkg)',
-                 self.cfg.ip,
-                 '30003' if self.motion_port_open() else '29999(fallback)',
-                 self.cfg.speed_factor, self.cfg.collision_level,
+        log.info('CR10 habilitado em %s (SpeedFactor=%d, Coll=%d, Payload=%.2fkg)',
+                 self.cfg.ip, self.cfg.speed_factor, self.cfg.collision_level,
                  self.cfg.payload_kg)
 
     def prepare_servoj(self) -> None:
@@ -364,6 +347,8 @@ class CR10RealDriver:
             return
         resp = self._send_dash('ClearError()')
         log.info('[DASH] prepare_servoj ClearError → %s', resp)
+        resp = self._send_dash('Continue()')
+        log.info('[DASH] prepare_servoj Continue → %s', resp)
         time.sleep(0.2)
         mode = self.robot_mode()
         log.info('[DASH] RobotMode antes do primeiro ServoJ: %s', mode)
@@ -428,13 +413,69 @@ class CR10RealDriver:
         """
         q = list(q_deg)
         if len(q) != 6:
-            raise ValueError(f'mov_j_joint_deg requer 6 valores')
-        # V4: MovJ(joint={J1,J2,J3,J4,J5,J6}) — braces no argumento joint
+            raise ValueError('mov_j_joint_deg requer 6 valores')
         cmd = 'MovJ(joint={{{values}}})'.format(
             values=','.join(f'{v:.6f}' for v in q))
         resp = self._send_motion(cmd)
+        log.debug('[MOVE] MovJ(joint) resp: %s', resp)
         if resp and not resp.startswith('0'):
-            log.warning('[MOVE] JointMovJ erro: %s', resp.split(',')[0].strip())
+            code = resp.split(',')[0].strip()
+            err_id = self.get_error_id() or ''
+            log.warning('[MOVE] MovJ(joint) falhou (code=%s, GetErrorID=%s) cmd=%s',
+                        code, err_id.strip(), cmd)
+            raise CR10RealDriverError(f'MovJ falhou: code={code}, GetErrorID={err_id.strip()}')
+
+    def mov_j_cartesian(self, x: float, y: float, z: float,
+                         rx: float, ry: float, rz: float) -> None:
+        """MovJ Cartesiano — PTP até pose (x,y,z,rx,ry,rz) em mm/graus.
+
+        Usa a sintaxe V4: MovJ(pose={x,y,z,rx,ry,rz}).
+        """
+        cmd = f'MovJ(pose={{{x:.3f},{y:.3f},{z:.3f},{rx:.3f},{ry:.3f},{rz:.3f}}})'
+        resp = self._send_motion(cmd)
+        if resp and not resp.startswith('0'):
+            log.warning('[MOVE] MovJ(pose) erro: %s', resp.split(',')[0].strip())
+
+    def mov_l_cartesian(self, x: float, y: float, z: float,
+                         rx: float, ry: float, rz: float) -> None:
+        """MovL Cartesiano — interpolação linear até pose em mm/graus."""
+        cmd = f'MovL(pose={{{x:.3f},{y:.3f},{z:.3f},{rx:.3f},{ry:.3f},{rz:.3f}}})'
+        resp = self._send_motion(cmd)
+        if resp and not resp.startswith('0'):
+            log.warning('[MOVE] MovL(pose) erro: %s', resp.split(',')[0].strip())
+
+    def rel_movl_user(self, dx: float, dy: float, dz: float,
+                       drx: float = 0.0, dry: float = 0.0,
+                       drz: float = 0.0) -> None:
+        """RelMovLUser — movimento relativo em mm/graus no frame usuário (User0)."""
+        cmd = f'RelMovLUser({dx:.3f},{dy:.3f},{dz:.3f},{drx:.3f},{dry:.3f},{drz:.3f})'
+        resp = self._send_motion(cmd)
+        if resp and not resp.startswith('0'):
+            log.warning('[MOVE] RelMovLUser erro: %s', resp.split(',')[0].strip())
+
+    def halt(self) -> None:
+        """Halt() — pausa o movimento atual sem desabilitar o robô."""
+        try:
+            resp = self._send_dash('Halt()')
+            log.info('[DASH] Halt → %s', resp)
+        except CR10RealDriverError as exc:
+            log.warning('[DASH] Halt falhou: %s', exc)
+
+    def pause(self) -> None:
+        """Pause() — pausa a fila de movimentos (retomável com Continue())."""
+        try:
+            resp = self._send_dash('Pause()')
+            log.info('[DASH] Pause → %s', resp)
+        except CR10RealDriverError as exc:
+            log.warning('[DASH] Pause falhou: %s', exc)
+
+    def resume(self) -> None:
+        """Continue() — retoma após Pause()."""
+        try:
+            resp = self._send_dash('Continue()')
+            log.info('[DASH] Continue → %s', resp)
+        except CR10RealDriverError as exc:
+            log.warning('[DASH] Continue falhou: %s', exc)
 
     def sync(self, timeout_s: float = 30.0) -> None:
         """Bloqueia até o robô terminar o movimento (RobotMode == 5).
