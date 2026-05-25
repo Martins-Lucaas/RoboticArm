@@ -84,6 +84,8 @@ class ForceReceiverNode(Node):
     def _udp_loop(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # múltiplos nós no mesmo PC
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # aceitar broadcasts
         sock.settimeout(1.0)
         try:
             sock.bind(('', UDP_PORT))
@@ -91,7 +93,7 @@ class ForceReceiverNode(Node):
             self.get_logger().error(
                 f'Bind UDP :{UDP_PORT} falhou: {exc}')
             return
-        self.get_logger().info(f'UDP bind OK em 0.0.0.0:{UDP_PORT}')
+        self.get_logger().info(f'UDP bind OK em 0.0.0.0:{UDP_PORT} (broadcast)')
 
         while self._running and rclpy.ok():
             try:

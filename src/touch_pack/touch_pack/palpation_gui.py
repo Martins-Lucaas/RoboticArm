@@ -344,7 +344,7 @@ class PalpationGUI(Node):
         self.create_subscription(
             JointState, '/joint_states', self._cb_joint_states, 5)
         self.create_subscription(
-            Float32, '/load_cell/voltage', self._cb_lc_voltage, 10)
+            Float32, '/load_cell/voltage', self._cb_lc_voltage, QOS_SENSOR)
 
         # ─── Home pose customizável ──────────────────────────────────
         # Default (ARM_HOME_DEG) é sobrescrito se ~/.config/touch_pack/
@@ -367,6 +367,9 @@ class PalpationGUI(Node):
         self._lc_calib_n_pts: int        = 0
         self._lc_calib_points: list      = []   # (mass_kg, v_sensor) — wizard
         self._load_lc_calib()
+        # Subprocesso do force_receiver_node (gerenciado pelo botão Conectar)
+        self._force_rx_proc: subprocess.Popen | None = None
+        self._force_rx_should_be_alive: bool = False
 
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
@@ -507,6 +510,19 @@ class PalpationGUI(Node):
                                    activebackground=PRIMARY,
                                    activeforeground='white')
         mode_menu.grid(row=1, column=3, sticky='w')
+
+        # ── ESP32 / LOAD CELL ─────────────────────────────────────────────
+        conn_esp = tk.Frame(mid, bg=HEADER)
+        conn_esp.pack(side='left', padx=(28, 0))
+        tk.Label(conn_esp, text='LOAD CELL (ESP32)', font=FONT_SMALL,
+                 bg=HEADER, fg='#cbd5e1'
+                 ).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
+        self._esp32_dot_lbl = tk.Label(
+            conn_esp, text='●', font=FONT_LBL, bg=HEADER, fg=TEXT_DIM)
+        self._esp32_dot_lbl.grid(row=1, column=0, sticky='w')
+        self._esp32_status_lbl = tk.Label(
+            conn_esp, text='OFFLINE', font=FONT_LBL, bg=HEADER, fg=TEXT_DIM)
+        self._esp32_status_lbl.grid(row=1, column=1, sticky='w', padx=(4, 0))
 
     # ── Corpo: Notebook com 2 abas ───────────────────────────────────
     def _build_body(self):
@@ -1448,6 +1464,31 @@ class PalpationGUI(Node):
         self.root.after(100, self._refresh_lc_panel)
 
     def _build_lc_leitura_tab(self, root: tk.Frame):
+        # ── Painel de conexão do nó UDP ──────────────────────────────────
+        conn_panel = tk.Frame(root, bg=PANEL,
+                              highlightthickness=1, highlightbackground=BORDER)
+        conn_panel.pack(fill='x', pady=(0, 8))
+        tk.Label(conn_panel, text='Receptor UDP (force_receiver_node)',
+                 bg=PANEL, fg=TEXT, font=FONT_HEAD, anchor='w'
+                 ).pack(fill='x', padx=14, pady=(10, 0))
+        tk.Frame(conn_panel, bg=BORDER, height=1).pack(fill='x', pady=(6, 0))
+        btn_row = tk.Frame(conn_panel, bg=PANEL)
+        btn_row.pack(fill='x', padx=14, pady=8)
+        self._force_rx_btn = tk.Button(
+            btn_row, text='⚡  Conectar',
+            command=self._toggle_force_receiver,
+            bg=PRIMARY, fg='white',
+            activebackground=PRIMARY_HV, activeforeground='white',
+            font=FONT_LBL, relief='flat', bd=0, padx=14, pady=6,
+            cursor='hand2')
+        self._force_rx_btn.pack(side='left')
+        self._force_rx_status_lbl = tk.Label(
+            btn_row,
+            text='Nó não iniciado — clique Conectar para abrir a porta UDP 8080',
+            font=FONT_LBL, bg=PANEL, fg=TEXT_DIM)
+        self._force_rx_status_lbl.pack(side='left', padx=(12, 0))
+
+        # ── Card de leitura ───────────────────────────────────────────────
         card = self._card(root, 'Força Aplicada — Célula de Carga')
 
         row_f = tk.Frame(card, bg=PANEL)
@@ -1705,6 +1746,83 @@ class PalpationGUI(Node):
             lbl.config(text=f'{i + 1}.  — kg  →  — N  →  — V', fg=TEXT_DIM)
         self._set_status('Calibração reiniciada.', TEXT_DIM)
 
+    # ── Force receiver — gerenciamento do subprocesso ─────────────────
+    def _toggle_force_receiver(self) -> None:
+        if (self._force_rx_proc is not None
+                and self._force_rx_proc.poll() is None):
+            self._disconnect_force_receiver()
+        else:
+            self._connect_force_receiver()
+
+    def _connect_force_receiver(self) -> None:
+        cmd = ['ros2', 'run', 'touch_pack', 'force_receiver']
+        try:
+            self._force_rx_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                preexec_fn=os.setsid)
+        except FileNotFoundError:
+            self._force_rx_status_lbl.config(
+                text='ros2 não encontrado — faça source do workspace',
+                fg=DANGER)
+            self._force_rx_proc = None
+            return
+
+        def _pipe_log(proc=self._force_rx_proc):
+            for raw in proc.stdout:
+                log.info('[FORCE-RX] %s',
+                         raw.decode('utf-8', errors='replace').rstrip())
+        threading.Thread(target=_pipe_log, daemon=True,
+                         name='force-rx-log').start()
+
+        self._force_rx_should_be_alive = True
+        self._force_rx_btn.config(
+            text='⏳  Iniciando…', state='disabled',
+            bg=BTN_NEUTRAL, fg=TEXT)
+        self._force_rx_status_lbl.config(
+            text='Iniciando nó UDP…', fg=WARN)
+        self.root.after(1500, self._post_connect_force_receiver)
+
+    def _post_connect_force_receiver(self) -> None:
+        proc = self._force_rx_proc
+        if proc is None or proc.poll() is not None:
+            self._force_rx_btn.config(
+                text='⚡  Conectar', state='normal', bg=PRIMARY, fg='white')
+            self._force_rx_status_lbl.config(
+                text='Falha ao iniciar — verifique o workspace e o source',
+                fg=DANGER)
+            self._force_rx_proc = None
+            self._force_rx_should_be_alive = False
+            return
+        self._force_rx_btn.config(
+            text='⏹  Desconectar', state='normal', bg=DANGER, fg='white')
+        self._force_rx_status_lbl.config(
+            text='Nó ativo — aguardando pacotes UDP do ESP32 na porta 8080',
+            fg=OK)
+
+    def _disconnect_force_receiver(self) -> None:
+        self._force_rx_should_be_alive = False
+        proc = self._force_rx_proc
+        self._force_rx_proc = None
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    pass
+            except OSError:
+                pass
+        self._force_rx_btn.config(
+            text='⚡  Conectar', state='normal', bg=PRIMARY, fg='white')
+        self._force_rx_status_lbl.config(
+            text='Nó desconectado', fg=TEXT_DIM)
+        self._esp32_dot_lbl.config(fg=TEXT_DIM)
+        self._esp32_status_lbl.config(text='OFFLINE', fg=TEXT_DIM)
+
     # ── Refresh do painel de carga (Tk thread, 10 Hz) ─────────────────
     def _refresh_lc_panel(self):
         with self._lock:
@@ -1715,8 +1833,37 @@ class PalpationGUI(Node):
             n_pts     = self._lc_calib_n_pts
             last_ts   = self._lc_last_ts
 
-        # Tensão
+        # Watchdog do force_receiver_node: detecta morte inesperada
+        if self._force_rx_should_be_alive:
+            proc = self._force_rx_proc
+            if proc is not None and proc.poll() is not None:
+                self._force_rx_proc = None
+                self._force_rx_should_be_alive = False
+                self._force_rx_btn.config(
+                    text='⚡  Conectar', state='normal',
+                    bg=PRIMARY, fg='white')
+                self._force_rx_status_lbl.config(
+                    text='Nó encerrou inesperadamente — clique Conectar para reiniciar',
+                    fg=DANGER)
+
+        # ESP32 connection status (timeout 2 s sem pacote UDP)
         has_data = last_ts > 0.0
+        node_up  = self._force_rx_should_be_alive
+        esp32_ok = has_data and (time.time() - last_ts) < 2.0
+        if not node_up:
+            self._esp32_dot_lbl.config(fg=TEXT_DIM)
+            self._esp32_status_lbl.config(text='OFFLINE', fg=TEXT_DIM)
+        elif esp32_ok:
+            self._esp32_dot_lbl.config(fg=OK)
+            self._esp32_status_lbl.config(text='ONLINE', fg=OK)
+        elif has_data:
+            self._esp32_dot_lbl.config(fg=DANGER)
+            self._esp32_status_lbl.config(text='TIMEOUT', fg=DANGER)
+        else:
+            self._esp32_dot_lbl.config(fg=WARN)
+            self._esp32_status_lbl.config(text='AGUARDANDO', fg=WARN)
+
+        # Tensão
         volt_txt   = f'{voltage:.4f}  V' if has_data else '—  V'
         volt_color = TEXT if has_data else TEXT_DIM
         self.lc_voltage_lbl.config(text=volt_txt, fg=volt_color)
@@ -2750,6 +2897,16 @@ class PalpationGUI(Node):
         # ser tentado durante o shutdown.
         self._hand_should_be_alive = False
         self._stop_hand_watchdog()
+        # Encerra o force_receiver_node se estiver rodando.
+        self._force_rx_should_be_alive = False
+        rx_proc = self._force_rx_proc
+        self._force_rx_proc = None
+        if rx_proc is not None and rx_proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(rx_proc.pid), signal.SIGTERM)
+                rx_proc.wait(timeout=2.0)
+            except Exception:
+                pass
         self._stop_force_bridge()
         # Cancela callbacks Tk pendentes — disparar após `root.destroy()`
         # gera TclError ou crash.

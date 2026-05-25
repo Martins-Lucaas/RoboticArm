@@ -1115,7 +1115,7 @@ class ManualControlNode(Node):
                  bg=HEADER, fg=HEADER_FG
                  ).grid(row=1, column=0, sticky='w', padx=(0, 6))
 
-        self._hand_ip_var = tk.StringVar(value='192.168.1.123')
+        self._hand_ip_var = tk.StringVar(value='192.168.5.103')
         ip_entry = tk.Entry(conn, textvariable=self._hand_ip_var,
                             width=16, font=FONT_MONO_S, bg='white',
                             fg=TEXT, relief='flat', bd=0,

@@ -5,12 +5,16 @@
 // ======================================================
 // WIFI — rede local do laboratório
 // ======================================================
-const char* ssid     = "Ender 3 V2-coleta";
+const char* ssid     = "Ender 3 V2 - coleta";
 const char* password = "Biolabeb0608";
 
-// IP do PC na rede acima — descubra com: ip addr show (Linux)
-// Altere antes de gravar na ESP32
-#define DEST_IP  "192.168.1.100"
+// IP estático do ESP32 (fixo na subnet do laboratório)
+static const IPAddress LOCAL_IP (192, 168, 5, 105);
+static const IPAddress GATEWAY  (192, 168, 5,   1);
+static const IPAddress SUBNET   (255, 255, 255,  0);
+
+// Broadcast da subnet — qualquer PC em 192.168.5.x recebe
+#define DEST_IP  "192.168.5.255"
 #define UDP_PORT 8080
 
 WiFiUDP udp;
@@ -40,8 +44,8 @@ const float CALIB_INTERCEPT = 0.0017f;
 const float CALIB_SLOPE     = 0.4490f;
 
 // ======================================================
-// PAYLOAD UDP
-//   v_sensor      : tensão real do sensor (V) — usada pela GUI p/ calibração
+// PAYLOAD UDP  (little-endian, 8 bytes)
+//   v_sensor      : tensão real do sensor (V)
 //   force_filtered: força estimada com calibração padrão (N)
 // ======================================================
 struct __attribute__((packed)) Payload {
@@ -52,22 +56,39 @@ struct __attribute__((packed)) Payload {
 static Payload packet;
 
 // ======================================================
+// WIFI — conexão / reconexão
+// ======================================================
+static void wifi_connect()
+{
+    WiFi.mode(WIFI_STA);
+    WiFi.config(LOCAL_IP, GATEWAY, SUBNET);
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(false);
+    WiFi.begin(ssid, password);
+
+    Serial.print("Conectando");
+    uint32_t t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
+        delay(500);
+        Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\nWiFi conectado!");
+        Serial.print("IP ESP32: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("\nTimeout WiFi — tentando no próximo ciclo.");
+    }
+}
+
+// ======================================================
 // SETUP
 // ======================================================
 void setup()
 {
     Serial.begin(115200);
     analogReadResolution(12);
-
-    WiFi.begin(ssid, password);
-    Serial.print("Conectando");
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println("\nWiFi conectado!");
-    Serial.print("IP ESP32: ");
-    Serial.println(WiFi.localIP());
+    wifi_connect();
 }
 
 // ======================================================
@@ -75,6 +96,13 @@ void setup()
 // ======================================================
 void loop()
 {
+    // Reconexão automática se o WiFi cair
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[WARN] WiFi desconectado — reconectando...");
+        wifi_connect();
+        return;   // pula este tick; próximo ciclo já com WiFi
+    }
+
     // Leitura ADC de 12 bits
     int adc_raw = analogRead(ADC_PIN);
 
@@ -90,7 +118,7 @@ void loop()
     // Filtro exponencial de primeira ordem
     force_filtered = ALPHA * force + (1.0f - ALPHA) * force_filtered;
 
-    // Monta e envia pacote UDP
+    // Monta e envia pacote UDP broadcast
     packet.v_sensor       = v_sensor;
     packet.force_filtered = force_filtered;
 
