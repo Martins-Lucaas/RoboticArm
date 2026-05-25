@@ -22,7 +22,8 @@ WiFiUDP udp;
 // ======================================================
 // ADC — célula de carga via amplificador no GPIO 34
 // ======================================================
-#define ADC_PIN 34
+#define ADC_PIN       34
+#define OVERSAMPLE_N  16        // 16 amostras → +6 dB SNR (~1 bit efetivo extra)
 
 // ======================================================
 // FILTRO EXPONENCIAL
@@ -42,6 +43,14 @@ const float R2 =  98600.0f;
 // ======================================================
 const float CALIB_INTERCEPT = 0.0017f;
 const float CALIB_SLOPE     = 0.4490f;
+
+// ======================================================
+// TEMPORIZAÇÃO — 50 Hz sem delay()
+// millis() é não-bloqueante: WiFi stack e watchdog
+// continuam a ser servidos entre os ticks.
+// ======================================================
+#define SAMPLE_INTERVAL_MS 20   // 1000 ms / 50 Hz
+static uint32_t last_sample_ms = 0;
 
 // ======================================================
 // PAYLOAD UDP  (little-endian, 8 bytes)
@@ -89,10 +98,11 @@ void setup()
     Serial.begin(115200);
     analogReadResolution(12);
     wifi_connect();
+    last_sample_ms = millis();
 }
 
 // ======================================================
-// LOOP — 50 Hz
+// LOOP — 50 Hz não-bloqueante
 // ======================================================
 void loop()
 {
@@ -100,14 +110,21 @@ void loop()
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("[WARN] WiFi desconectado — reconectando...");
         wifi_connect();
-        return;   // pula este tick; próximo ciclo já com WiFi
+        last_sample_ms = millis();  // reset do timer após reconexão
+        return;
     }
 
-    // Leitura ADC de 12 bits
-    int adc_raw = analogRead(ADC_PIN);
+    // Aguarda o próximo tick de 20 ms sem bloquear o sistema
+    uint32_t now = millis();
+    if (now - last_sample_ms < SAMPLE_INTERVAL_MS) return;
+    last_sample_ms += SAMPLE_INTERVAL_MS;  // mantém fase mesmo com jitter leve
 
-    // Conversão ADC → tensão no pino (3.3 V, 12 bits)
-    float v_adc = (adc_raw * 3.3f) / 4095.0f;
+    // Oversampling: 16 leituras acumuladas → reduz ruído de quantização
+    uint32_t adc_acc = 0;
+    for (int i = 0; i < OVERSAMPLE_N; ++i) {
+        adc_acc += analogRead(ADC_PIN);
+    }
+    float v_adc = (adc_acc / (float)OVERSAMPLE_N * 3.3f) / 4095.0f;
 
     // Reconstrução da tensão real do sensor (divisor R1/R2)
     float v_sensor = v_adc * ((R1 + R2) / R2);
@@ -127,6 +144,4 @@ void loop()
     udp.endPacket();
 
     Serial.printf("v_sensor: %.4f V | Força: %.3f N\n", v_sensor, force_filtered);
-
-    delay(20);  // 50 Hz
 }

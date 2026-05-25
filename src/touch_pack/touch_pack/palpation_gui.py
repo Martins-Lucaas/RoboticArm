@@ -1680,8 +1680,8 @@ class PalpationGUI(Node):
         except (ValueError, tk.TclError):
             self._set_status('Massa inválida.', DANGER)
             return
-        if mass_kg <= 0.0:
-            self._set_status('Massa deve ser positiva.', DANGER)
+        if mass_kg < 0.0:
+            self._set_status('Massa não pode ser negativa.', DANGER)
             return
 
         self._lc_calib_points.append((mass_kg, avg_v))
