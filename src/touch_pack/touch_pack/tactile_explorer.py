@@ -112,6 +112,7 @@ _CTRL_DT    = 0.030   # período de cada passo (33 Hz)
 _CTRL_LOOK  = 0.10    # time_from_start enviado ao controller (s)
 _JAC_LAM    = 0.01    # regularização DLS
 _ORI_GAIN   = 0.5     # ganho de correção de orientação
+_Z_CORR_GAIN = 0.5   # ganho de correção de posição Z durante sliding (P-controller por tick)
 _HOME_MAX_RAD_S = 0.30  # velocidade máxima do HOME (≈ 17°/s por junta)
 _SETTLE_TICKS   = 6     # ticks de espera entre fases (6 × 30 ms = 180 ms)
 
@@ -367,6 +368,7 @@ class TactileExplorer(Node):
                            v_max_ms: float | None = None,
                            v_min_ms: float | None = None,
                            lock_ori: bool = False,
+                           lock_z: bool = False,
                            force_threshold_n: float | None = None) -> str:
         d = np.asarray(direction, dtype=float).flatten()
         nd = float(np.linalg.norm(d))
@@ -383,11 +385,16 @@ class TactileExplorer(Node):
 
         I6 = np.eye(6)
 
-        # Captura orientação inicial para travamento (lock_ori) a partir do
-        # estado real das juntas. R0 é capturado uma única vez.
+        # Captura orientação e/ou altura Z iniciais para travamento.
+        # Ambos derivam do mesmo FK — calculado uma única vez no início.
         R0: np.ndarray | None = None
-        if lock_ori:
-            R0 = forward_kinematics(self._q_now())[:3, :3].copy()
+        z0: float | None = None
+        if lock_ori or lock_z:
+            T0 = forward_kinematics(self._q_now())
+            if lock_ori:
+                R0 = T0[:3, :3].copy()
+            if lock_z:
+                z0 = float(T0[2, 3])
 
         covered = 0.0
 
@@ -417,19 +424,25 @@ class TactileExplorer(Node):
             v = max(1e-4, v)
             step = v * _CTRL_DT
 
-            # Torção: translação na direção pedida + correção de orientação.
+            # Torção: translação na direção pedida + correções de orientação e Z.
             J = jacobian(q)
             twist = np.zeros(6)
             twist[:3] = d * step
-            if R0 is not None:
+            if R0 is not None or z0 is not None:
                 T_cur = forward_kinematics(q)
-                R_err = R0 @ T_cur[:3, :3].T
-                err_vec = 0.5 * np.array([
-                    R_err[2, 1] - R_err[1, 2],
-                    R_err[0, 2] - R_err[2, 0],
-                    R_err[1, 0] - R_err[0, 1],
-                ])
-                twist[3:] = _ORI_GAIN * err_vec
+                if R0 is not None:
+                    R_err = R0 @ T_cur[:3, :3].T
+                    err_vec = 0.5 * np.array([
+                        R_err[2, 1] - R_err[1, 2],
+                        R_err[0, 2] - R_err[2, 0],
+                        R_err[1, 0] - R_err[0, 1],
+                    ])
+                    twist[3:] = _ORI_GAIN * err_vec
+                if z0 is not None:
+                    # Correção proporcional de altura: impede deriva Z acumulada
+                    # no sliding (o DLS aproxima o Jacobiano e pode introduzir
+                    # erro residual em Z a cada tick).
+                    twist[2] += _Z_CORR_GAIN * (z0 - float(T_cur[2, 3]))
 
             try:
                 dq = J.T @ np.linalg.solve(J @ J.T + _JAC_LAM**2 * I6, twist)
@@ -635,7 +648,7 @@ class TactileExplorer(Node):
             f'@ {speed_ms*1000:.1f} mm/s')
 
         outcome = self._cartesian_stream(
-            dir_world, dist_m, v_const_ms=speed_ms, lock_ori=True)
+            dir_world, dist_m, v_const_ms=speed_ms, lock_ori=True, lock_z=True)
 
         self._settle()
         return outcome in ('done', 'force')

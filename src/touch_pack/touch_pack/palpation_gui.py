@@ -23,6 +23,7 @@ Comunicação ROS:
 """
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import math
@@ -42,7 +43,7 @@ from rclpy.qos import (
     QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy,
 )
 
-from std_msgs.msg import String
+from std_msgs.msg import String, Float32
 from geometry_msgs.msg import WrenchStamped
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -157,6 +158,7 @@ HOME_POSE_FILE = os.path.expanduser('~/.config/touch_pack/home_pose.json')
 # Arquivo persistente com IPs e último modo. Carregado no __init__ e
 # reescrito sempre que o usuário conectar com sucesso ou trocar de modo.
 ROBOT_CONFIG_FILE = os.path.expanduser('~/.config/touch_pack/robot.json')
+LC_CALIB_FILE     = os.path.expanduser('~/.config/touch_pack/load_cell_calib.json')
 ROBOT_CONFIG_DEFAULTS = {
     'hand_ip':    '192.168.5.103',
     'robot_ip':   '192.168.5.2',
@@ -341,6 +343,8 @@ class PalpationGUI(Node):
         # mirror poll loop para capturar palpação via action server.
         self.create_subscription(
             JointState, '/joint_states', self._cb_joint_states, 5)
+        self.create_subscription(
+            Float32, '/load_cell/voltage', self._cb_lc_voltage, 10)
 
         # ─── Home pose customizável ──────────────────────────────────
         # Default (ARM_HOME_DEG) é sobrescrito se ~/.config/touch_pack/
@@ -352,6 +356,17 @@ class PalpationGUI(Node):
         # dos campos refletirem o último valor usado.
         self._robot_cfg: dict[str, str] = dict(ROBOT_CONFIG_DEFAULTS)
         self._load_robot_config()
+
+        # ─── Célula de carga (load cell UDP via force_receiver_node) ─
+        self._lc_voltage: float          = 0.0
+        self._lc_voltage_buf: collections.deque = collections.deque(maxlen=50)
+        self._lc_last_ts: float          = 0.0
+        self._lc_calibrated: bool        = False
+        self._lc_calib_slope: float      = 0.4490
+        self._lc_calib_intercept: float  = 0.0017
+        self._lc_calib_n_pts: int        = 0
+        self._lc_calib_points: list      = []   # (mass_kg, v_sensor) — wizard
+        self._load_lc_calib()
 
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
@@ -509,9 +524,11 @@ class PalpationGUI(Node):
         nb.pack(fill='both', expand=True, padx=18, pady=18)
 
         tab_palp = tk.Frame(nb, bg=BG)
-        tab_man = tk.Frame(nb, bg=BG)
+        tab_man  = tk.Frame(nb, bg=BG)
+        tab_lc   = tk.Frame(nb, bg=BG)
         nb.add(tab_palp, text='Palpação')
         nb.add(tab_man,  text='Controle Manual')
+        nb.add(tab_lc,   text='Célula de Carga')
 
         # IMPORTANTE: as abas NÃO são envolvidas em `_scrollable` (Canvas
         # + create_window). Em testes locais essa combinação provocava
@@ -523,6 +540,7 @@ class PalpationGUI(Node):
         # passar do limite é cortado, mas a GUI não trava.
         self._build_palpation_tab(tab_palp)
         self._build_manual_tab(tab_man)
+        self._build_loadcell_tab(tab_lc)
 
     def _scrollable(self, parent: tk.Frame) -> tk.Frame:
         """Envolve `parent` num Canvas com scrollbar vertical e retorna o
@@ -1412,6 +1430,328 @@ class PalpationGUI(Node):
         self._publish_hand_from_sliders()
         if eci_grip_id is not None:
             self._send_eci_grip(eci_grip_id)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Aba "Célula de Carga" — leitura + calibração
+    # ──────────────────────────────────────────────────────────────────
+    def _build_loadcell_tab(self, root: tk.Frame):
+        sub_nb = ttk.Notebook(root, style='Tactile.TNotebook')
+        sub_nb.pack(fill='both', expand=True)
+
+        tab_leitura = tk.Frame(sub_nb, bg=BG)
+        tab_calib   = tk.Frame(sub_nb, bg=BG)
+        sub_nb.add(tab_leitura, text='Leitura')
+        sub_nb.add(tab_calib,   text='Calibração')
+
+        self._build_lc_leitura_tab(tab_leitura)
+        self._build_lc_calibration_tab(tab_calib)
+        self.root.after(100, self._refresh_lc_panel)
+
+    def _build_lc_leitura_tab(self, root: tk.Frame):
+        card = self._card(root, 'Força Aplicada — Célula de Carga')
+
+        row_f = tk.Frame(card, bg=PANEL)
+        row_f.pack(fill='x', pady=(8, 4))
+        tk.Label(row_f, text='Força Medida', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
+        self.lc_force_lbl = tk.Label(
+            row_f, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
+        self.lc_force_lbl.pack(anchor='w', pady=(4, 2))
+
+        self.lc_calib_status_lbl = tk.Label(
+            card,
+            text='Aguardando calibração — use a aba Calibração',
+            font=FONT_LBL, bg=PANEL, fg=WARN)
+        self.lc_calib_status_lbl.pack(anchor='w', pady=(0, 4))
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=6)
+
+        row_v = tk.Frame(card, bg=PANEL)
+        row_v.pack(fill='x', pady=(2, 2))
+        tk.Label(row_v, text='Tensão do Sensor', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self.lc_voltage_lbl = tk.Label(
+            row_v, text='—  V', font=FONT_MONO, bg=PANEL, fg=TEXT_DIM)
+        self.lc_voltage_lbl.pack(side='right')
+
+    def _build_lc_calibration_tab(self, root: tk.Frame):
+        # ── Status da calibração vigente ─────────────────────────────
+        status_card = self._card(root, 'Calibração Vigente')
+        self.lc_curr_calib_lbl = tk.Label(
+            status_card, text='Nenhuma calibração salva',
+            font=FONT_LBL, bg=PANEL, fg=WARN)
+        self.lc_curr_calib_lbl.pack(anchor='w', pady=(0, 4))
+
+        # ── Wizard de 5 pesos ────────────────────────────────────────
+        wiz_card = self._card(root, 'Procedimento — 5 Pesos Diferentes')
+
+        self.lc_step_lbl = tk.Label(
+            wiz_card,
+            text='Passo 1 de 5 — posicione o primeiro peso e insira a massa abaixo',
+            font=FONT_LBL, bg=PANEL, fg=PRIMARY)
+        self.lc_step_lbl.pack(anchor='w', pady=(0, 8))
+
+        # Massa
+        mass_row = tk.Frame(wiz_card, bg=PANEL)
+        mass_row.pack(fill='x', pady=(0, 4))
+        tk.Label(mass_row, text='Massa do objeto', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT).pack(side='left')
+        self.lc_mass_var = tk.DoubleVar(value=0.100)
+        tk.Spinbox(
+            mass_row, from_=0.001, to=10.0, increment=0.001,
+            textvariable=self.lc_mass_var, width=8, font=FONT_MONO,
+            justify='right', relief='flat', bd=0,
+            highlightthickness=1, highlightbackground=BORDER,
+            highlightcolor=PRIMARY,
+        ).pack(side='right', padx=(6, 0), ipady=2)
+        tk.Label(mass_row, text='kg', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='right')
+
+        # Tensão live
+        volt_row = tk.Frame(wiz_card, bg=PANEL)
+        volt_row.pack(fill='x', pady=(2, 8))
+        tk.Label(volt_row, text='Tensão atual (média últimas leituras)',
+                 font=FONT_LBL, bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self.lc_volt_live_lbl = tk.Label(
+            volt_row, text='—  V', font=FONT_MONO, bg=PANEL, fg=TEXT)
+        self.lc_volt_live_lbl.pack(side='right')
+
+        # Botão capturar
+        self.lc_capture_btn = tk.Button(
+            wiz_card, text='▶  Capturar Leitura',
+            command=self._lc_calib_capture,
+            bg=PRIMARY, fg='white',
+            activebackground=PRIMARY_HV, activeforeground='white',
+            font=FONT_HEAD, relief='flat', bd=0, padx=18, pady=10,
+            cursor='hand2')
+        self.lc_capture_btn.pack(fill='x', pady=(0, 10))
+
+        tk.Frame(wiz_card, bg=BORDER, height=1).pack(fill='x', pady=4)
+
+        # Lista de pontos capturados
+        pts_frame = tk.Frame(wiz_card, bg=PANEL)
+        pts_frame.pack(fill='x', pady=(6, 6))
+        tk.Label(pts_frame, text='Pontos capturados:', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(0, 4))
+        self.lc_point_lbls = []
+        for i in range(5):
+            lbl = tk.Label(
+                pts_frame,
+                text=f'{i + 1}.  — kg  →  — N  →  — V',
+                font=FONT_MONO_S, bg=PANEL, fg=TEXT_DIM, anchor='w')
+            lbl.pack(fill='x', pady=1)
+            self.lc_point_lbls.append(lbl)
+
+        tk.Frame(wiz_card, bg=BORDER, height=1).pack(fill='x', pady=6)
+
+        # Botões Calcular + Reiniciar
+        btn_row = tk.Frame(wiz_card, bg=PANEL)
+        btn_row.pack(fill='x', pady=(0, 6))
+        self.lc_compute_btn = tk.Button(
+            btn_row, text='✓  Calcular Calibração',
+            command=self._lc_calib_compute,
+            bg=OK, fg='white',
+            activebackground=_shade(OK, -0.08), activeforeground='white',
+            font=FONT_LBL, relief='flat', bd=0, padx=14, pady=8,
+            cursor='hand2', state='disabled')
+        self.lc_compute_btn.pack(side='left', fill='x', expand=True, padx=(0, 4))
+        tk.Button(
+            btn_row, text='↺  Reiniciar',
+            command=self._lc_calib_reset,
+            bg=BTN_NEUTRAL, fg=TEXT,
+            activebackground=_shade(BTN_NEUTRAL, -0.08), activeforeground=TEXT,
+            font=FONT_LBL, relief='flat', bd=0, padx=14, pady=8,
+            cursor='hand2',
+        ).pack(side='left', fill='x', expand=True, padx=(4, 0))
+
+        self.lc_result_lbl = tk.Label(
+            wiz_card, text='', font=FONT_MONO_S, bg=PANEL, fg=TEXT_DIM, anchor='w')
+        self.lc_result_lbl.pack(fill='x', pady=(4, 0))
+
+    # ── Callbacks ROS — célula de carga ──────────────────────────────
+    def _cb_lc_voltage(self, msg: Float32) -> None:
+        with self._lock:
+            self._lc_voltage = float(msg.data)
+            self._lc_voltage_buf.append(float(msg.data))
+            self._lc_last_ts = time.time()
+
+    # ── Calibração — load / save ──────────────────────────────────────
+    def _load_lc_calib(self) -> None:
+        try:
+            if not os.path.exists(LC_CALIB_FILE):
+                return
+            with open(LC_CALIB_FILE) as fh:
+                data = json.load(fh)
+            slope     = float(data['slope'])
+            intercept = float(data['intercept'])
+            n_pts     = int(data.get('n_points', 0))
+            points    = [
+                (float(p['mass_kg']), float(p['v_sensor']))
+                for p in data.get('points', [])
+            ]
+            with self._lock:
+                self._lc_calib_slope     = slope
+                self._lc_calib_intercept = intercept
+                self._lc_calibrated      = True
+                self._lc_calib_n_pts     = n_pts
+            self._lc_calib_points = points
+            self.get_logger().info(
+                f'Calibração LC: slope={slope:.4f} intercept={intercept:.6f} '
+                f'({n_pts} pts)')
+        except Exception as exc:
+            self.get_logger().warn(f'Falha ao ler calibração LC: {exc}')
+
+    def _save_lc_calib(self, slope: float, intercept: float) -> None:
+        data = {
+            'slope':     slope,
+            'intercept': intercept,
+            'n_points':  len(self._lc_calib_points),
+            'points': [
+                {'mass_kg': m,
+                 'force_n': round(m * 9.80665, 4),
+                 'v_sensor': v}
+                for m, v in self._lc_calib_points
+            ],
+        }
+        try:
+            os.makedirs(os.path.dirname(LC_CALIB_FILE), exist_ok=True)
+            with open(LC_CALIB_FILE, 'w') as fh:
+                json.dump(data, fh, indent=2)
+            self.get_logger().info(f'Calibração LC salva em {LC_CALIB_FILE}')
+        except OSError as exc:
+            self._set_status(f'Falha ao salvar calibração: {exc}', DANGER)
+
+    # ── Calibração — wizard ───────────────────────────────────────────
+    def _lc_calib_capture(self) -> None:
+        with self._lock:
+            buf = list(self._lc_voltage_buf)
+
+        if len(buf) < 5:
+            self._set_status(
+                'Aguardando leituras da célula de carga (verifique a conexão UDP).',
+                WARN)
+            return
+
+        avg_v = sum(buf) / len(buf)
+
+        try:
+            mass_kg = float(self.lc_mass_var.get())
+        except (ValueError, tk.TclError):
+            self._set_status('Massa inválida.', DANGER)
+            return
+        if mass_kg <= 0.0:
+            self._set_status('Massa deve ser positiva.', DANGER)
+            return
+
+        self._lc_calib_points.append((mass_kg, avg_v))
+        idx     = len(self._lc_calib_points)
+        force_n = mass_kg * 9.80665
+
+        self.lc_point_lbls[idx - 1].config(
+            text=f'{idx}.  {mass_kg:.3f} kg  →  {force_n:.3f} N  →  {avg_v:.4f} V  ✓',
+            fg=OK)
+
+        if idx >= 5:
+            self.lc_step_lbl.config(
+                text='5 pesos capturados — clique em Calcular Calibração', fg=OK)
+            self.lc_capture_btn.config(state='disabled')
+            self.lc_compute_btn.config(state='normal')
+        else:
+            self.lc_step_lbl.config(
+                text=f'Passo {idx + 1} de 5 — posicione o próximo peso e insira a massa',
+                fg=PRIMARY)
+        self._set_status(
+            f'Ponto {idx}/5 capturado: {mass_kg:.3f} kg → {avg_v:.4f} V', OK)
+
+    def _lc_calib_compute(self) -> None:
+        if len(self._lc_calib_points) < 2:
+            self._set_status('Mínimo de 2 pontos para calibrar.', DANGER)
+            return
+
+        forces   = [m * 9.80665 for m, _v in self._lc_calib_points]
+        voltages = [v            for _m, v in self._lc_calib_points]
+
+        # Ajuste linear: v = slope * F + intercept → F = (v - intercept) / slope
+        coeffs    = np.polyfit(forces, voltages, 1)
+        slope     = float(coeffs[0])
+        intercept = float(coeffs[1])
+
+        v_fit  = np.polyval(coeffs, forces)
+        ss_res = float(np.sum((np.array(voltages) - v_fit) ** 2))
+        ss_tot = float(np.var(voltages)) * len(voltages)
+        r2     = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 1.0
+
+        with self._lock:
+            self._lc_calib_slope     = slope
+            self._lc_calib_intercept = intercept
+            self._lc_calibrated      = True
+            self._lc_calib_n_pts     = len(self._lc_calib_points)
+
+        self._save_lc_calib(slope, intercept)
+
+        result = f'slope={slope:.4f}  intercept={intercept:.4f}  R²={r2:.4f}'
+        self.lc_result_lbl.config(text=result, fg=OK)
+        self._set_status(f'Calibração concluída! {result}', OK)
+
+    def _lc_calib_reset(self) -> None:
+        self._lc_calib_points = []
+        self.lc_step_lbl.config(
+            text='Passo 1 de 5 — posicione o primeiro peso e insira a massa abaixo',
+            fg=PRIMARY)
+        self.lc_capture_btn.config(state='normal')
+        self.lc_compute_btn.config(state='disabled')
+        self.lc_result_lbl.config(text='', fg=TEXT_DIM)
+        for i, lbl in enumerate(self.lc_point_lbls):
+            lbl.config(text=f'{i + 1}.  — kg  →  — N  →  — V', fg=TEXT_DIM)
+        self._set_status('Calibração reiniciada.', TEXT_DIM)
+
+    # ── Refresh do painel de carga (Tk thread, 10 Hz) ─────────────────
+    def _refresh_lc_panel(self):
+        with self._lock:
+            voltage   = self._lc_voltage
+            calibrated = self._lc_calibrated
+            slope     = self._lc_calib_slope
+            intercept = self._lc_calib_intercept
+            n_pts     = self._lc_calib_n_pts
+            last_ts   = self._lc_last_ts
+
+        # Tensão
+        has_data = last_ts > 0.0
+        volt_txt   = f'{voltage:.4f}  V' if has_data else '—  V'
+        volt_color = TEXT if has_data else TEXT_DIM
+        self.lc_voltage_lbl.config(text=volt_txt, fg=volt_color)
+        self.lc_volt_live_lbl.config(text=volt_txt, fg=volt_color)
+
+        # Força
+        if calibrated and has_data and abs(slope) > 1e-9:
+            force = (voltage - intercept) / slope
+            self.lc_force_lbl.config(
+                text=f'{force:6.2f}  N',
+                fg=OK if abs(force) < 100 else WARN)
+            self.lc_calib_status_lbl.config(
+                text=f'Calibrado — {n_pts} pontos | '
+                     f'slope={slope:.4f}  intercept={intercept:.4f}',
+                fg=OK)
+        elif calibrated and not has_data:
+            self.lc_force_lbl.config(text='—   N', fg=TEXT_DIM)
+            self.lc_calib_status_lbl.config(
+                text='Calibrado — aguardando dados do sensor (verifique UDP)',
+                fg=WARN)
+        else:
+            self.lc_force_lbl.config(text='—   N', fg=TEXT_DIM)
+            self.lc_calib_status_lbl.config(
+                text='Não calibrado — use a aba Calibração para calibrar o sensor',
+                fg=WARN)
+
+        if calibrated:
+            self.lc_curr_calib_lbl.config(
+                text=f'slope={slope:.4f}  intercept={intercept:.4f}  ({n_pts} pontos)',
+                fg=OK)
+        else:
+            self.lc_curr_calib_lbl.config(
+                text='Nenhuma calibração salva', fg=WARN)
+
+        self.root.after(100, self._refresh_lc_panel)
 
     def _build_statusbar(self):
         self.status_var = tk.StringVar(value='pronto.')

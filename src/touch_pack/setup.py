@@ -33,6 +33,7 @@ setup(
             'tactile_explorer  = touch_pack.tactile_explorer:main',
             'palpation_logger  = touch_pack.palpation_logger:main',
             'gazebo_home_setter = touch_pack.gazebo_home_setter:main',
+            'force_receiver    = touch_pack.force_receiver_node:main',
         ],
     },
 )

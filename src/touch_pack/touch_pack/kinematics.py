@@ -71,9 +71,15 @@ T_HAND_ATTACH = np.array([
 
 # Limites articulares — convenção URDF (rad).
 # Joints 2 e 4 têm offset de -π/2 em relação à convenção DH;
-# os limites físicos são mapeados de ±135° (DH) → [-5π/4, π/4] (URDF).
-JOINT_MIN = np.deg2rad([-180., -260., -135., -260., -135., -360.])
-JOINT_MAX = np.deg2rad([ 180.,   80.,  135.,   80.,  135.,  360.])
+# os limites físicos são mapeados de ±170° (DH) → [-260°, +80°] (URDF).
+# Joint 3: limite URDF real é ±2.861 rad (≈±164°) — igual ao xacro do CR10.
+# Joint 5: limite físico ±135° (wrist2 do CR10).
+JOINT_MIN = np.array([np.deg2rad(-180.), np.deg2rad(-260.),
+                       -2.861,
+                       np.deg2rad(-260.), np.deg2rad(-135.), np.deg2rad(-360.)])
+JOINT_MAX = np.array([np.deg2rad( 180.), np.deg2rad(  80.),
+                        2.861,
+                        np.deg2rad(  80.), np.deg2rad( 135.), np.deg2rad( 360.)])
 
 # Distância efetiva WC→TCP ao longo do vetor de abordagem (m).
 # WC→hand_base_link ≈ 0.260; offset palma→TCP = 0.115 → soma = 0.375.
