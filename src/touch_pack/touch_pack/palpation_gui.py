@@ -366,7 +366,12 @@ class PalpationGUI(Node):
         self._lc_calib_intercept: float  = 0.0017
         self._lc_calib_n_pts: int        = 0
         self._lc_calib_points: list      = []   # (mass_kg, v_sensor) — wizard
+        self._lc_zero_voltage: float | None = None  # V capturado sem força (âncora do zero)
         self._load_lc_calib()
+        # Tare: tensão capturada com o sensor descarregado; subtrai o offset
+        # residual que faz o zero não bater após a calibração.
+        self._lc_tare_voltage: float = 0.0
+        self._lc_tare_done: bool = False
         # Subprocesso do force_receiver_node (gerenciado pelo botão Conectar)
         self._force_rx_proc: subprocess.Popen | None = None
         self._force_rx_should_be_alive: bool = False
@@ -546,17 +551,11 @@ class PalpationGUI(Node):
         nb.add(tab_man,  text='Controle Manual')
         nb.add(tab_lc,   text='Célula de Carga')
 
-        # IMPORTANTE: as abas NÃO são envolvidas em `_scrollable` (Canvas
-        # + create_window). Em testes locais essa combinação provocava
-        # segfault deterministico no Tk durante a criação do primeiro
-        # widget da segunda aba — provavelmente bug da interação entre
-        # Canvas embed + ttk.Progressbar + muitos filhos. A
-        # responsividade é dada por `minsize=720×460` + cards com
-        # `expand=True`. Se a janela ficar menor que o conteúdo, o que
-        # passar do limite é cortado, mas a GUI não trava.
-        self._build_palpation_tab(tab_palp)
-        self._build_manual_tab(tab_man)
-        self._build_loadcell_tab(tab_lc)
+        # ttk.Progressbar foi removida (causava segfault com Canvas embed).
+        # _scrollable agora é seguro para todas as abas.
+        self._build_palpation_tab(self._scrollable(tab_palp))
+        self._build_manual_tab(self._scrollable(tab_man))
+        self._build_loadcell_tab(tab_lc)   # sub-abas são scrolláveis internamente
 
     def _scrollable(self, parent: tk.Frame) -> tk.Frame:
         """Envolve `parent` num Canvas com scrollbar vertical e retorna o
@@ -586,7 +585,7 @@ class PalpationGUI(Node):
         # Mousewheel só rola se o ponteiro estiver sobre este canvas — bind
         # local via <Enter>/<Leave> evita capturar scroll de outras abas.
         def _wheel(e):
-            delta = -1 if e.num == 5 or e.delta < 0 else 1
+            delta = 1 if e.num == 5 or e.delta < 0 else -1
             canvas.yview_scroll(delta, 'units')
         canvas.bind('<Enter>',
                      lambda _e: (canvas.bind_all('<MouseWheel>', _wheel),
@@ -1459,8 +1458,9 @@ class PalpationGUI(Node):
         sub_nb.add(tab_leitura, text='Leitura')
         sub_nb.add(tab_calib,   text='Calibração')
 
-        self._build_lc_leitura_tab(tab_leitura)
-        self._build_lc_calibration_tab(tab_calib)
+        self._build_lc_leitura_tab(self._scrollable(tab_leitura))
+        self._build_lc_calibration_tab(self._scrollable(tab_calib))
+        self._restore_lc_calib_ui()
         self.root.after(100, self._refresh_lc_panel)
 
     def _build_lc_leitura_tab(self, root: tk.Frame):
@@ -1491,19 +1491,52 @@ class PalpationGUI(Node):
         # ── Card de leitura ───────────────────────────────────────────────
         card = self._card(root, 'Força Aplicada — Célula de Carga')
 
+        # Força total calibrada (inclui preload estático da montagem)
         row_f = tk.Frame(card, bg=PANEL)
-        row_f.pack(fill='x', pady=(8, 4))
-        tk.Label(row_f, text='Força Medida', font=FONT_LBL,
+        row_f.pack(fill='x', pady=(8, 2))
+        tk.Label(row_f, text='Força Total (calibração)', font=FONT_LBL,
                  bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
         self.lc_force_lbl = tk.Label(
             row_f, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
-        self.lc_force_lbl.pack(anchor='w', pady=(4, 2))
+        self.lc_force_lbl.pack(anchor='w', pady=(2, 0))
 
         self.lc_calib_status_lbl = tk.Label(
             card,
             text='Aguardando calibração — use a aba Calibração',
             font=FONT_LBL, bg=PANEL, fg=WARN)
-        self.lc_calib_status_lbl.pack(anchor='w', pady=(0, 4))
+        self.lc_calib_status_lbl.pack(anchor='w', pady=(0, 6))
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=4)
+
+        # Força normal perpendicular à mesa (após zeragem)
+        row_n = tk.Frame(card, bg=PANEL)
+        row_n.pack(fill='x', pady=(6, 2))
+        tk.Label(row_n, text='Força de Compressão ⊥ mesa  (derivada por simetria da tração)',
+                 font=FONT_LBL, bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
+        self.lc_normal_force_lbl = tk.Label(
+            row_n, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
+        self.lc_normal_force_lbl.pack(anchor='w', pady=(2, 0))
+
+        self.lc_tare_status_lbl = tk.Label(
+            card, text='Zeragem não realizada — clique Zerar Sensor antes de palpar',
+            font=FONT_LBL, bg=PANEL, fg=WARN)
+        self.lc_tare_status_lbl.pack(anchor='w', pady=(0, 6))
+
+        tare_btn_row = tk.Frame(card, bg=PANEL)
+        tare_btn_row.pack(fill='x', pady=(0, 6))
+        tk.Button(
+            tare_btn_row, text='🎯  Zerar Sensor (Tare)',
+            command=self._lc_do_tare,
+            bg=PRIMARY, fg='white',
+            activebackground=PRIMARY_HV, activeforeground='white',
+            font=FONT_LBL, relief='flat', bd=0, padx=14, pady=7,
+            cursor='hand2',
+        ).pack(side='left')
+        tk.Label(
+            tare_btn_row,
+            text='Pressione com o sensor descarregado\n(robô sem tocar a superfície)',
+            font=('Segoe UI', 9), bg=PANEL, fg=TEXT_DIM, justify='left',
+        ).pack(side='left', padx=(10, 0))
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=6)
 
@@ -1523,19 +1556,48 @@ class PalpationGUI(Node):
             font=FONT_LBL, bg=PANEL, fg=WARN)
         self.lc_curr_calib_lbl.pack(anchor='w', pady=(0, 4))
 
-        # ── Wizard de 5 pesos ────────────────────────────────────────
-        wiz_card = self._card(root, 'Procedimento — 5 Pesos Diferentes')
+        # ── Passo 1: referência zero (sensor sem nada) ───────────────────
+        zero_card = self._card(root, 'Passo 1 — Capturar Zero (sensor sem força)')
+        tk.Label(
+            zero_card,
+            text='Retire tudo do sensor e clique Capturar Zero.\n'
+                 'Este ponto ancora a reta em F = 0 N e elimina o offset.',
+            font=FONT_LBL, bg=PANEL, fg=TEXT_MUTED, justify='left',
+        ).pack(anchor='w', pady=(0, 8))
+        zero_btn_row = tk.Frame(zero_card, bg=PANEL)
+        zero_btn_row.pack(fill='x')
+        tk.Button(
+            zero_btn_row, text='⦾  Capturar Zero',
+            command=self._lc_capture_zero,
+            bg=PRIMARY, fg='white',
+            activebackground=PRIMARY_HV, activeforeground='white',
+            font=FONT_LBL, relief='flat', bd=0, padx=14, pady=7,
+            cursor='hand2',
+        ).pack(side='left')
+        self.lc_zero_status_lbl = tk.Label(
+            zero_btn_row,
+            text='Não capturado',
+            font=FONT_MONO, bg=PANEL, fg=WARN)
+        self.lc_zero_status_lbl.pack(side='left', padx=(14, 0))
+
+        # ── Passo 2: wizard de calibração por tração (5 pesos) ──────────
+        wiz_card = self._card(root, 'Passo 2 — Calibração por Tração (5 Pesos Conhecidos)')
 
         self.lc_step_lbl = tk.Label(
             wiz_card,
-            text='Passo 1 de 5 — posicione o primeiro peso e insira a massa abaixo',
+            text='Passo 1 de 5 — pendure/apoie o primeiro peso e insira a massa',
             font=FONT_LBL, bg=PANEL, fg=PRIMARY)
-        self.lc_step_lbl.pack(anchor='w', pady=(0, 8))
+        self.lc_step_lbl.pack(anchor='w', pady=(0, 4))
+        tk.Label(
+            wiz_card,
+            text='Compressão é derivada automaticamente por simetria da célula de carga',
+            font=('Segoe UI', 9), bg=PANEL, fg=TEXT_DIM,
+        ).pack(anchor='w', pady=(0, 8))
 
         # Massa
         mass_row = tk.Frame(wiz_card, bg=PANEL)
         mass_row.pack(fill='x', pady=(0, 4))
-        tk.Label(mass_row, text='Massa do objeto', font=FONT_LBL,
+        tk.Label(mass_row, text='Massa do peso (tração)', font=FONT_LBL,
                  bg=PANEL, fg=TEXT).pack(side='left')
         self.lc_mass_var = tk.DoubleVar(value=0.100)
         tk.Spinbox(
@@ -1609,6 +1671,98 @@ class PalpationGUI(Node):
             wiz_card, text='', font=FONT_MONO_S, bg=PANEL, fg=TEXT_DIM, anchor='w')
         self.lc_result_lbl.pack(fill='x', pady=(4, 0))
 
+    # ── Restaura UI com calibração salva em disco ─────────────────────
+    def _restore_lc_calib_ui(self) -> None:
+        """Popula o wizard com os pontos e o resultado da calibração salva.
+
+        Chamado uma única vez logo após a UI ser construída. Se não houver
+        calibração em disco, não faz nada — o wizard fica no estado inicial.
+        """
+        if not self._lc_calibrated:
+            return
+
+        slope     = self._lc_calib_slope
+        intercept = self._lc_calib_intercept
+        points    = self._lc_calib_points   # [(mass_kg, v_sensor), ...]
+        n         = len(points)
+        zero_v    = self._lc_zero_voltage
+
+        # ── Painel "Calibração Vigente" ──────────────────────────────
+        zero_note = f'  | zero={zero_v:.4f} V' if zero_v is not None else '  | sem zero'
+        self.lc_curr_calib_lbl.config(
+            text=f'slope={slope:.4f}  intercept={intercept:.4f}'
+                 f'  ({n} pontos){zero_note}',
+            fg=OK)
+
+        # ── Zero capturado ────────────────────────────────────────────
+        if zero_v is not None:
+            self.lc_zero_status_lbl.config(
+                text=f'V₀ = {zero_v:.4f} V  ✓  (salvo)', fg=OK)
+
+        # ── Pontos do wizard ─────────────────────────────────────────
+        for i, (mass_kg, v_sensor) in enumerate(points[:5]):
+            force_n = mass_kg * 9.80665
+            self.lc_point_lbls[i].config(
+                text=f'{i + 1}.  {mass_kg:.3f} kg  →  {force_n:.3f} N'
+                     f'  →  {v_sensor:.4f} V  ✓',
+                fg=OK)
+
+        # ── R² recalculado (inclui zero se disponível) ────────────────
+        all_forces   = [m * 9.80665 for m, _ in points]
+        all_voltages = [v           for _, v in points]
+        if zero_v is not None:
+            all_forces   = [0.0]   + all_forces
+            all_voltages = [zero_v] + all_voltages
+        result_txt = f'slope={slope:.4f}  intercept={intercept:.4f}'
+        if len(all_forces) >= 2:
+            v_fit  = [slope * f + intercept for f in all_forces]
+            ss_res = sum((v - vf) ** 2 for v, vf in zip(all_voltages, v_fit))
+            v_mean = sum(all_voltages) / len(all_voltages)
+            ss_tot = sum((v - v_mean) ** 2 for v in all_voltages)
+            r2     = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 1.0
+            result_txt += f'  R²={r2:.4f}'
+        result_txt += zero_note
+        self.lc_result_lbl.config(text=result_txt, fg=OK)
+
+        # ── Step label e botões ───────────────────────────────────────
+        if n >= 5:
+            self.lc_step_lbl.config(
+                text=f'Calibração carregada do disco — {n} pontos'
+                     '  (use ↺ Reiniciar para refazer)',
+                fg=OK)
+            self.lc_capture_btn.config(state='disabled')
+            self.lc_compute_btn.config(state='normal')
+        else:
+            self.lc_step_lbl.config(
+                text=f'Calibração parcial carregada ({n} de 5 pontos) — '
+                     f'Passo {n + 1}: posicione o próximo peso',
+                fg=WARN)
+            self.lc_capture_btn.config(state='normal')
+            if n >= 2:
+                self.lc_compute_btn.config(state='normal')
+
+    # ── Tare (zeragem) da célula de carga ────────────────────────────
+    def _lc_do_tare(self) -> None:
+        with self._lock:
+            buf = list(self._lc_voltage_buf)
+            has_calib = self._lc_calibrated
+
+        if not has_calib:
+            self._set_status('Calibre o sensor antes de zerar.', WARN)
+            return
+        if len(buf) < 5:
+            self._set_status(
+                'Aguardando leituras do sensor — verifique a conexão UDP.', WARN)
+            return
+
+        avg_v = sum(buf) / len(buf)
+        with self._lock:
+            self._lc_tare_voltage = avg_v
+            self._lc_tare_done = True
+
+        self._set_status(
+            f'Sensor zerado — tensão de referência: {avg_v:.4f} V.', OK)
+
     # ── Callbacks ROS — célula de carga ──────────────────────────────
     def _cb_lc_voltage(self, msg: Float32) -> None:
         with self._lock:
@@ -1626,6 +1780,8 @@ class PalpationGUI(Node):
             slope     = float(data['slope'])
             intercept = float(data['intercept'])
             n_pts     = int(data.get('n_points', 0))
+            zero_v_raw = data.get('zero_voltage')
+            zero_v     = float(zero_v_raw) if zero_v_raw is not None else None
             points    = [
                 (float(p['mass_kg']), float(p['v_sensor']))
                 for p in data.get('points', [])
@@ -1635,18 +1791,21 @@ class PalpationGUI(Node):
                 self._lc_calib_intercept = intercept
                 self._lc_calibrated      = True
                 self._lc_calib_n_pts     = n_pts
-            self._lc_calib_points = points
+            self._lc_calib_points  = points
+            self._lc_zero_voltage  = zero_v
             self.get_logger().info(
                 f'Calibração LC: slope={slope:.4f} intercept={intercept:.6f} '
-                f'({n_pts} pts)')
+                f'zero={zero_v}  ({n_pts} pts)')
         except Exception as exc:
             self.get_logger().warn(f'Falha ao ler calibração LC: {exc}')
 
-    def _save_lc_calib(self, slope: float, intercept: float) -> None:
+    def _save_lc_calib(self, slope: float, intercept: float,
+                       zero_voltage: float | None = None) -> None:
         data = {
-            'slope':     slope,
-            'intercept': intercept,
-            'n_points':  len(self._lc_calib_points),
+            'slope':        slope,
+            'intercept':    intercept,
+            'zero_voltage': zero_voltage,
+            'n_points':     len(self._lc_calib_points),
             'points': [
                 {'mass_kg': m,
                  'force_n': round(m * 9.80665, 4),
@@ -1663,6 +1822,24 @@ class PalpationGUI(Node):
             self._set_status(f'Falha ao salvar calibração: {exc}', DANGER)
 
     # ── Calibração — wizard ───────────────────────────────────────────
+    def _lc_capture_zero(self) -> None:
+        """Captura a tensão do sensor sem nenhuma força aplicada (F = 0 N).
+
+        Este ponto é incluído automaticamente na regressão, ancorando a reta
+        na origem real do sensor e eliminando o offset residual do intercepto.
+        """
+        with self._lock:
+            buf = list(self._lc_voltage_buf)
+        if len(buf) < 5:
+            self._set_status(
+                'Aguardando leituras do sensor — verifique a conexão UDP.', WARN)
+            return
+        v0 = sum(buf) / len(buf)
+        self._lc_zero_voltage = v0
+        self.lc_zero_status_lbl.config(
+            text=f'V₀ = {v0:.4f} V  ✓', fg=OK)
+        self._set_status(f'Zero capturado: {v0:.4f} V (F = 0 N)', OK)
+
     def _lc_calib_capture(self) -> None:
         with self._lock:
             buf = list(self._lc_voltage_buf)
@@ -1680,8 +1857,8 @@ class PalpationGUI(Node):
         except (ValueError, tk.TclError):
             self._set_status('Massa inválida.', DANGER)
             return
-        if mass_kg < 0.0:
-            self._set_status('Massa não pode ser negativa.', DANGER)
+        if mass_kg <= 0.0:
+            self._set_status('Informe uma massa positiva (peso em tração).', DANGER)
             return
 
         self._lc_calib_points.append((mass_kg, avg_v))
@@ -1699,10 +1876,10 @@ class PalpationGUI(Node):
             self.lc_compute_btn.config(state='normal')
         else:
             self.lc_step_lbl.config(
-                text=f'Passo {idx + 1} de 5 — posicione o próximo peso e insira a massa',
+                text=f'Passo {idx + 1} de 5 — pendure/apoie o próximo peso',
                 fg=PRIMARY)
         self._set_status(
-            f'Ponto {idx}/5 capturado: {mass_kg:.3f} kg → {avg_v:.4f} V', OK)
+            f'Ponto {idx}/5: {mass_kg:.3f} kg → {avg_v:.4f} V', OK)
 
     def _lc_calib_compute(self) -> None:
         if len(self._lc_calib_points) < 2:
@@ -1711,6 +1888,14 @@ class PalpationGUI(Node):
 
         forces   = [m * 9.80665 for m, _v in self._lc_calib_points]
         voltages = [v            for _m, v in self._lc_calib_points]
+
+        # Inclui o ponto de zero capturado: ancora a reta em (F=0, V=V₀),
+        # eliminando o offset residual que aparece quando o intercepto não
+        # corresponde à tensão real do sensor sem carga.
+        zero_v = self._lc_zero_voltage
+        if zero_v is not None:
+            forces   = [0.0] + forces
+            voltages = [zero_v] + voltages
 
         # Ajuste linear: v = slope * F + intercept → F = (v - intercept) / slope
         coeffs    = np.polyfit(forces, voltages, 1)
@@ -1728,16 +1913,20 @@ class PalpationGUI(Node):
             self._lc_calibrated      = True
             self._lc_calib_n_pts     = len(self._lc_calib_points)
 
-        self._save_lc_calib(slope, intercept)
+        self._save_lc_calib(slope, intercept, zero_v)
 
-        result = f'slope={slope:.4f}  intercept={intercept:.4f}  R²={r2:.4f}'
+        zero_note = f'  | zero={zero_v:.4f} V' if zero_v is not None else '  | sem zero'
+        result = f'slope={slope:.4f}  intercept={intercept:.4f}  R²={r2:.4f}{zero_note}'
         self.lc_result_lbl.config(text=result, fg=OK)
         self._set_status(f'Calibração concluída! {result}', OK)
 
     def _lc_calib_reset(self) -> None:
         self._lc_calib_points = []
+        self._lc_zero_voltage = None
+        self.lc_mass_var.set(0.100)
+        self.lc_zero_status_lbl.config(text='Não capturado', fg=WARN)
         self.lc_step_lbl.config(
-            text='Passo 1 de 5 — posicione o primeiro peso e insira a massa abaixo',
+            text='Passo 1 de 5 — pendure/apoie o primeiro peso e insira a massa',
             fg=PRIMARY)
         self.lc_capture_btn.config(state='normal')
         self.lc_compute_btn.config(state='disabled')
@@ -1826,12 +2015,14 @@ class PalpationGUI(Node):
     # ── Refresh do painel de carga (Tk thread, 10 Hz) ─────────────────
     def _refresh_lc_panel(self):
         with self._lock:
-            voltage   = self._lc_voltage
+            voltage    = self._lc_voltage
             calibrated = self._lc_calibrated
-            slope     = self._lc_calib_slope
-            intercept = self._lc_calib_intercept
-            n_pts     = self._lc_calib_n_pts
-            last_ts   = self._lc_last_ts
+            slope      = self._lc_calib_slope
+            intercept  = self._lc_calib_intercept
+            n_pts      = self._lc_calib_n_pts
+            last_ts    = self._lc_last_ts
+            tare_done  = self._lc_tare_done
+            tare_v     = self._lc_tare_voltage
 
         # Watchdog do force_receiver_node: detecta morte inesperada
         if self._force_rx_should_be_alive:
@@ -1869,23 +2060,42 @@ class PalpationGUI(Node):
         self.lc_voltage_lbl.config(text=volt_txt, fg=volt_color)
         self.lc_volt_live_lbl.config(text=volt_txt, fg=volt_color)
 
-        # Força
+        # Força total calibrada (inclui preload estático)
         if calibrated and has_data and abs(slope) > 1e-9:
-            force = (voltage - intercept) / slope
+            force_total = (voltage - intercept) / slope
             self.lc_force_lbl.config(
-                text=f'{force:6.2f}  N',
-                fg=OK if abs(force) < 100 else WARN)
+                text=f'{force_total:6.2f}  N',
+                fg=OK if abs(force_total) < 100 else WARN)
             self.lc_calib_status_lbl.config(
                 text=f'Calibrado — {n_pts} pontos | '
                      f'slope={slope:.4f}  intercept={intercept:.4f}',
                 fg=OK)
+
+            # Força de compressão ⊥ mesa = derivada da calibração por tração,
+            # sinal invertido: robô pressionando → V cai abaixo do tare → resultado positivo.
+            if tare_done:
+                f_compress = (tare_v - voltage) / slope   # positivo quando pressionando
+                color = OK if f_compress >= -0.05 else WARN
+                self.lc_normal_force_lbl.config(
+                    text=f'{f_compress:6.2f}  N', fg=color)
+                self.lc_tare_status_lbl.config(
+                    text=f'Ref. tare: {tare_v:.4f} V  '
+                         f'| calibração por tração, compressão por simetria',
+                    fg=OK)
+            else:
+                self.lc_normal_force_lbl.config(text='—   N', fg=TEXT_DIM)
+                self.lc_tare_status_lbl.config(
+                    text='Zeragem não realizada — clique Zerar Sensor antes de palpar',
+                    fg=WARN)
         elif calibrated and not has_data:
             self.lc_force_lbl.config(text='—   N', fg=TEXT_DIM)
+            self.lc_normal_force_lbl.config(text='—   N', fg=TEXT_DIM)
             self.lc_calib_status_lbl.config(
                 text='Calibrado — aguardando dados do sensor (verifique UDP)',
                 fg=WARN)
         else:
             self.lc_force_lbl.config(text='—   N', fg=TEXT_DIM)
+            self.lc_normal_force_lbl.config(text='—   N', fg=TEXT_DIM)
             self.lc_calib_status_lbl.config(
                 text='Não calibrado — use a aba Calibração para calibrar o sensor',
                 fg=WARN)
