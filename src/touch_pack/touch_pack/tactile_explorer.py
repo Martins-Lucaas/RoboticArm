@@ -164,9 +164,11 @@ class TactileExplorer(Node):
         self._status_pub = self.create_publisher(String, '/palpation/status', 10)
 
         # Publisher direto no tópico do controller — sem action server.
+        # depth=1: sem fila; cada nova mensagem substitui a anterior para
+        # evitar rajada de setpoints antigos após jitter do SO.
         self._arm_traj_pub = self.create_publisher(
             JointTrajectory,
-            '/cr10_group_controller/joint_trajectory', 5)
+            '/cr10_group_controller/joint_trajectory', 1)
         self._hand_pub = self.create_publisher(
             JointTrajectory,
             '/hand_position_controller/joint_trajectory', 5)
@@ -379,13 +381,13 @@ class TactileExplorer(Node):
                 '_cartesian_stream: forneça v_const_ms OU (v_max_ms, v_min_ms).')
             return 'error'
 
-        q = self._q_now().copy()
         I6 = np.eye(6)
 
-        # Captura orientação inicial para travamento (lock_ori).
+        # Captura orientação inicial para travamento (lock_ori) a partir do
+        # estado real das juntas. R0 é capturado uma única vez.
         R0: np.ndarray | None = None
         if lock_ori:
-            R0 = forward_kinematics(q)[:3, :3].copy()
+            R0 = forward_kinematics(self._q_now())[:3, :3].copy()
 
         covered = 0.0
 
@@ -400,6 +402,11 @@ class TactileExplorer(Node):
                     fz = float(abs(self._ft_force[2]))
                 if fz >= force_threshold_n:
                     return 'force'
+
+            # Lê estado real das juntas a cada tick (closed-loop Jacobiano):
+            # evita acumulação de erro se o controlador não rastrear
+            # perfeitamente (limites de junta, lag do hardware real).
+            q = self._q_now().copy()
 
             # Perfil de velocidade.
             u = covered / total_m
@@ -431,8 +438,8 @@ class TactileExplorer(Node):
                 time.sleep(_CTRL_DT)
                 continue
 
-            q = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
-            self._stream_q(q, _CTRL_LOOK + _CTRL_DT)
+            q_cmd = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
+            self._stream_q(q_cmd, _CTRL_LOOK + _CTRL_DT)
             covered += step
             time.sleep(_CTRL_DT)
 
@@ -480,8 +487,25 @@ class TactileExplorer(Node):
         # Settle final para estabilizar antes do CONTACT.
         self._settle(ticks=_SETTLE_TICKS * 3)
 
-        with self._q_lock:
-            self._current_q = q_home.copy()
+        # Verificação de orientação: o TCP deve estar apontando para baixo
+        # (componente -Z da terceira coluna de R deve ser ≤ −0.7).
+        # Se a home customizada tiver o TCP em orientação incorreta, a fase
+        # CONTACT desceria na direção errada (lock_ori manteria a orientação ruim).
+        q_actual = self._q_now()
+        R_tcp = forward_kinematics(q_actual)[:3, :3]
+        tcp_z_world = R_tcp[:, 2]   # terceira coluna = eixo Z do TCP no frame mundo
+        if tcp_z_world[2] > -0.5:
+            self.get_logger().warn(
+                f'HOME: TCP não está apontando para baixo '
+                f'(tcp_z_world[2]={tcp_z_world[2]:.2f}, esperado < −0.5). '
+                'Palpação continua mas a descida pode ser incorreta.')
+        else:
+            self.get_logger().info(
+                f'HOME: orientação OK — tcp_z_world[2]={tcp_z_world[2]:.2f}')
+
+        # NÃO sobrescrever _current_q: _cb_joints já mantém o valor correto
+        # a partir de /joint_states. Forçar q_home aqui descartaria o estado
+        # real e poderia causar salto no primeiro passo do CONTACT.
         return True
 
     def _phase_contact(self) -> bool:
@@ -577,7 +601,11 @@ class TactileExplorer(Node):
                 except np.linalg.LinAlgError:
                     dq = np.zeros(6)
                 q_new = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
-                self._stream_q(q_new, dt + _CTRL_LOOK)
+                # HOLD: usa time_from_start=dt (sem lookahead extra) para que
+                # as correções de força tomem efeito em 30 ms, não 130 ms.
+                # Um lookahead de 100 ms no PID causa atraso de 4 ticks →
+                # integrador acumula antes do efeito → overshoot e ruídos.
+                self._stream_q(q_new, dt)
 
             elapsed = time.time() - t0
             if elapsed < dt:

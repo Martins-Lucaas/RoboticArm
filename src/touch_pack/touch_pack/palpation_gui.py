@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -335,7 +336,7 @@ class PalpationGUI(Node):
         self.create_subscription(
             JointTrajectory,
             '/cr10_group_controller/joint_trajectory',
-            self._cb_arm_trajectory, 5)  # depth=5 igual ao publisher
+            self._cb_arm_trajectory, 1)  # depth=1: só o setpoint mais recente
         # /joint_states: posição real (simulada) do braço — usado pelo
         # mirror poll loop para capturar palpação via action server.
         self.create_subscription(
@@ -740,8 +741,10 @@ class PalpationGUI(Node):
         self._param_row(speed_inner, label='Velocidade', unit='%',
                         var=self.speed_factor_var,
                         vmin=SPEED_FACTOR_MIN, vmax=SPEED_FACTOR_MAX, step=1,
-                        hint='10 % recomendado — aplica SpeedFactor ao braço '
-                             'real e escala a duração da trajetória no Gazebo')
+                        hint='Afeta jog manual (MovJ/PTP) e duração no Gazebo. '
+                             'NÃO afeta streaming durante palpação (CONTACT/'
+                             'HOLD/SLIDING/RETRACT usam ServoJ com velocidade '
+                             'própria definida nos parâmetros acima).')
         self.speed_factor_var.trace_add(
             'write', lambda *_: self._apply_speed_factor_if_active())
 
@@ -912,6 +915,14 @@ class PalpationGUI(Node):
     def _publish_arm_from_sliders(self):
         if self._suppressing:
             return
+        # Bloqueia publish de slider durante palpação ativa: o explorer está
+        # fazendo streaming no mesmo tópico JTC a 33 Hz. Um publish do slider
+        # substituiria o setpoint do explorer por uma posição arbitrária,
+        # causando solavanco e desestabilizando o controle de força no HOLD.
+        with self._lock:
+            _phase = self._latest_phase
+        if _phase not in ('IDLE', 'DONE', 'ABORTED'):
+            return
         self._suppressing = True
         try:
             positions_deg: list[float] = []
@@ -1023,8 +1034,19 @@ class PalpationGUI(Node):
         """
         _servoj_ready = False
         _diag_count = 0
+        _PERIOD = 0.030   # 33 Hz
+        _t_next = time.monotonic() + _PERIOD
         while not self._stop_event.is_set():
-            self._stop_event.wait(0.030)   # 33 Hz
+            # Drift-compensated sleep: corrige jitter acumulado do SO.
+            # wait(0.030) pode demorar 31–40 ms no Linux com carga, causando
+            # descontinuidades no ServoJ que levam a sons e solavancos no real.
+            now = time.monotonic()
+            sleep_s = max(0.0, _t_next - now)
+            self._stop_event.wait(sleep_s)
+            _t_next += _PERIOD
+            # Evita recuperar múltiplos ticks atrasados de uma vez.
+            if _t_next < time.monotonic():
+                _t_next = time.monotonic() + _PERIOD
             if (self._robot_mode != 'MIRROR' or not self._robot_connected
                     or self._real_driver is None or _urdf_to_dobot is None):
                 _servoj_ready = False
@@ -1225,7 +1247,9 @@ class PalpationGUI(Node):
                     for j in ARM_JOINTS:
                         if j in data:
                             try:
-                                self._arm_home_deg[j] = float(data[j])
+                                lo, hi = ARM_LIMITS_DEG[j]
+                                v = float(data[j])
+                                self._arm_home_deg[j] = max(lo, min(hi, v))
                             except (TypeError, ValueError):
                                 pass
                 self.get_logger().info(
@@ -1891,7 +1915,7 @@ class PalpationGUI(Node):
         # reconectar com backoff automaticamente.
         self._start_robot_heartbeat()
         # Aplica SpeedFactor do slider GUI ao braço real imediatamente após a
-        # conexão (enable() usa o default 50%; aqui sincronizamos com o slider).
+        # conexão (enable() usa SPEED_FACTOR_DEFAULT=10%; aqui sincronizamos com o slider).
         try:
             sf = int(max(SPEED_FACTOR_MIN,
                          min(SPEED_FACTOR_MAX, self.speed_factor_var.get())))
@@ -1902,8 +1926,10 @@ class PalpationGUI(Node):
             log.warning('[CONNECT] SpeedFactor falhou na conexão: %s', exc)
             sf = drv.cfg.speed_factor
         # Modo 5 = ENABLE (pronto); 9 = ERROR no Dobot CR.
+        # Usa regex \{9\} para evitar falso-positivo em IPs ou timestamps que
+        # contenham '9' (ex.: 192.168.1.9 → '9' in mode_raw = True erroneamente).
         mode_note = f'  [RobotMode: {mode_raw[:60].strip()}]' if mode_raw else ''
-        color = DANGER if '9' in mode_raw and '5' not in mode_raw else OK
+        color = DANGER if re.search(r'\{9\}', mode_raw) else OK
         self._set_status(
             f'CR10 conectado em {ip} '
             f'(SpeedFactor={sf}%){mode_note}.', color)
@@ -2116,11 +2142,26 @@ class PalpationGUI(Node):
 
         NÃO substitui o botão físico de E-STOP do controlador CR.
         """
+        # 1. Aborta o tactile_explorer FSM (CONTACT/HOLD/SLIDING param).
+        #    Sem isso o explorer continua publicando setpoints no JTC e o
+        #    robô executa trajetórias acumuladas quando se recuperar do Stop.
+        stop_msg = String()
+        stop_msg.data = 'stop'
+        self._stop_pub.publish(stop_msg)
+
+        # 2. Congela o mirror poll loop (evita ServoJ após a parada).
+        cur = self._latest_joint_rad
+        if cur is not None:
+            self._mirror_last_target = np.asarray(cur, dtype=np.float64)
+
+        # 3. Para o braço real.
         if self._real_driver is not None and self._robot_connected:
             try:
                 self._real_driver.stop()
             except CR10RealDriverError as exc:
                 self.get_logger().error(f'E-STOP real falhou: {exc}')
+
+        # 4. Abre a mão via ECI.
         if self._eci_enabled and self._cli_eci_grip is not None \
                 and self._eci_srv is not None:
             try:

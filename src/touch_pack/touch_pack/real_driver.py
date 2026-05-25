@@ -358,15 +358,39 @@ class CR10RealDriver:
 
         V4 firmware usa Stop() (não StopRobot/ResetRobot, que retornam -10000).
         NÃO substitui o botão físico de E-STOP do controlador.
+
+        As respostas são drenadas com timeout curto (0.15 s cada) para
+        evitar cmd→resposta mismatch em chamadas posteriores ao dashboard.
+        Sem esse drain, o próximo _send_dash leria a resposta do Stop()
+        em vez da sua própria, corrompendo a detecção de erros.
         """
-        try:
-            self._send_dash('Stop()', expect_reply=False)
-        except CR10RealDriverError:
-            pass
-        try:
-            self._send_dash('DisableRobot()', expect_reply=False)
-        except CR10RealDriverError:
-            pass
+        if self.dry_run:
+            self._enabled = False
+            return
+        if self._dash is None:
+            self._enabled = False
+            return
+        with self._dash_lock:
+            n_sent = 0
+            try:
+                self._dash.sendall(b'Stop()\n')
+                n_sent += 1
+            except OSError:
+                pass
+            try:
+                self._dash.sendall(b'DisableRobot()\n')
+                n_sent += 1
+            except OSError:
+                pass
+            # Drena as respostas pendentes com timeout curto.
+            orig_to = self._dash.gettimeout()
+            self._dash.settimeout(0.15)
+            for _ in range(n_sent):
+                try:
+                    self._recv_line(self._dash)
+                except Exception:
+                    break
+            self._dash.settimeout(orig_to)
         self._enabled = False
 
     # ── movimentação ─────────────────────────────────────────────────────
