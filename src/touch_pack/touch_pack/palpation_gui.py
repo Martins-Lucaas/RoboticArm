@@ -1511,7 +1511,7 @@ class PalpationGUI(Node):
         # Força normal perpendicular à mesa (após zeragem)
         row_n = tk.Frame(card, bg=PANEL)
         row_n.pack(fill='x', pady=(6, 2))
-        tk.Label(row_n, text='Força de Compressão ⊥ mesa  (derivada por simetria da tração)',
+        tk.Label(row_n, text='Força Normal ⊥ mesa  (+compressão / −tração, ref. tare)',
                  font=FONT_LBL, bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
         self.lc_normal_force_lbl = tk.Label(
             row_n, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
@@ -1555,6 +1555,16 @@ class PalpationGUI(Node):
             status_card, text='Nenhuma calibração salva',
             font=FONT_LBL, bg=PANEL, fg=WARN)
         self.lc_curr_calib_lbl.pack(anchor='w', pady=(0, 4))
+
+        # Pontos usados na calibração (populados por _restore_lc_calib_ui)
+        self.lc_saved_point_lbls: list[tk.Label] = []
+        for i in range(5):
+            lbl = tk.Label(
+                status_card,
+                text='',
+                font=FONT_MONO_S, bg=PANEL, fg=OK, anchor='w')
+            lbl.pack(fill='x', pady=1)
+            self.lc_saved_point_lbls.append(lbl)
 
         # ── Passo 1: referência zero (sensor sem nada) ───────────────────
         zero_card = self._card(root, 'Passo 1 — Capturar Zero (sensor sem força)')
@@ -1693,6 +1703,18 @@ class PalpationGUI(Node):
             text=f'slope={slope:.4f}  intercept={intercept:.4f}'
                  f'  ({n} pontos){zero_note}',
             fg=OK)
+
+        # Pontos salvos exibidos em verde no card "Calibração Vigente"
+        for i in range(5):
+            if i < len(points):
+                mass_kg, v_sensor = points[i]
+                force_n = mass_kg * 9.80665
+                self.lc_saved_point_lbls[i].config(
+                    text=f'  {i + 1}.  {mass_kg:.3f} kg  →  {force_n:.3f} N'
+                         f'  →  {v_sensor:.4f} V  ✓',
+                    fg=OK)
+            else:
+                self.lc_saved_point_lbls[i].config(text='')
 
         # ── Zero capturado ────────────────────────────────────────────
         if zero_v is not None:
@@ -1920,6 +1942,22 @@ class PalpationGUI(Node):
         self.lc_result_lbl.config(text=result, fg=OK)
         self._set_status(f'Calibração concluída! {result}', OK)
 
+        # Atualiza card "Calibração Vigente" com os pontos em verde
+        self.lc_curr_calib_lbl.config(
+            text=f'slope={slope:.4f}  intercept={intercept:.4f}'
+                 f'  ({len(self._lc_calib_points)} pontos){zero_note}',
+            fg=OK)
+        for i in range(5):
+            if i < len(self._lc_calib_points):
+                mass_kg, v_sensor = self._lc_calib_points[i]
+                force_n = mass_kg * 9.80665
+                self.lc_saved_point_lbls[i].config(
+                    text=f'  {i + 1}.  {mass_kg:.3f} kg  →  {force_n:.3f} N'
+                         f'  →  {v_sensor:.4f} V  ✓',
+                    fg=OK)
+            else:
+                self.lc_saved_point_lbls[i].config(text='')
+
     def _lc_calib_reset(self) -> None:
         self._lc_calib_points = []
         self._lc_zero_voltage = None
@@ -1933,6 +1971,8 @@ class PalpationGUI(Node):
         self.lc_result_lbl.config(text='', fg=TEXT_DIM)
         for i, lbl in enumerate(self.lc_point_lbls):
             lbl.config(text=f'{i + 1}.  — kg  →  — N  →  — V', fg=TEXT_DIM)
+        for lbl in self.lc_saved_point_lbls:
+            lbl.config(text='')
         self._set_status('Calibração reiniciada.', TEXT_DIM)
 
     # ── Force receiver — gerenciamento do subprocesso ─────────────────
@@ -2074,10 +2114,10 @@ class PalpationGUI(Node):
             # Força de compressão ⊥ mesa = derivada da calibração por tração,
             # sinal invertido: robô pressionando → V cai abaixo do tare → resultado positivo.
             if tare_done:
-                f_compress = (tare_v - voltage) / slope   # positivo quando pressionando
-                color = OK if f_compress >= -0.05 else WARN
+                f_compress = (tare_v - voltage) / slope   # positivo = compressão, negativo = tração
+                color = OK if abs(f_compress) < 100 else WARN
                 self.lc_normal_force_lbl.config(
-                    text=f'{f_compress:6.2f}  N', fg=color)
+                    text=f'{f_compress:+6.2f}  N', fg=color)
                 self.lc_tare_status_lbl.config(
                     text=f'Ref. tare: {tare_v:.4f} V  '
                          f'| calibração por tração, compressão por simetria',
