@@ -194,11 +194,37 @@ def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str) -> str
 
 def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
                               arm_gz: str) -> str:
-    """Injeta o TouchTool Square 20×20 mm + tcp_link no CR10."""
-    mesh_path = os.path.join(
-        touch_pack_share, 'meshes', 'touch_tool_square_20x20.stl')
+    """Injeta Célula de Carga + TouchTool Square 20×20 mm + tcp_link no CR10.
+
+    Cadeia: Link6 → force_sensor_link (12.7 mm) → touch_tool_link → tcp_link.
+    """
+    sensor_mesh = os.path.join(touch_pack_share, 'meshes', 'Celula De Carga.stl')
+    tool_mesh   = os.path.join(touch_pack_share, 'meshes', 'touch_tool_square_20x20.stl')
 
     tool_snippet = f'''
+    <!-- ── Célula de Carga (em pé: Rx+90°, mesh-Y→+Z robô) ──────── -->
+    <link name="force_sensor_link">
+      <inertial>
+        <origin xyz="0 0 0.030" rpy="0 0 0"/>
+        <mass value="0.150"/>
+        <inertia ixx="4.70e-5" ixy="0.0" ixz="0.0"
+                 iyy="7.73e-5" iyz="0.0" izz="3.43e-5"/>
+      </inertial>
+      <visual>
+        <origin xyz="-0.0254 0.00635 0" rpy="1.5708 0 0"/>
+        <geometry>
+          <mesh filename="file://{sensor_mesh}" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="silver">
+          <color rgba="0.80 0.80 0.85 1.0"/>
+        </material>
+      </visual>
+      <collision name="col_sensor">
+        <origin xyz="0 0 0.030" rpy="0 0 0"/>
+        <geometry><box size="0.0508 0.0127 0.060"/></geometry>
+      </collision>
+    </link>
+    <!-- ── Touch Tool ─────────────────────────────────────────────── -->
     <link name="touch_tool_link">
       <inertial>
         <origin xyz="0 0 0.064" rpy="0 0 0"/>
@@ -209,10 +235,10 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
       <visual>
         <origin xyz="0 0 0.0065" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="file://{mesh_path}" scale="0.001 0.001 0.001"/>
+          <mesh filename="file://{tool_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
-        <material name="aluminium_grey">
-          <color rgba="0.72 0.72 0.75 1.0"/>
+        <material name="light_red">
+          <color rgba="1.0 0.50 0.50 1.0"/>
         </material>
       </visual>
       <collision name="col_body">
@@ -225,10 +251,17 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
       </collision>
     </link>
     <link name="tcp_link"/>
-    <joint name="touch_tool_attach" type="fixed">
+    <!-- célula de carga ao flange -->
+    <joint name="force_sensor_attach" type="fixed">
       <parent link="Link6"/>
-      <child link="touch_tool_link"/>
+      <child link="force_sensor_link"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+    <!-- touch tool ao topo da célula em pé (+60 mm) -->
+    <joint name="touch_tool_attach" type="fixed">
+      <parent link="force_sensor_link"/>
+      <child link="touch_tool_link"/>
+      <origin xyz="0 0 0.060" rpy="0 0 0"/>
     </joint>
     <joint name="tcp_alias_joint" type="fixed">
       <parent link="touch_tool_link"/>
@@ -237,6 +270,15 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
     </joint>'''
 
     tool_gz = (
+        '\n  <gazebo reference="force_sensor_link">'
+        '<self_collide>false</self_collide>'
+        '<gravity>true</gravity>'
+        '<mu1>0.40</mu1><mu2>0.40</mu2>'
+        '<kp>1.0e5</kp><kd>100.0</kd>'
+        '<maxContacts>4</maxContacts>'
+        '<minDepth>0.0002</minDepth>'
+        '<maxVel>0.05</maxVel>'
+        '</gazebo>'
         '\n  <gazebo reference="touch_tool_link">'
         '<self_collide>false</self_collide>'
         '<gravity>true</gravity>'

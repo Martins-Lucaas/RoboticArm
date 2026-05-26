@@ -8,12 +8,16 @@
     Y: ±45 mm  (profundidade 90 mm)
     Z: -6.5 mm … +108 mm  (comprimento total ≈ 114.5 mm)
 
+  Cadeia de links:
+    Link6 → force_sensor_link (célula de carga, 12.7 mm) → touch_tool_link → tcp_link
+
   Convenção de frames:
-    • touch_tool_link / origem: face de acoplamento ao flange do robô (Link6).
-      O fundo do STL (Z = -6.5 mm no espaço da malha) é alinhado aqui com
-      offset visual de +0.0065 m.
+    • force_sensor_link / origem: coincide com o flange do robô (Link6).
+      Célula de carga 50.8×60×12.7 mm, mesh centralizado em X/Y por offset visual.
+    • touch_tool_link / origem: face superior da célula em pé (+60 mm em Z de Link6).
+      O fundo do STL (Z = -6.5 mm no espaço da malha) é alinhado com +0.0065 m.
     • tcp_link: face de contato quadrada 20×20 mm (ponta do probe),
-      situado em Z = 0.0065 + 0.108 = 0.1145 m acima da origem do link.
+      situado em 0.060 + 0.1145 = 0.1745 m acima do flange (Link6).
 
   Uso standalone (Gazebo):
     Altere o parent do joint "touch_tool_attach" de "Link6" para "world",
@@ -49,6 +53,40 @@
   </link>
 
   <!-- ══════════════════════════════════════════════════════════════════
+       CÉLULA DE CARGA (entre Link6 e touch_tool_link)
+       STL original: X[0..50.8] Y[0..60] Z[0..12.7] mm — unidade mm.
+       Offset visual −25.4 mm em X e −30 mm em Y para centralizar o mesh
+       no eixo Z do flange. Colisão: caixa 50.8×60×12.7 mm.
+  ══════════════════════════════════════════════════════════════════ -->
+  <link name="force_sensor_link">
+    <inertial>
+      <!-- em pé: 50.8×12.7×60 mm, CoM no centro geométrico -->
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <mass value="0.150"/>
+      <inertia ixx="4.70e-5" ixy="0.0" ixz="0.0"
+               iyy="7.73e-5" iyz="0.0"
+               izz="3.43e-5"/>
+    </inertial>
+    <!-- Rx(+90°): mesh-Y(60mm) → +Z do robô (célula em pé) -->
+    <visual>
+      <origin xyz="-0.0254 0.00635 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <mesh filename="package://touch_pack/meshes/Celula De Carga.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="silver">
+        <color rgba="0.80 0.80 0.85 1.0"/>
+      </material>
+    </visual>
+    <collision name="col_sensor">
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0508 0.0127 0.060"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ══════════════════════════════════════════════════════════════════
        CORPO PRINCIPAL DO TCP
   ══════════════════════════════════════════════════════════════════ -->
   <link name="touch_tool_link">
@@ -76,8 +114,8 @@
         <mesh filename="package://touch_pack/meshes/touch_tool_square_20x20.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
-      <material name="aluminium_grey">
-        <color rgba="0.72 0.72 0.75 1.0"/>
+      <material name="light_red">
+        <color rgba="1.0 0.50 0.50 1.0"/>
       </material>
     </visual>
 
@@ -112,12 +150,18 @@
   <!-- ══════════════════════════════════════════════════════════════════
        JUNTAS
   ══════════════════════════════════════════════════════════════════ -->
-  <!-- Acoplamento ao flange do robô (rpy=0 → Z do flange = eixo axial
-       da ferramenta). Ajuste rpy se a orientação do flange exigir. -->
-  <joint name="touch_tool_attach" type="fixed">
+  <!-- Célula de carga acoplada ao flange do robô. -->
+  <joint name="force_sensor_attach" type="fixed">
     <parent link="Link6"/>
-    <child link="touch_tool_link"/>
+    <child link="force_sensor_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Touch tool acoplado ao topo da célula em pé (+60 mm). -->
+  <joint name="touch_tool_attach" type="fixed">
+    <parent link="force_sensor_link"/>
+    <child link="touch_tool_link"/>
+    <origin xyz="0 0 0.060" rpy="0 0 0"/>
   </joint>
 
   <!-- tcp_link na ponta: 6.5 mm (offset base) + 108 mm (tip) = 114.5 mm. -->
@@ -145,12 +189,24 @@
     <maxContacts>4</maxContacts>
     <minDepth>0.0002</minDepth>
     <maxVel>0.05</maxVel>
-    <material>Gazebo/Grey</material>
   </gazebo>
 
   <!-- Link6 placeholder: sem auto-colisão. -->
   <gazebo reference="Link6">
     <self_collide>false</self_collide>
+  </gazebo>
+
+  <!-- Célula de carga: rígida, contato moderado. -->
+  <gazebo reference="force_sensor_link">
+    <self_collide>false</self_collide>
+    <gravity>true</gravity>
+    <mu1>0.40</mu1>
+    <mu2>0.40</mu2>
+    <kp>1.0e5</kp>
+    <kd>100.0</kd>
+    <maxContacts>4</maxContacts>
+    <minDepth>0.0002</minDepth>
+    <maxVel>0.05</maxVel>
   </gazebo>
 
 </robot>
