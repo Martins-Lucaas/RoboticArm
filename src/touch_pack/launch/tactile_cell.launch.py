@@ -1,25 +1,19 @@
 """
 tactile_cell.launch.py — Launcher principal do touch_pack.
 
-Inicia, em ordem, AUTOMATICAMENTE:
-
-    1. Gazebo Classic com `research_lab.world`
-    2. robot_state_publisher com URDF combinado (CR10 + COVVI Hand + alias
-       `tcp_link` para o admittance / IK do explorer)
-    3. spawn_entity do robô em z = 0.75 (topo do tampo da mesa)
-    4. Controllers (joint_state_broadcaster → cr10_group → hand_position)
-    5. `tactile_explorer` (backend FSM 4 fases)
-    6. `palpation_gui` (Tkinter — janela abre sozinha)
-
 Argumentos (todos opcionais):
+    end_effector     hand | touch_tool  (default: hand)
+                       hand       → CR10 + mão COVVI; tcp_link = ponta do Index
+                       touch_tool → CR10 + TouchTool Square 20×20 mm; tcp_link = ponta do probe
     control_mode     sim_only | mirror | real_from_sim (default sim_only)
     robot_ip         IP do controlador CR10 real (default 192.168.5.2)
     robot_dry_run    true = sockets não abertos (default true)
     no_gui           true = não abrir palpation_gui (default false)
 
-Exemplo:
+Exemplos:
     ros2 launch touch_pack tactile_cell.launch.py
-    ros2 launch touch_pack tactile_cell.launch.py no_gui:=true
+    ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool
+    ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool no_gui:=true
 """
 import os
 import re
@@ -32,8 +26,8 @@ from hand_pack.urdf_helpers import (
     INTER_FINGER_COLLISION_LINKS,
 )
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, RegisterEventHandler,
-                             IncludeLaunchDescription)
+from launch.actions import (DeclareLaunchArgument, OpaqueFunction,
+                             RegisterEventHandler, IncludeLaunchDescription)
 from launch.conditions import UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -42,9 +36,7 @@ from launch_ros.actions import Node
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Helpers de saneamento do URDF combinado (mesma lógica do launch antigo,
-# mantida para preservar atrito/skin/inertia tunados para o COVVI no
-# Gazebo).
+# Helpers de saneamento do URDF combinado
 # ──────────────────────────────────────────────────────────────────────
 def _fix_virtual_link_inertia(urdf_body: str) -> str:
     phantom = (
@@ -76,27 +68,26 @@ def _stabilize_hand_joints(urdf_body: str) -> str:
             jxml = re.sub(r'effort="[\d.]+"', 'effort="8.0"', jxml)
         return jxml
     return re.sub(r'<joint\b[^>]*>.*?</joint>', _patch,
-                   urdf_body, flags=re.DOTALL)
+                  urdf_body, flags=re.DOTALL)
 
 
-def _build_robot_urdf():
-    """Compõe o URDF CR10 + mão COVVI + alias `tcp_link` para o explorer.
+# ──────────────────────────────────────────────────────────────────────
+# Construção do URDF combinado (roteado por end_effector)
+# ──────────────────────────────────────────────────────────────────────
+def _build_robot_urdf(end_effector: str):
+    hand_pack_share  = get_package_share_directory('hand_pack')
+    cra_share        = get_package_share_directory('cra_description')
+    touch_pack_share = get_package_share_directory('touch_pack')
 
-    `tcp_link` é uma junta fixa ancorada na ponta do dedo indicador
-    (index_distal). É o frame onde o IK do tactile_explorer mira durante
-    CONTACT/SLIDING/RETRACT (e onde o admittance_controller, quando
-    ativado, calcula a admitância).
-    """
-    hand_pack_share = get_package_share_directory('hand_pack')
-    cra_share = get_package_share_directory('cra_description')
+    # ── YAML de controllers ───────────────────────────────────────────
+    if end_effector == 'hand':
+        controllers_yaml = os.path.join(
+            hand_pack_share, 'config', 'cr10_covvi_controllers.yaml')
+    else:  # touch_tool
+        controllers_yaml = os.path.join(
+            touch_pack_share, 'config', 'tactile_controllers.yaml')
 
-    # YAML dos controladores (mesmo da hand_pack — já contém os 31 joints
-    # da mão + as 6 do CR10). O tactile_controllers.yaml fica como
-    # referência para futura ativação do admittance_controller.
-    controllers_yaml = os.path.join(
-        hand_pack_share, 'config', 'cr10_covvi_controllers.yaml')
-
-    # CR10 (xacro) ────────────────────────────────────────────────────
+    # ── CR10 (xacro) ─────────────────────────────────────────────────
     cr10_xacro_path = os.path.join(cra_share, 'urdf', 'cr10_robot.xacro')
     doc = xacro.parse(open(cr10_xacro_path))
     xacro.process_doc(doc)
@@ -106,7 +97,34 @@ def _build_robot_urdf():
         f'<parameters>{controllers_yaml}</parameters>',
         cr10_urdf)
 
-    # Mão COVVI (URDF estático) ───────────────────────────────────────
+    # ── Fim do URDF: links/juntas do efector + Gazebo refs ────────────
+    arm_links = re.findall(r'<link\s+name="([^"]+)"', cr10_urdf)
+    arm_gz = ''.join(
+        f'\n  <gazebo reference="{n}"><self_collide>false</self_collide></gazebo>'
+        for n in arm_links)
+
+    if end_effector == 'hand':
+        full_urdf = _build_hand_suffix(cr10_urdf, hand_pack_share, arm_gz)
+    else:
+        full_urdf = _build_touch_tool_suffix(cr10_urdf, touch_pack_share, arm_gz)
+
+    # ── URDF mínimo para o robot_state_publisher ──────────────────────
+    minimal = full_urdf
+    minimal = re.sub(r'<visual\b[^>]*>.*?</visual>', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<collision\b[^>]*>.*?</collision>', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<inertial\b[^>]*>.*?</inertial>', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(
+        r'<gazebo\s+reference\s*=\s*"[^"]*"\s*>.*?</gazebo>', '',
+        minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<!--.*?-->', '', minimal, flags=re.DOTALL)
+    minimal = re.sub(r'<\?xml[^?]*\?>', '', minimal)
+    minimal = ' '.join(minimal.split())
+
+    return full_urdf, minimal
+
+
+def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str) -> str:
+    """Injeta a mão COVVI + tcp_link (Index distal) no CR10."""
     hand_urdf_path = os.path.join(
         hand_pack_share, 'urdf', 'linear_covvi_hand_gazebo.urdf')
     with open(hand_urdf_path) as f:
@@ -130,13 +148,11 @@ def _build_robot_urdf():
     hand_body = hand_body.replace(
         '<ros2_control name="GazeboSystem"',
         '<ros2_control name="HandGazeboSystem"')
-
     hand_body = _fix_virtual_link_inertia(hand_body)
     hand_body = clamp_hand_joint_limits(hand_body)
     hand_body = _stabilize_hand_joints(hand_body)
     hand_body = inject_visual_skin_layer(hand_body)
 
-    # gazebo tags por link da mão (contato suave + atrito alto na pele).
     hand_link_names = re.findall(r'<link\s+name="([^"]+)"', hand_body)
     fc = set(INTER_FINGER_COLLISION_LINKS)
     for lname in hand_link_names:
@@ -155,7 +171,6 @@ def _build_robot_urdf():
             f'</gazebo>'
         )
 
-    # Acoplamento da mão no flange Link6.
     attach_joint = '''
     <joint name="hand_attach_joint" type="fixed">
       <parent link="Link6"/>
@@ -163,9 +178,6 @@ def _build_robot_urdf():
       <origin xyz="0 0 0" rpy="1.5708 0 0"/>
     </joint>'''
 
-    # Alias tcp_link colado na ponta do dedo Index — o tactile_explorer
-    # mira a IK aqui. Posição: 22 mm acima do index_distal (ponta da
-    # falange distal do Index segundo o mesh right_index_distal.STL).
     tcp_alias = '''
     <link name="tcp_link"/>
     <joint name="tcp_alias_joint" type="fixed">
@@ -176,56 +188,86 @@ def _build_robot_urdf():
 
     full_urdf = cr10_urdf.replace(
         '</robot>', hand_body + attach_joint + tcp_alias + '</robot>')
-
-    # Gazebo refs para cada link do CR10 (sem auto-colisão).
-    arm_links = re.findall(r'<link\s+name="([^"]+)"', cr10_urdf)
-    arm_gz = ''.join(
-        f'\n  <gazebo reference="{n}"><self_collide>false</self_collide></gazebo>'
-        for n in arm_links)
     full_urdf = full_urdf.replace('</robot>', arm_gz + '\n</robot>')
-
-    # URDF mínimo para o robot_state_publisher (sem visual/collision/
-    # inertial → reduz overhead de tópico).
-    minimal = full_urdf
-    minimal = re.sub(r'<visual\b[^>]*>.*?</visual>', '',
-                      minimal, flags=re.DOTALL)
-    minimal = re.sub(r'<collision\b[^>]*>.*?</collision>', '',
-                      minimal, flags=re.DOTALL)
-    minimal = re.sub(r'<inertial\b[^>]*>.*?</inertial>', '',
-                      minimal, flags=re.DOTALL)
-    minimal = re.sub(
-        r'<gazebo\s+reference\s*=\s*"[^"]*"\s*>.*?</gazebo>', '',
-        minimal, flags=re.DOTALL)
-    minimal = re.sub(r'<!--.*?-->', '', minimal, flags=re.DOTALL)
-    minimal = re.sub(r'<\?xml[^?]*\?>', '', minimal)
-    minimal = ' '.join(minimal.split())
-
-    return full_urdf, minimal
+    return full_urdf
 
 
-def generate_launch_description():
-    pkg_touch = get_package_share_directory('touch_pack')
+def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
+                              arm_gz: str) -> str:
+    """Injeta o TouchTool Square 20×20 mm + tcp_link no CR10."""
+    mesh_path = os.path.join(
+        touch_pack_share, 'meshes', 'touch_tool_square_20x20.stl')
+
+    tool_snippet = f'''
+    <link name="touch_tool_link">
+      <inertial>
+        <origin xyz="0 0 0.064" rpy="0 0 0"/>
+        <mass value="0.150"/>
+        <inertia ixx="2.65e-4" ixy="0.0" ixz="0.0"
+                 iyy="2.65e-4" iyz="0.0" izz="2.03e-4"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0.0065" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="file://{mesh_path}" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="aluminium_grey">
+          <color rgba="0.72 0.72 0.75 1.0"/>
+        </material>
+      </visual>
+      <collision name="col_body">
+        <origin xyz="0 0 0.047" rpy="0 0 0"/>
+        <geometry><box size="0.090 0.090 0.094"/></geometry>
+      </collision>
+      <collision name="col_tip">
+        <origin xyz="0 0 0.106" rpy="0 0 0"/>
+        <geometry><box size="0.025 0.025 0.038"/></geometry>
+      </collision>
+    </link>
+    <link name="tcp_link"/>
+    <joint name="touch_tool_attach" type="fixed">
+      <parent link="Link6"/>
+      <child link="touch_tool_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+    <joint name="tcp_alias_joint" type="fixed">
+      <parent link="touch_tool_link"/>
+      <child link="tcp_link"/>
+      <origin xyz="0 0 0.1145" rpy="0 0 0"/>
+    </joint>'''
+
+    tool_gz = (
+        '\n  <gazebo reference="touch_tool_link">'
+        '<self_collide>false</self_collide>'
+        '<gravity>true</gravity>'
+        '<mu1>0.60</mu1><mu2>0.60</mu2>'
+        '<kp>1.0e5</kp><kd>100.0</kd>'
+        '<maxContacts>4</maxContacts>'
+        '<minDepth>0.0002</minDepth>'
+        '<maxVel>0.05</maxVel>'
+        '</gazebo>'
+    )
+
+    full_urdf = cr10_urdf.replace('</robot>', tool_snippet + '</robot>')
+    full_urdf = full_urdf.replace('</robot>', arm_gz + tool_gz + '\n</robot>')
+    return full_urdf
+
+
+# ──────────────────────────────────────────────────────────────────────
+# OpaqueFunction: monta nodes/handlers após resolver os argumentos
+# ──────────────────────────────────────────────────────────────────────
+def launch_setup(context, *args, **kwargs):
+    end_effector = LaunchConfiguration('end_effector').perform(context)
+    control_mode = LaunchConfiguration('control_mode').perform(context)
+    robot_ip     = LaunchConfiguration('robot_ip').perform(context)
+    robot_dry    = LaunchConfiguration('robot_dry_run').perform(context)
+    no_gui_val   = LaunchConfiguration('no_gui').perform(context)
+
+    pkg_touch  = get_package_share_directory('touch_pack')
     pkg_gazebo = get_package_share_directory('gazebo_ros')
 
-    # ── Argumentos do launch ────────────────────────────────────────
-    # Mesa única (research_lab.world): tampo em z=0.75 m. O robô apoia
-    # nesse tampo (robot_spawn_z = 0.75 → base_link do CR10 em z=0.78).
-    mode_arg      = DeclareLaunchArgument(
-        'control_mode', default_value='sim_only',
-        description='sim_only | mirror | real_from_sim')
-    robot_ip_arg  = DeclareLaunchArgument(
-        'robot_ip', default_value='192.168.5.2')
-    robot_dry_arg = DeclareLaunchArgument(
-        'robot_dry_run', default_value='true')
-    no_gui_arg    = DeclareLaunchArgument('no_gui', default_value='false')
-
-    control_mode = LaunchConfiguration('control_mode')
-    robot_ip     = LaunchConfiguration('robot_ip')
-    robot_dry    = LaunchConfiguration('robot_dry_run')
-    no_gui       = LaunchConfiguration('no_gui')
-
     # ── URDFs ─────────────────────────────────────────────────────────
-    full_urdf, minimal_urdf = _build_robot_urdf()
+    full_urdf, minimal_urdf = _build_robot_urdf(end_effector)
     urdf_spawn_path = '/tmp/tactile_cell_robot.urdf'
     with open(urdf_spawn_path, 'w') as f:
         f.write(full_urdf)
@@ -245,24 +287,20 @@ def generate_launch_description():
         parameters=[{'robot_description': minimal_urdf,
                      'use_sim_time': True}])
 
-    # ── Spawn do robô CR10+COVVI ──────────────────────────────────────
-    # Apoiado no tampo da mesa (z=0.75). base_link cai em z=0.78.
+    # ── Spawn do robô ─────────────────────────────────────────────────
     spawn_robot = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
-        arguments=['-file', urdf_spawn_path, '-entity', 'cr10_covvi',
+        arguments=['-file', urdf_spawn_path, '-entity', 'cr10_tcp',
                    '-x', '0', '-y', '0', '-z', '0.75'],
         parameters=[{'use_sim_time': True}])
 
-    # ── Home setter: posiciona as juntas no Gazebo logo após o spawn ──
-    # Chama /gazebo/set_model_configuration com os ângulos de
-    # ~/.config/touch_pack/home_pose.json (salvo pelo botão da GUI
-    # "Capturar do Robô"). Encerra sozinho após a chamada.
+    # ── Home setter ───────────────────────────────────────────────────
     home_setter = Node(
         package='touch_pack', executable='gazebo_home_setter',
         parameters=[{'use_sim_time': True}])
 
-    # ── Controladores ros2_control (cadeia de dependência) ───────────
+    # ── Controllers ───────────────────────────────────────────────────
     load_jsb = Node(
         package='controller_manager', executable='spawner',
         arguments=['joint_state_broadcaster',
@@ -271,71 +309,72 @@ def generate_launch_description():
         package='controller_manager', executable='spawner',
         arguments=['cr10_group_controller',
                    '--controller-manager', '/controller_manager'])
-    load_hand = Node(
-        package='controller_manager', executable='spawner',
-        arguments=['hand_position_controller',
-                   '--controller-manager', '/controller_manager'])
 
-    # spawn → home_setter → joint_state_broadcaster → ...
-    after_spawn_home_setter = RegisterEventHandler(
-        event_handler=OnProcessExit(target_action=spawn_robot,
-                                     on_exit=[home_setter]))
-    after_home_setter_load_jsb = RegisterEventHandler(
-        event_handler=OnProcessExit(target_action=home_setter,
-                                     on_exit=[load_jsb]))
-    after_jsb_load_arm = RegisterEventHandler(
-        event_handler=OnProcessExit(target_action=load_jsb,
-                                     on_exit=[load_arm]))
-    after_arm_load_hand = RegisterEventHandler(
-        event_handler=OnProcessExit(target_action=load_arm,
-                                     on_exit=[load_hand]))
-
-    # ── Backend + GUI da palpação tátil ──────────────────────────────
-    # tactile_explorer aceita o param `controller_action` para apontar
-    # ao admittance_controller quando este estiver ativo; por default
-    # usa o `cr10_group_controller` (joint_trajectory).
+    # ── Aplicação (explorer + GUI + logger + force_rx) ────────────────
     explorer_node = Node(
         package='touch_pack', executable='tactile_explorer',
         parameters=[{
-            # Altura da base_link do CR10 em coordenadas do mundo
-            # (spawn_z=0.75 + dummy_joint_z=0.03 = 0.78 m).
-            'arm_base_z':         0.78,
-            'controller_action':  '/cr10_group_controller/follow_joint_trajectory',
-            'use_sim_time':       True,
+            'arm_base_z':        0.78,
+            'controller_action': '/cr10_group_controller/follow_joint_trajectory',
+            'use_sim_time':      True,
         }])
 
     gui_node = Node(
         package='touch_pack', executable='palpation_gui',
         parameters=[{'use_sim_time': True}],
-        condition=UnlessCondition(no_gui))
+        condition=UnlessCondition(LaunchConfiguration('no_gui')))
 
-    # Logger: grava CSV+JSON de cada palpação em ~/touch_pack_runs/.
-    # Sem use_sim_time — quer wall-clock para timestamp dos arquivos.
     logger_node = Node(
         package='touch_pack', executable='palpation_logger')
 
-    # Receptor UDP da célula de carga (ESP32 → /load_cell/voltage + /load_cell/force).
-    # Porta 8080 — mesma configurada no firmware da ESP32.
     force_rx_node = Node(
         package='touch_pack', executable='force_receiver')
 
-    # explorer + GUI + logger + force_receiver sobem quando o último controller
-    # (hand) terminar de carregar.
-    after_hand_start = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=load_hand,
-            on_exit=[explorer_node, gui_node, logger_node, force_rx_node]))
+    app_nodes = [explorer_node, gui_node, logger_node, force_rx_node]
 
+    # ── Cadeia de dependências: varia com end_effector ────────────────
+    after_spawn = RegisterEventHandler(
+        OnProcessExit(target_action=spawn_robot, on_exit=[home_setter]))
+    after_home = RegisterEventHandler(
+        OnProcessExit(target_action=home_setter, on_exit=[load_jsb]))
+    after_jsb = RegisterEventHandler(
+        OnProcessExit(target_action=load_jsb, on_exit=[load_arm]))
+
+    if end_effector == 'hand':
+        load_hand = Node(
+            package='controller_manager', executable='spawner',
+            arguments=['hand_position_controller',
+                       '--controller-manager', '/controller_manager'])
+        after_arm = RegisterEventHandler(
+            OnProcessExit(target_action=load_arm, on_exit=[load_hand]))
+        after_last = RegisterEventHandler(
+            OnProcessExit(target_action=load_hand, on_exit=app_nodes))
+        chain = [after_spawn, after_home, after_jsb, after_arm, after_last]
+    else:  # touch_tool — sem hand controller
+        after_arm = RegisterEventHandler(
+            OnProcessExit(target_action=load_arm, on_exit=app_nodes))
+        chain = [after_spawn, after_home, after_jsb, after_arm]
+
+    return [gazebo, rsp, spawn_robot] + chain
+
+
+# ──────────────────────────────────────────────────────────────────────
+# generate_launch_description
+# ──────────────────────────────────────────────────────────────────────
+def generate_launch_description():
     return LaunchDescription([
-        mode_arg, robot_ip_arg, robot_dry_arg,
-        no_gui_arg,
+        DeclareLaunchArgument(
+            'end_effector', default_value='hand',
+            description='Efector final: hand (COVVI) | touch_tool (Square 20×20 mm)'),
+        DeclareLaunchArgument(
+            'control_mode', default_value='sim_only',
+            description='sim_only | mirror | real_from_sim'),
+        DeclareLaunchArgument(
+            'robot_ip', default_value='192.168.5.2'),
+        DeclareLaunchArgument(
+            'robot_dry_run', default_value='true'),
+        DeclareLaunchArgument(
+            'no_gui', default_value='false'),
 
-        gazebo,
-        rsp,
-        spawn_robot,
-        after_spawn_home_setter,
-        after_home_setter_load_jsb,
-        after_jsb_load_arm,
-        after_arm_load_hand,
-        after_hand_start,
+        OpaqueFunction(function=launch_setup),
     ])

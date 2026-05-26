@@ -27,7 +27,7 @@
       <material
         name="">
         <color
-          rgba="1 1 1 1" />
+          rgba="0.20 0.20 0.22 1" />
       </material>
     </visual>
     <collision>
@@ -79,7 +79,7 @@
       <material
         name="">
         <color
-          rgba="1 1 1 1" />
+          rgba="0.20 0.20 0.22 1" />
       </material>
     </visual>
     <collision>
@@ -137,7 +137,7 @@
       <material
         name="">
         <color
-          rgba="1 1 1 1" />
+          rgba="0.72 0.72 0.75 1" />
       </material>
     </visual>
     <collision>
@@ -195,7 +195,7 @@
       <material
         name="">
         <color
-          rgba="1 1 1 1" />
+          rgba="0.72 0.72 0.75 1" />
       </material>
     </visual>
     <collision>
@@ -253,7 +253,7 @@
       <material
         name="">
         <color
-          rgba="1 1 1 1" />
+          rgba="0.20 0.20 0.22 1" />
       </material>
     </visual>
     <collision>
@@ -311,7 +311,7 @@
       <material
         name="">
         <color
-          rgba="1 1 1 1" />
+          rgba="0.20 0.20 0.22 1" />
       </material>
     </visual>
     <collision>
@@ -369,7 +369,7 @@
       <material
         name="">
         <color
-          rgba="1 1 1 1" />
+          rgba="0.84 0.84 0.86 1" />
       </material>
     </visual>
     <collision>
@@ -403,30 +403,37 @@
 <gazebo reference="base_link">
         <gravity>false</gravity>
         <selfCollide>true</selfCollide>
+        <visual><material><ambient>0.20 0.20 0.22 1</ambient><diffuse>0.20 0.20 0.22 1</diffuse><specular>0.35 0.35 0.38 1</specular></material></visual>
     </gazebo>
     <gazebo reference="Link1">
         <gravity>false</gravity>
         <selfCollide>true</selfCollide>
+        <visual><material><ambient>0.20 0.20 0.22 1</ambient><diffuse>0.20 0.20 0.22 1</diffuse><specular>0.35 0.35 0.38 1</specular></material></visual>
     </gazebo>
     <gazebo reference="Link2">
         <gravity>false</gravity>
         <selfCollide>true</selfCollide>
+        <visual><material><ambient>0.72 0.72 0.75 1</ambient><diffuse>0.72 0.72 0.75 1</diffuse><specular>0.6 0.6 0.65 1</specular></material></visual>
     </gazebo>
     <gazebo reference="Link3">
         <gravity>false</gravity>
         <selfCollide>true</selfCollide>
+        <visual><material><ambient>0.72 0.72 0.75 1</ambient><diffuse>0.72 0.72 0.75 1</diffuse><specular>0.6 0.6 0.65 1</specular></material></visual>
     </gazebo>
     <gazebo reference="Link4">
         <gravity>false</gravity>
         <selfCollide>true</selfCollide>
+        <visual><material><ambient>0.20 0.20 0.22 1</ambient><diffuse>0.20 0.20 0.22 1</diffuse><specular>0.35 0.35 0.38 1</specular></material></visual>
     </gazebo>
     <gazebo reference="Link5">
         <gravity>false</gravity>
         <selfCollide>true</selfCollide>
+        <visual><material><ambient>0.20 0.20 0.22 1</ambient><diffuse>0.20 0.20 0.22 1</diffuse><specular>0.35 0.35 0.38 1</specular></material></visual>
     </gazebo>
     <gazebo reference="Link6">
         <gravity>false</gravity>
         <selfCollide>true</selfCollide>
+        <visual><material><ambient>0.84 0.84 0.86 1</ambient><diffuse>0.84 0.84 0.86 1</diffuse><specular>0.7 0.7 0.72 1</specular></material></visual>
     </gazebo> 
     <!-- 在运行demo.launch.py时，需要注释这个ros2_control节点，因为它使用了xxx.ros2_control.xacro来生成了ros2_control节点-->
     <ros2_control name="GazeboSystem" type="system">

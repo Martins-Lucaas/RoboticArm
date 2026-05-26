@@ -1,0 +1,156 @@
+<?xml version="1.0"?>
+<!--
+  touch_tool_square_20x20.urdf
+  TCP de palpação quadrado 20×20 mm para o Touch Pack (Gazebo Classic).
+
+  Geometria da malha (STL, unidade original: mm):
+    X: ±45 mm  (largura 90 mm — base de montagem)
+    Y: ±45 mm  (profundidade 90 mm)
+    Z: -6.5 mm … +108 mm  (comprimento total ≈ 114.5 mm)
+
+  Convenção de frames:
+    • touch_tool_link / origem: face de acoplamento ao flange do robô (Link6).
+      O fundo do STL (Z = -6.5 mm no espaço da malha) é alinhado aqui com
+      offset visual de +0.0065 m.
+    • tcp_link: face de contato quadrada 20×20 mm (ponta do probe),
+      situado em Z = 0.0065 + 0.108 = 0.1145 m acima da origem do link.
+
+  Uso standalone (Gazebo):
+    Altere o parent do joint "touch_tool_attach" de "Link6" para "world",
+    remova o joint "world_to_base" abaixo e spawn via spawn_entity.py.
+
+  Integração no launch (típico):
+    Injete o conteúdo entre <robot>…</robot> no URDF combinado do CR10,
+    após a definição de Link6, e remova o bloco <robot name="standalone"> deste
+    arquivo (use apenas o corpo interno como fragmento xacro/snippet).
+-->
+<robot name="touch_tool_tcp">
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       ROOT (modo standalone): liga a ferramenta ao world para teste.
+       Na integração com o CR10 este bloco é substituído por Link6
+       como parent direto do joint "touch_tool_attach".
+  ══════════════════════════════════════════════════════════════════ -->
+  <link name="world"/>
+
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child link="Link6"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Placeholder Link6 (robô real — substituído pelo CR10 na integração). -->
+  <link name="Link6">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-9" ixy="0.0" ixz="0.0"
+               iyy="1e-9" iyz="0.0" izz="1e-9"/>
+    </inertial>
+  </link>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       CORPO PRINCIPAL DO TCP
+  ══════════════════════════════════════════════════════════════════ -->
+  <link name="touch_tool_link">
+
+    <!--
+      Inércia estimada: alumínio 6061, ≈ 150 g, corpo aproximado como
+      caixa uniforme 90×90×114.5 mm:
+        Ixx = Iyy = (1/12)·m·(w² + h²) = (1/12)·0.15·(0.009+0.0131) ≈ 2.65e-4 kg·m²
+        Izz        = (1/12)·m·(w² + w²) = (1/12)·0.15·0.0162         ≈ 2.03e-4 kg·m²
+      CoM no centro geométrico: Z_cm ≈ (6.5 + 114.5/2) mm = 63.75 mm → 0.064 m
+    -->
+    <inertial>
+      <origin xyz="0 0 0.064" rpy="0 0 0"/>
+      <mass value="0.150"/>
+      <inertia ixx="2.65e-4" ixy="0.0" ixz="0.0"
+               iyy="2.65e-4" iyz="0.0"
+               izz="2.03e-4"/>
+    </inertial>
+
+    <!-- Visual: malha STL (mm → m via scale). Offset +0.0065 m em Z para
+         alinhar o fundo do STL (Z_mesh = -6.5 mm) com a origem do link. -->
+    <visual>
+      <origin xyz="0 0 0.0065" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://touch_pack/meshes/touch_tool_square_20x20.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminium_grey">
+        <color rgba="0.72 0.72 0.75 1.0"/>
+      </material>
+    </visual>
+
+    <!--
+      Colisão simplificada (duas caixas) — mais estável no ODE do Gazebo
+      do que a malha completa com 14 822 triângulos.
+
+      col_body  → corpo/base de montagem: cobre Z = 0 … 0.094 m
+                  (90×90 mm de largura, acompanha a seção principal).
+      col_tip   → haste + face 20×20 mm: cobre Z ≈ 0.087 … 0.125 m
+                  (25×25 mm com 1 mm de margem lateral).
+    -->
+    <collision name="col_body">
+      <origin xyz="0 0 0.047" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.090 0.090 0.094"/>
+      </geometry>
+    </collision>
+
+    <collision name="col_tip">
+      <origin xyz="0 0 0.106" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.025 0.038"/>
+      </geometry>
+    </collision>
+
+  </link>
+
+  <!-- Frame tcp_link na face de contato (ponta do probe 20×20 mm). -->
+  <link name="tcp_link"/>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       JUNTAS
+  ══════════════════════════════════════════════════════════════════ -->
+  <!-- Acoplamento ao flange do robô (rpy=0 → Z do flange = eixo axial
+       da ferramenta). Ajuste rpy se a orientação do flange exigir. -->
+  <joint name="touch_tool_attach" type="fixed">
+    <parent link="Link6"/>
+    <child link="touch_tool_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- tcp_link na ponta: 6.5 mm (offset base) + 108 mm (tip) = 114.5 mm. -->
+  <joint name="tcp_alias_joint" type="fixed">
+    <parent link="touch_tool_link"/>
+    <child link="tcp_link"/>
+    <origin xyz="0 0 0.1145" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       PROPRIEDADES GAZEBO
+  ══════════════════════════════════════════════════════════════════ -->
+  <!--
+    Corpo: contato moderadamente rígido (kp=1e5), amortecimento médio
+    (kd=100), atrito moderado (μ=0.6) — adequado para pressionar
+    superfícies macias (fantomas) sem ricochete.
+  -->
+  <gazebo reference="touch_tool_link">
+    <self_collide>false</self_collide>
+    <gravity>true</gravity>
+    <mu1>0.60</mu1>
+    <mu2>0.60</mu2>
+    <kp>1.0e5</kp>
+    <kd>100.0</kd>
+    <maxContacts>4</maxContacts>
+    <minDepth>0.0002</minDepth>
+    <maxVel>0.05</maxVel>
+    <material>Gazebo/Grey</material>
+  </gazebo>
+
+  <!-- Link6 placeholder: sem auto-colisão. -->
+  <gazebo reference="Link6">
+    <self_collide>false</self_collide>
+  </gazebo>
+
+</robot>
