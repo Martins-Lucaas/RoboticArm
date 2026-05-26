@@ -3029,6 +3029,9 @@ class PalpationGUI(Node):
                               default=KI_DEFAULT)
         kd = self._clamp_var(self.pid_kd_var, KD_MIN, KD_MAX,
                               default=KD_DEFAULT)
+        sf_pct = self._clamp_var(self.speed_factor_var,
+                                  SPEED_FACTOR_MIN, SPEED_FACTOR_MAX,
+                                  default=SPEED_FACTOR_DEFAULT)
         payload = {
             'speed_mms':          float(speed),
             'force_n':            float(force),
@@ -3043,6 +3046,12 @@ class PalpationGUI(Node):
             'kp': float(kp if kp is not None else KP_DEFAULT),
             'ki': float(ki if ki is not None else KI_DEFAULT),
             'kd': float(kd if kd is not None else KD_DEFAULT),
+            # Speed factor (1-100 %): limita a velocidade máxima de junta
+            # enviada como pt.velocities no JointTrajectoryPoint. O JTC usa
+            # esses hints para splines cúbicos contínuos em velocidade,
+            # eliminando descontinuidades que causam estalos no hardware.
+            'speed_factor_pct':   float(sf_pct if sf_pct is not None
+                                         else SPEED_FACTOR_DEFAULT),
             # Home customizada: explorer leva o braço PARA CÁ antes
             # de descer. Em graus URDF, mesma chave/ordem do
             # `_apply_arm_home`.
@@ -3078,6 +3087,7 @@ class PalpationGUI(Node):
             f'slide={payload["distance_mm"]:.0f} mm {payload["slide_dir"]}, '
             f'descida={payload["target_distance_cm"]:.1f} cm '
             f'@ {payload["approach_speed_mms"]:.0f} mm/s | '
+            f'vel junta {payload["speed_factor_pct"]:.0f}% | '
             f'PID Kp={payload["kp"]:.4g} Ki={payload["ki"]:.4g} '
             f'Kd={payload["kd"]:.4g}.',
             OK)

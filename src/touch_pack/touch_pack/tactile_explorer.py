@@ -81,8 +81,8 @@ _ARM_JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
 
 _POINTING_SEED_Q = np.array([
     0.0,
-    math.radians(-20.0),
-    math.radians(90.0),
+    0.0,
+    math.radians(-90.0),
     0.0,
     math.radians(90.0),
     0.0,
@@ -116,6 +116,11 @@ _Z_CORR_GAIN = 0.5   # ganho de correção de posição Z durante sliding (P-con
 _HOME_MAX_RAD_S = 0.30  # velocidade máxima do HOME (≈ 17°/s por junta)
 _SETTLE_TICKS   = 6     # ticks de espera entre fases (6 × 30 ms = 180 ms)
 
+# Velocidade máxima de referência (rad/s) por junta — equivale ao limite
+# físico do CR10 (≈ 180°/s). O speed_factor_pct da GUI escala este valor:
+# 10 % → 0.314 rad/s ≈ 18°/s (seguro para palpação).
+_MAX_JOINT_VEL_RAD_S = math.pi  # 180°/s
+
 
 class TactileExplorer(Node):
 
@@ -143,6 +148,7 @@ class TactileExplorer(Node):
         self._kp: float = float(self.get_parameter('kp').value)
         self._ki: float = float(self.get_parameter('ki').value)
         self._kd: float = float(self.get_parameter('kd').value)
+        self._speed_factor_pct: float = 10.0   # % do slider da GUI (padrão 10 %)
         self._ft_lock = threading.Lock()
         self._ft_force = np.zeros(3, dtype=np.float64)
         self._ft_torque = np.zeros(3, dtype=np.float64)
@@ -247,6 +253,13 @@ class TactileExplorer(Node):
             self._kp = float(payload.get('kp', self._kp))
             self._ki = float(payload.get('ki', self._ki))
             self._kd = float(payload.get('kd', self._kd))
+            sf = payload.get('speed_factor_pct')
+            if sf is not None:
+                try:
+                    self._speed_factor_pct = float(
+                        max(1.0, min(100.0, float(sf))))
+                except (TypeError, ValueError):
+                    pass
             slide_dir = str(payload.get('slide_dir', '+Y')).upper().strip()
             _DIR_MAP = {
                 '+X': (1.0, 0.0), '-X': (-1.0, 0.0),
@@ -301,12 +314,20 @@ class TactileExplorer(Node):
     # Primitiva de streaming — 1 ponto por mensagem, substitui o goal
     # atual no controller (sem queue). Chamada a cada _CTRL_DT segundos.
     # ──────────────────────────────────────────────────────────────────
-    def _stream_q(self, q: np.ndarray, dt_s: float) -> None:
-        """Publica 1 setpoint. time_from_start = dt_s (lookahead do ctrl)."""
+    def _stream_q(self, q: np.ndarray, dt_s: float,
+                  velocities: np.ndarray | None = None) -> None:
+        """Publica 1 setpoint. time_from_start = dt_s (lookahead do ctrl).
+
+        Quando `velocities` é fornecido (rad/s por junta), o JTC usa splines
+        cúbicos contínuos em velocidade — elimina a descontinuidade que
+        acontecia ao encadear mensagens de 1 ponto sem hints de velocidade.
+        """
         msg = JointTrajectory()
         msg.joint_names = list(_ARM_JOINTS)
         pt = JointTrajectoryPoint()
         pt.positions = [float(v) for v in q]
+        if velocities is not None:
+            pt.velocities = [float(v) for v in velocities]
         sec = int(dt_s)
         pt.time_from_start = Duration(sec=sec,
                                        nanosec=int((dt_s - sec) * 1e9))
@@ -323,8 +344,9 @@ class TactileExplorer(Node):
     # ──────────────────────────────────────────────────────────────────
     def _settle(self, ticks: int = _SETTLE_TICKS) -> None:
         q = self._q_now()
+        zero_vel = np.zeros(6)
         for _ in range(ticks):
-            self._stream_q(q, _CTRL_LOOK + _CTRL_DT)
+            self._stream_q(q, _CTRL_LOOK + _CTRL_DT, velocities=zero_vel)
             time.sleep(_CTRL_DT)
 
     # ──────────────────────────────────────────────────────────────────
@@ -338,13 +360,20 @@ class TactileExplorer(Node):
         if max_d < 0.001:
             return True
         n_steps = max(1, int(math.ceil(max_d / (_HOME_MAX_RAD_S * _CTRL_DT))))
+        # Velocidade constante derivada do speed_factor_pct da GUI.
+        # A interpolação linear implica dq/passo = delta/n_steps →
+        # velocidade por junta = dq/_CTRL_DT. Clampamos pelo limite do slider.
+        v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+        vel = np.clip(delta / n_steps / _CTRL_DT, -v_lim, v_lim)
         for i in range(1, n_steps + 1):
             if self._stop_requested.is_set():
                 self._stop_requested.clear()
                 return False
             alpha = i / n_steps
             q = np.clip(q_from + alpha * delta, JOINT_MIN, JOINT_MAX)
-            self._stream_q(q, _CTRL_LOOK + _CTRL_DT)
+            # Último passo: velocidade zero para parada suave antes do CONTACT.
+            step_vel = vel if i < n_steps else np.zeros(6)
+            self._stream_q(q, _CTRL_DT, velocities=step_vel)
             time.sleep(_CTRL_DT)
         return True
 
@@ -369,6 +398,7 @@ class TactileExplorer(Node):
                            v_min_ms: float | None = None,
                            lock_ori: bool = False,
                            lock_z: bool = False,
+                           lock_perp: bool = False,
                            force_threshold_n: float | None = None) -> str:
         d = np.asarray(direction, dtype=float).flatten()
         nd = float(np.linalg.norm(d))
@@ -385,38 +415,100 @@ class TactileExplorer(Node):
 
         I6 = np.eye(6)
 
-        # Captura orientação e/ou altura Z iniciais para travamento.
-        # Ambos derivam do mesmo FK — calculado uma única vez no início.
+        # FK inicial — sempre calculada, independente de lock_*.
+        # p_start é a âncora para medir o progresso real do TCP via FK,
+        # substituindo a integração de passos comandados (que acumula erro
+        # por aproximação do Jacobiano e clipping de limites articulares).
+        T0 = forward_kinematics(self._q_now())
+        p_start = T0[:3, 3].copy()
+
         R0: np.ndarray | None = None
         z0: float | None = None
-        if lock_ori or lock_z:
-            T0 = forward_kinematics(self._q_now())
-            if lock_ori:
-                R0 = T0[:3, :3].copy()
-            if lock_z:
-                z0 = float(T0[2, 3])
+        perp_dir: np.ndarray | None = None
+        p0_perp: float | None = None
+        if lock_ori:
+            R0 = T0[:3, :3].copy()
+        if lock_z:
+            z0 = float(T0[2, 3])
+        if lock_perp:
+            # Perpendicular a d no plano XY. Para d = [0,0,±1] a norma é zero
+            # e a correção é suprimida automaticamente.
+            perp = np.array([-d[1], d[0], 0.0])
+            pnorm = float(np.linalg.norm(perp))
+            if pnorm > 1e-9:
+                perp_dir = perp / pnorm
+                p0_perp = float(p_start @ perp_dir)
 
-        covered = 0.0
+        # Safety: timeout baseado em 10× o tempo nominal + margem de 30 s.
+        v_est = float(v_const_ms) if constant else float(v_max_ms)
+        v_est = max(1e-4, v_est)
+        _timeout_s = max(30.0, (total_m / v_est) * 10.0)
+        _t0 = time.time()
+        # Detecção de direção errada: > 5 mm na direção negativa por > 3 s.
+        _neg_ticks = 0
+        _NEG_MAX = int(3.0 / _CTRL_DT)
+        # Log diagnóstico a cada 1 s.
+        _log_every = max(1, int(1.0 / _CTRL_DT))
+        _tick = 0
 
-        while covered < total_m:
+        self.get_logger().info(
+            f'_cartesian_stream: d={d.round(3)} total={total_m*1e3:.1f}mm '
+            f'v={v_est*1e3:.1f}mm/s p_start={p_start.round(4)} '
+            f'TCP_Z={T0[:3,2].round(3)}')
+
+        # Progresso real do TCP na direção d (metros, medido via FK a cada tick).
+        progress = 0.0
+
+        while progress < total_m:
             if self._stop_requested.is_set():
                 self._stop_requested.clear()
                 return 'stop'
 
-            # Verificação de força.
+            # Timeout global — evita loop eterno se o robô não se move.
+            if time.time() - _t0 > _timeout_s:
+                self.get_logger().error(
+                    f'_cartesian_stream: timeout {_timeout_s:.0f}s '
+                    f'(progress={progress*1e3:.1f}mm/{total_m*1e3:.1f}mm). Abortando.')
+                return 'error'
+
             if force_threshold_n is not None:
                 with self._ft_lock:
                     fz = float(abs(self._ft_force[2]))
                 if fz >= force_threshold_n:
                     return 'force'
 
-            # Lê estado real das juntas a cada tick (closed-loop Jacobiano):
-            # evita acumulação de erro se o controlador não rastrear
-            # perfeitamente (limites de junta, lag do hardware real).
             q = self._q_now().copy()
 
-            # Perfil de velocidade.
-            u = covered / total_m
+            # FK do tick atual — única chamada por iteração.
+            # Serve tanto para medir o progresso real quanto para as correções
+            # de orientação, Z e perpendicular.
+            T_cur = forward_kinematics(q)
+            progress = float(np.dot(T_cur[:3, 3] - p_start, d))
+
+            # Detecção de direção errada: se TCP persistentemente se afasta
+            # de p_start na direção oposta a d, o Jacobiano provavelmente está
+            # sendo calculado numa configuração errada. Aborta para não bloquear.
+            if progress < -0.005:
+                _neg_ticks += 1
+                if _neg_ticks > _NEG_MAX:
+                    self.get_logger().error(
+                        f'_cartesian_stream: TCP na direção errada '
+                        f'(progress={progress*1e3:.1f}mm por >{3.0:.0f}s). '
+                        f'TCP_cur={T_cur[:3,3].round(4)} p_start={p_start.round(4)}. '
+                        'Abortando.')
+                    return 'error'
+            else:
+                _neg_ticks = 0
+
+            # Log periódico para diagnóstico.
+            if _tick % _log_every == 0:
+                self.get_logger().debug(
+                    f'  t={_tick*_CTRL_DT:.1f}s progress={progress*1e3:.2f}mm '
+                    f'TCP={T_cur[:3,3].round(4)}')
+            _tick += 1
+
+            # Perfil de velocidade usa o progresso FK (não passos acumulados).
+            u = max(0.0, min(1.0, progress / total_m))
             if constant:
                 v = float(v_const_ms)
             else:
@@ -424,25 +516,23 @@ class TactileExplorer(Node):
             v = max(1e-4, v)
             step = v * _CTRL_DT
 
-            # Torção: translação na direção pedida + correções de orientação e Z.
             J = jacobian(q)
             twist = np.zeros(6)
             twist[:3] = d * step
-            if R0 is not None or z0 is not None:
-                T_cur = forward_kinematics(q)
-                if R0 is not None:
-                    R_err = R0 @ T_cur[:3, :3].T
-                    err_vec = 0.5 * np.array([
-                        R_err[2, 1] - R_err[1, 2],
-                        R_err[0, 2] - R_err[2, 0],
-                        R_err[1, 0] - R_err[0, 1],
-                    ])
-                    twist[3:] = _ORI_GAIN * err_vec
-                if z0 is not None:
-                    # Correção proporcional de altura: impede deriva Z acumulada
-                    # no sliding (o DLS aproxima o Jacobiano e pode introduzir
-                    # erro residual em Z a cada tick).
-                    twist[2] += _Z_CORR_GAIN * (z0 - float(T_cur[2, 3]))
+
+            if R0 is not None:
+                R_err = R0 @ T_cur[:3, :3].T
+                err_vec = 0.5 * np.array([
+                    R_err[2, 1] - R_err[1, 2],
+                    R_err[0, 2] - R_err[2, 0],
+                    R_err[1, 0] - R_err[0, 1],
+                ])
+                twist[3:] = _ORI_GAIN * err_vec
+            if z0 is not None:
+                twist[2] += _Z_CORR_GAIN * (z0 - float(T_cur[2, 3]))
+            if perp_dir is not None and p0_perp is not None:
+                perp_err = p0_perp - float(T_cur[:3, 3] @ perp_dir)
+                twist[:3] += _Z_CORR_GAIN * perp_err * perp_dir
 
             try:
                 dq = J.T @ np.linalg.solve(J @ J.T + _JAC_LAM**2 * I6, twist)
@@ -452,8 +542,16 @@ class TactileExplorer(Node):
                 continue
 
             q_cmd = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
-            self._stream_q(q_cmd, _CTRL_LOOK + _CTRL_DT)
-            covered += step
+            dq_actual = q_cmd - q
+            v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+            vel_cmd = np.clip(dq_actual / _CTRL_DT, -v_lim, v_lim)
+            # time_from_start = _CTRL_DT (não _CTRL_LOOK + _CTRL_DT):
+            # com T=30ms e vel_hint=dq/30ms a spline cúbica é monotônica —
+            # vel_hint e horizonte são consistentes. Com T=130ms e vel=dq/30ms
+            # (4.3× maior que dq/T) a spline overshoot na direção oposta por
+            # ~73ms antes de corrigir, e como o stream substitui a cada 30ms
+            # o TCP nunca sai da zona errada → direção invertida observada.
+            self._stream_q(q_cmd, _CTRL_DT, velocities=vel_cmd)
             time.sleep(_CTRL_DT)
 
         return 'done'
@@ -522,28 +620,35 @@ class TactileExplorer(Node):
         return True
 
     def _phase_contact(self) -> bool:
-        """CONTACT — streaming em −Z com perfil fast→slow e monitor de Fz.
-        Cada setpoint é calculado inline (sem trajetória pré-computada).
-        A fase termina quando |Fz| ≥ target_force ou a distância é percorrida."""
+        """CONTACT — streaming em −Z a velocidade constante (slider approach) com monitor de Fz.
+        Termina quando |Fz| ≥ target_force ou a distância máxima é percorrida."""
         self._set_phase('CONTACT')
         self._settle()
 
         with self._params_lock:
             target_force = float(self._target_force_n)
             descent_m = float(self._target_distance_cm) * 0.01
-        v_max = float(self.get_parameter('approach_v_max_mms').value) * 1e-3
-        v_min = float(self.get_parameter('approach_v_min_mms').value) * 1e-3
-        v_min = max(0.001, v_min)
-        v_max = max(v_min, v_max)
+        v_approach = max(0.001,
+                         float(self.get_parameter('approach_v_max_mms').value) * 1e-3)
+
+        # Direção de approach = eixo Z do TCP na pose atual (direção dos dedos).
+        # Garante consistência mesmo que a home customizada tenha orientação
+        # diferente de [0,0,-1]. Se por algum motivo a norma for zero, cai para
+        # world -Z (que é o caso padrão com home correta apontando para baixo).
+        T_pre = forward_kinematics(self._q_now())
+        approach_dir = T_pre[:3, 2].copy()
+        if float(np.linalg.norm(approach_dir)) < 0.1:
+            approach_dir = np.array([0.0, 0.0, -1.0])
 
         self.get_logger().info(
-            f'CONTACT: descida {descent_m*100:.1f} cm, '
-            f'perfil {v_max*1000:.0f}→{v_min*1000:.0f} mm/s, '
-            f'alvo Fz={target_force:.2f} N')
+            f'CONTACT: descida até {descent_m*100:.1f} cm, '
+            f'velocidade constante {v_approach*1000:.0f} mm/s, '
+            f'alvo Fz={target_force:.2f} N, '
+            f'direção approach={approach_dir.round(3)}')
 
         outcome = self._cartesian_stream(
-            np.array([0.0, 0.0, -1.0]), descent_m,
-            v_max_ms=v_max, v_min_ms=v_min,
+            approach_dir, descent_m,
+            v_const_ms=v_approach,
             lock_ori=True,
             force_threshold_n=target_force)
 
@@ -618,7 +723,9 @@ class TactileExplorer(Node):
                 # as correções de força tomem efeito em 30 ms, não 130 ms.
                 # Um lookahead de 100 ms no PID causa atraso de 4 ticks →
                 # integrador acumula antes do efeito → overshoot e ruídos.
-                self._stream_q(q_new, dt)
+                v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+                vel_hold = np.clip((q_new - q) / dt, -v_lim, v_lim)
+                self._stream_q(q_new, dt, velocities=vel_hold)
 
             elapsed = time.time() - t0
             if elapsed < dt:
@@ -648,25 +755,30 @@ class TactileExplorer(Node):
             f'@ {speed_ms*1000:.1f} mm/s')
 
         outcome = self._cartesian_stream(
-            dir_world, dist_m, v_const_ms=speed_ms, lock_ori=True, lock_z=True)
+            dir_world, dist_m, v_const_ms=speed_ms,
+            lock_ori=True, lock_z=True, lock_perp=True)
 
         self._settle()
         return outcome in ('done', 'force')
 
     def _phase_retract(self) -> bool:
-        """RETRACT — streaming em +Z com perfil fast→slow (sem força)."""
+        """RETRACT — streaming em +Z a velocidade constante (slider approach)."""
         self._set_phase('RETRACT')
         self._settle()
 
         retract_m = float(self.get_parameter('retract_mm').value) * 1e-3
-        v_max = float(self.get_parameter('approach_v_max_mms').value) * 1e-3
-        v_min = float(self.get_parameter('approach_v_min_mms').value) * 1e-3
-        v_min = max(0.001, v_min)
-        v_max = max(v_min, v_max)
+        v_approach = max(0.001,
+                         float(self.get_parameter('approach_v_max_mms').value) * 1e-3)
+
+        # Retrocede na direção oposta ao approach (negativo do eixo Z do TCP).
+        T_pre = forward_kinematics(self._q_now())
+        retract_dir = -T_pre[:3, 2].copy()
+        if float(np.linalg.norm(retract_dir)) < 0.1:
+            retract_dir = np.array([0.0, 0.0, +1.0])
 
         outcome = self._cartesian_stream(
-            np.array([0.0, 0.0, +1.0]), retract_m,
-            v_max_ms=v_max, v_min_ms=v_min,
+            retract_dir, retract_m,
+            v_const_ms=v_approach,
             lock_ori=True)
 
         self._settle(ticks=_SETTLE_TICKS * 2)
