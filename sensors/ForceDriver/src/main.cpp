@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <EEPROM.h>
 
 // ======================================================
 // WIFI — rede local do laboratório
@@ -8,12 +9,10 @@
 const char* ssid     = "Ender 3 V2 - coleta";
 const char* password = "Biolabeb0608";
 
-// IP estático do ESP32 (fixo na subnet do laboratório)
 static const IPAddress LOCAL_IP (192, 168, 5, 105);
 static const IPAddress GATEWAY  (192, 168, 5,   1);
 static const IPAddress SUBNET   (255, 255, 255,  0);
 
-// Broadcast da subnet — qualquer PC em 192.168.5.x recebe
 #define DEST_IP  "192.168.5.255"
 #define UDP_PORT 8080
 
@@ -23,7 +22,7 @@ WiFiUDP udp;
 // ADC — célula de carga via amplificador no GPIO 34
 // ======================================================
 #define ADC_PIN       34
-#define OVERSAMPLE_N  16        // 16 amostras → +6 dB SNR (~1 bit efetivo extra)
+#define OVERSAMPLE_N  16
 
 // ======================================================
 // FILTRO EXPONENCIAL
@@ -38,24 +37,55 @@ const float R1 = 220000.0f;
 const float R2 =  98600.0f;
 
 // ======================================================
-// CALIBRAÇÃO PADRÃO — ajustada via GUI do touch_pack
-// F = (v_sensor - INTERCEPT) / SLOPE
+// CALIBRAÇÃO — slope calibrado em tração, válido para
+// compressão pelo princípio de simetria da ponte de
+// Wheatstone: mesma sensibilidade V/N nos dois sentidos.
+//
+// Positivo = tração  |  Negativo = compressão
+// F = (v_sensor - v_zero) / SLOPE
 // ======================================================
-const float CALIB_INTERCEPT = 0.0017f;
-const float CALIB_SLOPE     = 0.4490f;
+const float CALIB_SLOPE = 0.4490f;
 
 // ======================================================
-// TEMPORIZAÇÃO — 50 Hz sem delay()
-// millis() é não-bloqueante: WiFi stack e watchdog
-// continuam a ser servidos entre os ticks.
+// TARA — zero de referência dinâmico
+// Persiste no EEPROM (endereço 0, 4 bytes float).
+// Comando serial: 'T' → captura tara com sensor em repouso
+//                 'R' → reseta tara para 0.0 V
 // ======================================================
-#define SAMPLE_INTERVAL_MS 20   // 1000 ms / 50 Hz
+#define EEPROM_SIZE        4
+#define EEPROM_ADDR_VZERO  0
+
+static float v_zero = 0.0f;
+
+static void load_tare()
+{
+    EEPROM.begin(EEPROM_SIZE);
+    EEPROM.get(EEPROM_ADDR_VZERO, v_zero);
+    // valor inválido (NaN ou fora de faixa física) → começa em 0
+    if (isnan(v_zero) || v_zero < 0.0f || v_zero > 15.0f) v_zero = 0.0f;
+    EEPROM.end();
+    Serial.printf("Tara carregada: v_zero = %.4f V\n", v_zero);
+}
+
+static void save_tare(float v)
+{
+    EEPROM.begin(EEPROM_SIZE);
+    EEPROM.put(EEPROM_ADDR_VZERO, v);
+    EEPROM.commit();
+    EEPROM.end();
+}
+
+// ======================================================
+// TEMPORIZAÇÃO — 50 Hz não-bloqueante
+// ======================================================
+#define SAMPLE_INTERVAL_MS 20
 static uint32_t last_sample_ms = 0;
 
 // ======================================================
-// PAYLOAD UDP  (little-endian, 8 bytes)
+// PAYLOAD UDP (little-endian, 8 bytes)
 //   v_sensor      : tensão real do sensor (V)
-//   force_filtered: força estimada com calibração padrão (N)
+//   force_filtered: força com sinal — positivo=tração,
+//                   negativo=compressão (N)
 // ======================================================
 struct __attribute__((packed)) Payload {
     float v_sensor;
@@ -97,8 +127,10 @@ void setup()
 {
     Serial.begin(115200);
     analogReadResolution(12);
+    load_tare();
     wifi_connect();
     last_sample_ms = millis();
+    Serial.println("Comandos: T = tarar | R = resetar tara");
 }
 
 // ======================================================
@@ -106,36 +138,46 @@ void setup()
 // ======================================================
 void loop()
 {
-    // Reconexão automática se o WiFi cair
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("[WARN] WiFi desconectado — reconectando...");
         wifi_connect();
-        last_sample_ms = millis();  // reset do timer após reconexão
+        last_sample_ms = millis();
         return;
     }
 
-    // Aguarda o próximo tick de 20 ms sem bloquear o sistema
     uint32_t now = millis();
     if (now - last_sample_ms < SAMPLE_INTERVAL_MS) return;
-    last_sample_ms += SAMPLE_INTERVAL_MS;  // mantém fase mesmo com jitter leve
+    last_sample_ms += SAMPLE_INTERVAL_MS;
 
-    // Oversampling: 16 leituras acumuladas → reduz ruído de quantização
+    // Oversampling
     uint32_t adc_acc = 0;
     for (int i = 0; i < OVERSAMPLE_N; ++i) {
         adc_acc += analogRead(ADC_PIN);
     }
-    float v_adc = (adc_acc / (float)OVERSAMPLE_N * 3.3f) / 4095.0f;
-
-    // Reconstrução da tensão real do sensor (divisor R1/R2)
+    float v_adc    = (adc_acc / (float)OVERSAMPLE_N * 3.3f) / 4095.0f;
     float v_sensor = v_adc * ((R1 + R2) / R2);
 
-    // Força com calibração padrão
-    float force = (v_sensor - CALIB_INTERCEPT) / CALIB_SLOPE;
+    // Comandos seriais — lidos após leitura do ADC para
+    // que 'T' capture a tensão recém-medida
+    if (Serial.available()) {
+        char cmd = (char)Serial.read();
+        if (cmd == 'T' || cmd == 't') {
+            v_zero = v_sensor;
+            force_filtered = 0.0f;
+            save_tare(v_zero);
+            Serial.printf("Tara definida: v_zero = %.4f V\n", v_zero);
+        } else if (cmd == 'R' || cmd == 'r') {
+            v_zero = 0.0f;
+            force_filtered = 0.0f;
+            save_tare(v_zero);
+            Serial.println("Tara resetada para 0.0 V");
+        }
+    }
 
-    // Filtro exponencial de primeira ordem
+    // Força com sinal: positivo = tração, negativo = compressão
+    float force = (v_sensor - v_zero) / CALIB_SLOPE;
     force_filtered = ALPHA * force + (1.0f - ALPHA) * force_filtered;
 
-    // Monta e envia pacote UDP broadcast
     packet.v_sensor       = v_sensor;
     packet.force_filtered = force_filtered;
 
@@ -143,5 +185,6 @@ void loop()
     udp.write(reinterpret_cast<const uint8_t*>(&packet), sizeof(Payload));
     udp.endPacket();
 
-    Serial.printf("v_sensor: %.4f V | Força: %.3f N\n", v_sensor, force_filtered);
+    Serial.printf("v_sensor: %.4f V | v_zero: %.4f V | Força: %+.3f N\n",
+                  v_sensor, v_zero, force_filtered);
 }
