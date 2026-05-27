@@ -43,7 +43,7 @@ from rclpy.qos import (
     QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy,
 )
 
-from std_msgs.msg import String, Float32
+from std_msgs.msg import String, Float32, Bool
 from geometry_msgs.msg import WrenchStamped
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -252,6 +252,12 @@ class PalpationGUI(Node):
         # a tela e para o PID do HOLD.
         self._wrench_pub = self.create_publisher(
             WrenchStamped, '/ft_sensor/wrench', QOS_SENSOR)
+        # Tópico latched que indica se o drag teach está activo.
+        # Subscreva em /palpation/drag_mode (std_msgs/Bool) para saber quando
+        # o braço está em modo arrasto (True) ou controlo normal (False).
+        # Usa QOS_COMMAND (RELIABLE + TRANSIENT_LOCAL): novos subscribers
+        # recebem o último valor publicado imediatamente ao conectar.
+        self._drag_pub = self.create_publisher(Bool, '/palpation/drag_mode', QOS_COMMAND)
 
         # ─── Publishers para comando direto (aba Controle Manual) ────
         # Os joint_trajectory_controllers expõem um tópico direto
@@ -1140,8 +1146,14 @@ class PalpationGUI(Node):
                     pt.time_from_start = Duration(sec=0, nanosec=30_000_000)
                     msg.points.append(pt)
                     self._arm_pub.publish(msg)
-                except Exception:
-                    pass
+                except CR10RealDriverError as exc:
+                    # Erro de conexão: parar de bater no socket morto.
+                    self.get_logger().warning(
+                        '[DRAG] Leitura de juntas falhou — drag tracking desativado: %s', exc)
+                    self._drag_enabled = False
+                    self.root.after(0, self._update_drag_btn_auto, False)
+                except Exception as exc:
+                    self.get_logger().debug('[DRAG] Erro inesperado no tracking: %s', exc)
                 continue
             # Execução de movimento em andamento → worker controla o braço real.
             if self._exec_movement_id is not None:
@@ -1212,9 +1224,16 @@ class PalpationGUI(Node):
             'Sensor de força: mirror do CR10 ativo (/ft_sensor/wrench).',
             OK)
 
+    # Durante drag teach, o poll loop de 33 Hz precisa da porta 30004 quase
+    # exclusivamente. O bridge recua para 10 Hz para deixar o _feed_lock livre
+    # e evitar latência visível no espelho real→sim.
+    _FORCE_BRIDGE_PERIOD_DRAG_S = 0.10   # 10 Hz durante drag
+
     def _force_bridge_loop(self) -> None:
-        period = FORCE_BRIDGE_PERIOD_S
         while not self._force_bridge_stop.is_set():
+            # Adapta a taxa ao estado do drag: 50 Hz normal, 10 Hz durante drag.
+            period = (self._FORCE_BRIDGE_PERIOD_DRAG_S
+                      if self._drag_enabled else FORCE_BRIDGE_PERIOD_S)
             t0 = time.time()
             drv = self._real_driver
             if drv is None or not self._robot_connected:
@@ -2657,6 +2676,15 @@ class PalpationGUI(Node):
         self._set_status(f'Pose "{pose["name"]}" deletada.', OK)
 
     # ── Drag teach ────────────────────────────────────────────────────
+    def _publish_drag_state(self, active: bool) -> None:
+        """Publica estado do drag em /palpation/drag_mode (latched, thread-safe)."""
+        try:
+            msg = Bool()
+            msg.data = active
+            self._drag_pub.publish(msg)
+        except Exception as exc:
+            self.get_logger().debug('[DRAG] publish drag_mode falhou: %s', exc)
+
     def _toggle_drag(self) -> None:
         drv = self._real_driver
         if drv is None or not self._robot_connected:
@@ -2679,6 +2707,7 @@ class PalpationGUI(Node):
                 self._set_status(f'DragTeachSwitch falhou: {exc}', DANGER)
                 return
         self._drag_enabled = new_state
+        self._publish_drag_state(new_state)
         btn = self._drag_btn
         if btn is not None:
             if new_state:
@@ -3382,6 +3411,16 @@ class PalpationGUI(Node):
         self._robot_reconnecting = False
         self._real_driver = drv
         self._robot_connected = True
+        # Robô acabou de (re)conectar — drag nunca está ativo no hardware a
+        # esta altura (enable() colocou o robô em idle). Reset do estado e
+        # botão evita que um drag "travado" da sessão anterior controle o braço.
+        if self._drag_enabled:
+            self._drag_enabled = False
+            self._publish_drag_state(False)
+            btn = self._drag_btn
+            if btn is not None:
+                btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
+                           activebackground=_shade(BTN_NEUTRAL, -0.08))
         log.warning('[DBG] _finish_robot_connect: _robot_connected=True drv=%s', drv)
         self._robot_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
         # Conexão deu certo — persistir o IP para reusar no próximo boot.
@@ -3475,6 +3514,7 @@ class PalpationGUI(Node):
     def _robot_heartbeat_loop(self) -> None:
         HEARTBEAT_PERIOD_S = 1.0   # 1 s — permite detecção de drag em ~1 s
         MAX_FAILURES = 8           # 8 s antes de reconectar (era 3 × 5 s = 15 s)
+        from touch_pack.real_driver import ROBOT_MODE_DRAG  # hoist: evita import a cada tick
         failures = 0
         _prev_mode: int | None = None
         while not self._robot_heartbeat_stop.is_set():
@@ -3491,8 +3531,7 @@ class PalpationGUI(Node):
                 resp = drv.robot_mode()
                 ok = bool(resp) and '{' in resp
                 if ok:
-                    import re as _re
-                    m = _re.search(r'\{(\d+)\}', resp)
+                    m = re.search(r'\{(\d+)\}', resp)
                     if m:
                         mode_int = int(m.group(1))
             except (CR10RealDriverError, OSError):
@@ -3507,23 +3546,25 @@ class PalpationGUI(Node):
                 # Auto-detecção de drag: modo ≠ 5 (idle) e ≠ 6 (running) indica
                 # que o controlador mudou de estado — tipicamente modo 9 = DragTeach.
                 # Ajustar ROBOT_MODE_DRAG em real_driver.py se necessário.
-                from touch_pack.real_driver import ROBOT_MODE_DRAG
-                with self._lock:
-                    phase = self._latest_phase
-                if phase in ('IDLE', 'DONE', 'ABORTED'):
-                    is_drag = (mode_int == ROBOT_MODE_DRAG)
-                    if is_drag and not self._drag_enabled:
-                        self.get_logger().warning(
-                            '[DRAG-WATCH] Drag físico detectado (modo=%d) — '
-                            'tracking real→sim activado automaticamente.', mode_int)
-                        self._drag_enabled = True
-                        self.root.after(0, self._update_drag_btn_auto, True)
-                    elif not is_drag and self._drag_enabled:
-                        self.get_logger().info(
-                            '[DRAG-WATCH] Drag desactivado (modo=%d) — '
-                            'tracking real→sim desligado.', mode_int)
-                        self._drag_enabled = False
-                        self.root.after(0, self._update_drag_btn_auto, False)
+                # Guarda mode_int is not None: regex sem match (resposta malformada)
+                # não deve disparar auto-disable erroneamente.
+                if mode_int is not None:
+                    with self._lock:
+                        phase = self._latest_phase
+                    if phase in ('IDLE', 'DONE', 'ABORTED'):
+                        is_drag = (mode_int == ROBOT_MODE_DRAG)
+                        if is_drag and not self._drag_enabled:
+                            self.get_logger().warning(
+                                '[DRAG-WATCH] Drag físico detectado (modo=%d) — '
+                                'tracking real→sim activado automaticamente.', mode_int)
+                            self._drag_enabled = True
+                            self.root.after(0, self._update_drag_btn_auto, True)
+                        elif not is_drag and self._drag_enabled:
+                            self.get_logger().info(
+                                '[DRAG-WATCH] Drag desactivado (modo=%d) — '
+                                'tracking real→sim desligado.', mode_int)
+                            self._drag_enabled = False
+                            self.root.after(0, self._update_drag_btn_auto, False)
             else:
                 failures += 1
                 self.get_logger().warn(
@@ -3534,6 +3575,7 @@ class PalpationGUI(Node):
 
     def _update_drag_btn_auto(self, active: bool) -> None:
         """Actualiza o botão de drag a partir do watcher (thread Tk-safe)."""
+        self._publish_drag_state(active)
         btn = self._drag_btn
         if btn is None:
             return
@@ -3554,6 +3596,14 @@ class PalpationGUI(Node):
             return
         self._robot_reconnecting = True
         self._robot_connected = False
+        # Drag não pode continuar ativo sem conexão — reset estado e botão.
+        if self._drag_enabled:
+            self._drag_enabled = False
+            self._publish_drag_state(False)
+            btn = self._drag_btn
+            if btn is not None:
+                btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
+                           activebackground=_shade(BTN_NEUTRAL, -0.08))
         self._robot_connect_btn.set_state(
             '⏳', 'Reconectando…', WARN, 'white')
         self._set_status(

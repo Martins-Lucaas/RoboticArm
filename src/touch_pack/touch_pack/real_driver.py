@@ -579,14 +579,28 @@ class CR10RealDriver:
             self._request_control_with_retry(retries=2, delay_s=0.3)
             resp_cl = self._send_dash('SetCollisionLevel(0)')
             log.info('[DASH] SetCollisionLevel(0) pré-drag → %s', resp_cl)
-        resp = self._send_dash(f'DragTeachSwitch({status})')
-        log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
-        if resp and not resp.startswith('0'):
-            if enable:
+            # Garantia: se DragTeachSwitch lançar OSError ou outro erro de
+            # socket (em vez de retornar código não-0), o SetCollisionLevel(0)
+            # que acabou de ser enviado é restaurado.
+            try:
+                resp = self._send_dash(f'DragTeachSwitch({status})')
+            except Exception:
+                try:
+                    self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
+                except Exception:
+                    pass
+                raise
+            log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
+            if resp and not resp.startswith('0'):
                 self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
-            code = resp.split(',')[0].strip()
-            raise CR10RealDriverError(f'DragTeachSwitch falhou (code={code})')
-        if not enable:
+                code = resp.split(',')[0].strip()
+                raise CR10RealDriverError(f'DragTeachSwitch falhou (code={code})')
+        else:
+            resp = self._send_dash(f'DragTeachSwitch({status})')
+            log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
+            if resp and not resp.startswith('0'):
+                code = resp.split(',')[0].strip()
+                raise CR10RealDriverError(f'DragTeachSwitch falhou (code={code})')
             resp_cl = self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
             log.info('[DASH] SetCollisionLevel(%d) restaurado → %s',
                      self.cfg.collision_level, resp_cl)
