@@ -78,6 +78,11 @@ FEEDBACK_Q_ACTUAL_OFFSET = 432
 FEEDBACK_TCP_FORCE_OFFSET = 720
 FEEDBACK_PACKET_SIZE = 1440
 
+# Modo DragTeach reportado por RobotMode() no firmware V4.5.1.
+# Se o watcher de drag activar com valores errados, ajustar este número
+# para o que aparecer no log quando o drag físico for activado.
+ROBOT_MODE_DRAG = 9
+
 
 @dataclass
 class CR10RealDriverConfig:
@@ -131,6 +136,33 @@ class CR10RealDriver:
         self._keepalive_stop = threading.Event()
 
     # ── conexão ──────────────────────────────────────────────────────────
+    def _request_control_with_retry(self, retries: int = 4,
+                                    delay_s: float = 0.5) -> bool:
+        """Tenta obter o token de controle exclusivo, com backoff entre tentativas.
+
+        Retorna True se obteve o token; False se esgotou as tentativas.
+        O token é retido pela sessão anterior até o TCP detectar a desconexão
+        (pode levar segundos a minutos). O retry resolve o caso mais comum.
+        """
+        for attempt in range(1, retries + 1):
+            resp = self._send_dash('RequestControl()')
+            log.info('[DASH] RequestControl (tentativa %d/%d) → %s',
+                     attempt, retries, resp)
+            if not resp or resp.startswith('0'):
+                log.info('[DASH] Token de controle obtido na tentativa %d', attempt)
+                return True
+            if attempt < retries:
+                time.sleep(delay_s)
+        log.warning(
+            '[DASH] RequestControl: token não obtido após %d tentativas. '
+            'Causa provável: controlador em modo LOCAL (pendant tem prioridade). '
+            'Para usar DragTeachSwitch via software: mude para modo REMOTE no '
+            'teach pendant (Settings → Operate Mode → Remote) ou na interface '
+            'web http://192.168.5.2. Alternativa: use o botão físico de drag '
+            'no antebraço do robô (não exige token TCP).',
+            retries)
+        return False
+
     def is_connected(self) -> bool:
         """True se dashboard (29999) e feedback (30004) estão abertos."""
         if self.dry_run:
@@ -156,10 +188,11 @@ class CR10RealDriver:
             # O dashboard envia um banner na conexão; descartá-lo antes de
             # enviar comandos para não deslocar o emparelhamento cmd→resposta.
             self._drain_welcome()
-            # RequestControl() é exigido por alguns firmwares CR V4 para que
-            # comandos de motion sejam aceitos.
-            resp = self._send_dash('RequestControl()')
-            log.info('[DASH] RequestControl → %s', resp)
+            # RequestControl() obtém o token exclusivo de controle.
+            # Sessões anteriores que não fizeram close() limpo retêm o token
+            # até o TCP detectar a desconexão — retentar com backoff resolve
+            # o caso mais comum (timeout da sessão anterior).
+            self._request_control_with_retry()
             # Keep-alive: envia RobotMode() a cada 50 s para evitar timeout.
             self._start_keepalive()
         except OSError as exc:
@@ -531,16 +564,32 @@ class CR10RealDriver:
             log.warning('[DASH] Halt falhou: %s', exc)
 
     def drag_teach(self, enable: bool) -> None:
-        """DragTeachSwitch(1|0) — habilita/desabilita modo de arrasto livre."""
+        """DragTeachSwitch(1|0) — habilita/desabilita modo de arrasto livre.
+
+        DragTeachSwitch requer CollisionLevel=0 — com detecção ativa o
+        firmware retorna -10000. Ao habilitar: desativa colisão antes.
+        Ao desabilitar: restaura o nível configurado em cfg.collision_level.
+        """
         if self.dry_run:
             log.info('[DRY-RUN] DragTeachSwitch(%d)', int(enable))
             return
         status = 1 if enable else 0
+        if enable:
+            # Retentar token de controle — pode não ter sido obtido na conexão.
+            self._request_control_with_retry(retries=2, delay_s=0.3)
+            resp_cl = self._send_dash('SetCollisionLevel(0)')
+            log.info('[DASH] SetCollisionLevel(0) pré-drag → %s', resp_cl)
         resp = self._send_dash(f'DragTeachSwitch({status})')
         log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
         if resp and not resp.startswith('0'):
+            if enable:
+                self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
             code = resp.split(',')[0].strip()
             raise CR10RealDriverError(f'DragTeachSwitch falhou (code={code})')
+        if not enable:
+            resp_cl = self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
+            log.info('[DASH] SetCollisionLevel(%d) restaurado → %s',
+                     self.cfg.collision_level, resp_cl)
 
     def pause(self) -> None:
         """Pause() — pausa a fila de movimentos (retomável com Continue())."""
@@ -583,26 +632,38 @@ class CR10RealDriver:
 
     # ── leitura ──────────────────────────────────────────────────────────
     def read_feedback_raw(self) -> bytes:
-        """Lê um pacote completo de 1440 B do feedback port (8 ms)."""
+        """Lê um pacote completo de 1440 B do feedback port, sincronizado.
+
+        O stream é contínuo a 125 Hz. Uma leitura desalinhada (início no meio
+        de um pacote) produz NaN nos campos float que crasha o Ogre/Gazebo.
+        Sincroniza verificando o campo MessageSize (uint16 LE, offset 0) = 1440.
+        Tenta até 4 vezes antes de desistir.
+        """
         if self.dry_run:
             return b'\x00' * FEEDBACK_PACKET_SIZE
         if self._feed is None:
             raise CR10RealDriverError('Feedback port não conectado')
         with self._feed_lock:
-            buf = b''
-            while len(buf) < FEEDBACK_PACKET_SIZE:
-                chunk = self._feed.recv(FEEDBACK_PACKET_SIZE - len(buf))
-                if not chunk:
-                    raise CR10RealDriverError('Feedback port fechado')
-                buf += chunk
-            return buf
+            for attempt in range(4):
+                buf = b''
+                while len(buf) < FEEDBACK_PACKET_SIZE:
+                    chunk = self._feed.recv(FEEDBACK_PACKET_SIZE - len(buf))
+                    if not chunk:
+                        raise CR10RealDriverError('Feedback port fechado')
+                    buf += chunk
+                msg_size = struct.unpack_from('<H', buf, 0)[0]
+                if msg_size == FEEDBACK_PACKET_SIZE:
+                    return buf
+                log.debug('[FEED] pacote desalinhado (MessageSize=%d, attempt=%d)',
+                          msg_size, attempt + 1)
+            return buf  # melhor esforço após 4 tentativas
 
     def read_joints_rad(self) -> np.ndarray:
         """Lê as 6 juntas atuais em radianos (convenção DOBOT).
 
         O struct de feedback armazena q_actual em GRAUS; esta função converte
-        para radianos antes de devolver, para consistência com servo_j e
-        dobot_to_urdf.
+        para radianos antes de devolver. Lança CR10RealDriverError se os
+        valores forem NaN/inf ou fora de ±400° (dado corrompido/desalinhado).
         """
         if self.dry_run:
             return np.zeros(6, dtype=np.float64)
@@ -610,6 +671,9 @@ class CR10RealDriver:
         q_deg = np.frombuffer(
             buf, offset=FEEDBACK_Q_ACTUAL_OFFSET,
             count=6, dtype='<f8').copy()
+        if not np.all(np.isfinite(q_deg)) or np.any(np.abs(q_deg) > 400.0):
+            raise CR10RealDriverError(
+                f'Leitura de juntas inválida (desalinhamento?): {q_deg}')
         return np.deg2rad(q_deg)
 
     def read_joints_urdf(self) -> np.ndarray:

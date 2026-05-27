@@ -366,19 +366,24 @@ class TactileExplorer(Node):
         if max_d < 0.001:
             return True
         n_steps = max(1, int(math.ceil(max_d / (_HOME_MAX_RAD_S * _CTRL_DT))))
-        # Velocidade constante derivada do speed_factor_pct da GUI.
-        # A interpolação linear implica dq/passo = delta/n_steps →
-        # velocidade por junta = dq/_CTRL_DT. Clampamos pelo limite do slider.
         v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
-        vel = np.clip(delta / n_steps / _CTRL_DT, -v_lim, v_lim)
+        vel_peak = np.clip(delta / n_steps / _CTRL_DT, -v_lim, v_lim)
+        # Rampa trapezoidal: ~20 % de aceleração/desaceleração (máx 8 passos = 240 ms).
+        # Evita o solavanco de arranque causado por velocidade constante desde t=0.
+        ramp = min(max(1, n_steps // 5), 8)
         for i in range(1, n_steps + 1):
             if self._stop_requested.is_set():
                 self._stop_requested.clear()
                 return False
             alpha = i / n_steps
             q = np.clip(q_from + alpha * delta, JOINT_MIN, JOINT_MAX)
-            # Último passo: velocidade zero para parada suave antes do CONTACT.
-            step_vel = vel if i < n_steps else np.zeros(6)
+            if i <= ramp:
+                scale = i / ramp
+            elif i >= n_steps - ramp + 1:
+                scale = (n_steps - i + 1) / ramp
+            else:
+                scale = 1.0
+            step_vel = vel_peak * scale if i < n_steps else np.zeros(6)
             self._stream_q(q, _CTRL_DT, velocities=step_vel)
             time.sleep(_CTRL_DT)
         return True
@@ -586,13 +591,67 @@ class TactileExplorer(Node):
         self._hand_pub.publish(msg)
 
     # ──────────────────────────────────────────────────────────────────
+    # HOME: trajectória batch (uma mensagem multi-ponto → JTC planeia S-curve)
+    # ──────────────────────────────────────────────────────────────────
+    def _joint_batch_to(self, q_target: np.ndarray) -> bool:
+        """Envia uma única JointTrajectory com todos os waypoints ao JTC.
+
+        Em vez de streaming de N goals individuais a 33 Hz (que o JTC trata
+        como N trajectórias independentes), envia-os todos numa mensagem só.
+        O JTC usa interpolação cúbica sobre o conjunto completo → curva de
+        velocidade suave sem solavancos de arranque.
+
+        Fallback para _joint_stream_to se a trajectória tiver < 2 pontos.
+        """
+        q_from = self._q_now()
+        delta = np.asarray(q_target, float) - q_from
+        max_d = float(np.max(np.abs(delta)))
+        if max_d < 0.001:
+            return True
+        n_steps = max(2, int(math.ceil(max_d / (_HOME_MAX_RAD_S * _CTRL_DT))))
+        v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+        vel_peak = np.clip(delta / n_steps / _CTRL_DT, -v_lim, v_lim)
+        ramp = min(max(1, n_steps // 5), 8)
+
+        msg = JointTrajectory()
+        msg.joint_names = list(_ARM_JOINTS)
+        for i in range(1, n_steps + 1):
+            alpha = i / n_steps
+            q = np.clip(q_from + alpha * delta, JOINT_MIN, JOINT_MAX)
+            if i <= ramp:
+                scale = i / ramp
+            elif i >= n_steps - ramp + 1:
+                scale = (n_steps - i + 1) / ramp
+            else:
+                scale = 1.0
+            step_vel = vel_peak * scale if i < n_steps else np.zeros(6)
+            pt = JointTrajectoryPoint()
+            pt.positions = [float(v) for v in q]
+            pt.velocities = [float(v) for v in step_vel]
+            t_s = i * _CTRL_DT
+            pt.time_from_start = Duration(sec=int(t_s),
+                                          nanosec=int((t_s - int(t_s)) * 1e9))
+            msg.points.append(pt)
+
+        self._arm_traj_pub.publish(msg)
+
+        # Aguardar a execução, monitorizando stop a cada tick.
+        t_end = time.monotonic() + n_steps * _CTRL_DT + 0.3
+        while time.monotonic() < t_end:
+            if self._stop_requested.is_set():
+                self._stop_requested.clear()
+                self._settle()
+                return False
+            time.sleep(_CTRL_DT)
+        return True
+
+    # ──────────────────────────────────────────────────────────────────
     # Fases
     # ──────────────────────────────────────────────────────────────────
     def _phase_goto_home(self) -> bool:
-        """HOME — interpolação linear no espaço de juntas a ≤ 0.3 rad/s.
-        Sem action server, sem pré-planejamento externo."""
+        """HOME — trajectória batch ao JTC (S-curve interna) a ≤ 0.3 rad/s."""
         self._set_phase('HOME')
-        self._send_hand_pose(_HAND_POINTING_RAD)   # duração escala com speed_factor_pct
+        self._send_hand_pose(_HAND_POINTING_RAD)
 
         q_home = (self._user_home_q.copy()
                   if self._user_home_q is not None
@@ -601,7 +660,7 @@ class TactileExplorer(Node):
         # Settle antes de mover — garante que não há lookahead residual.
         self._settle()
 
-        if not self._joint_stream_to(q_home):
+        if not self._joint_batch_to(q_home):
             return False
 
         # Settle final para estabilizar antes do CONTACT.
