@@ -85,14 +85,15 @@ class CR10RealDriverConfig:
     dashboard_port: int = DASH_PORT      # 29999 — todos os comandos
     feedback_port: int = FEEDBACK_PORT   # 30004 — struct 1440 B
     connect_timeout_s: float = 3.0
-    recv_timeout_s: float = 1.0
-    speed_factor: int = 10            # 10% — responsivo para mirror slider
-    collision_level: int = 3          # 0 = off; 3 = padrão CR
-    payload_kg: float = 0.5           # mão COVVI ≈ 0.5 kg
+    recv_timeout_s: float = 0.050    # timeout geral recv (era 1.0 — bloqueava o loop)
+    servoj_recv_timeout_s: float = 0.008  # ServoJ: desiste da leitura em 8 ms
+    speed_factor: int = 10           # 10% — responsivo para mirror slider
+    collision_level: int = 3         # 0 = off; 3 = padrão CR
+    payload_kg: float = 0.5          # mão COVVI ≈ 0.5 kg
     payload_cog_m: tuple = (0.0, 0.0, 0.05)
-    servoj_period_s: float = 0.030    # 33 Hz recomendado
-    servoj_lookahead: int = 50        # [20, 100]
-    servoj_gain: int = 500            # [200, 1000]
+    servoj_period_s: float = 0.030   # 33 Hz recomendado
+    servoj_lookahead: int = 20       # [20,100]; 20 = resposta imediata (era 50)
+    servoj_gain: int = 500           # [200, 1000]
 
 
 class CR10RealDriverError(RuntimeError):
@@ -246,6 +247,31 @@ class CR10RealDriver:
             pass
         return buf.decode('ascii', errors='replace').strip()
 
+    def _drain_stale_responses(self) -> None:
+        """Consome respostas pendentes de ServoJ (não lidas por timeout) do socket 29999.
+
+        Chamado antes de todo `_send_dash(expect_reply=True)` para evitar que
+        ACKs atrasados de ServoJ sejam lidos como resposta do próximo comando.
+        Usa recv não-bloqueante (timeout=0) — retorna imediatamente se o
+        buffer já estiver vazio.
+        """
+        if self._dash is None:
+            return
+        self._dash.settimeout(0.0)
+        drained = 0
+        try:
+            while True:
+                chunk = self._dash.recv(4096)
+                if not chunk:
+                    break
+                drained += len(chunk)
+        except (socket.timeout, BlockingIOError, OSError):
+            pass
+        finally:
+            self._dash.settimeout(self.cfg.recv_timeout_s)
+        if drained:
+            log.debug('[DRAIN] %d bytes de ACKs ServoJ descartados', drained)
+
     def _send_dash(self, cmd: str, expect_reply: bool = True) -> str:
         """Envia Immediate command ao dashboard (29999) e devolve a resposta."""
         if self.dry_run:
@@ -254,6 +280,10 @@ class CR10RealDriver:
         if self._dash is None:
             raise CR10RealDriverError('Dashboard não conectado')
         with self._dash_lock:
+            # Drena ACKs de ServoJ acumulados antes de enviar um comando que
+            # espera sua própria resposta — evita cmd→resposta mismatch.
+            if expect_reply:
+                self._drain_stale_responses()
             log.debug('[DASH→] %s', cmd)
             self._dash.sendall((cmd + '\n').encode('ascii'))
             if not expect_reply:
@@ -339,9 +369,9 @@ class CR10RealDriver:
         """Reinicia estado interno antes de iniciar o streaming ServoJ.
 
         Chamar APÓS sync() (PTP de alinhamento concluído) e ANTES do
-        primeiro ServoJ. No firmware V4.5.1 (protocolo V3), ServoJ
-        retorna -50001 quando iniciado imediatamente após JointMovJ —
-        ClearError() + 200 ms de estabilização resolve a transição.
+        primeiro ServoJ. No firmware V4.5.1, ServoJ retorna -50001
+        imediatamente após JointMovJ — ClearError() + Continue() +
+        50 ms de estabilização resolve a transição.
         """
         if self.dry_run:
             return
@@ -349,7 +379,7 @@ class CR10RealDriver:
         log.info('[DASH] prepare_servoj ClearError → %s', resp)
         resp = self._send_dash('Continue()')
         log.info('[DASH] prepare_servoj Continue → %s', resp)
-        time.sleep(0.2)
+        time.sleep(0.050)   # era 0.200 — 50 ms é suficiente para estabilizar
         mode = self.robot_mode()
         log.info('[DASH] RobotMode antes do primeiro ServoJ: %s', mode)
 
@@ -398,29 +428,44 @@ class CR10RealDriver:
         """ServoJ — fluxo de setpoints articulares em RADIANO (convenção DOBOT).
 
         Frequência recomendada: 33 Hz (período 30 ms).
-        Não chama Sync(); é responsabilidade do chamador respeitar o ritmo.
+        Não bloqueia: envia o comando e tenta ler a resposta dentro de
+        `servoj_recv_timeout_s` (8 ms). Se a resposta não chegar nesse tempo,
+        retorna imediatamente — o ACK atrasado fica no buffer TCP e é drenado
+        pelo próximo `_send_dash` de nível superior (ClearError, RobotMode…).
         """
         q = list(q_rad)
         if len(q) != 6:
             raise ValueError(f'servo_j requer 6 valores, recebeu {len(q)}')
         q_deg = [math.degrees(v) for v in q]
-        # V4 firmware: ServoJ(J1,...,J6,t=<s>,aheadtime=<n>,gain=<n>)
-        # Os parâmetros opcionais são KEYWORD ARGS (não posicionais).
-        # V3 usava ServoJ(J1,...,J6,t,la,g) posicional → retorna -50001 em V4.
         cmd = 'ServoJ({values},t={t:.3f},aheadtime={la},gain={g})'.format(
             values=','.join(f'{v:.6f}' for v in q_deg),
             t=self.cfg.servoj_period_s,
             la=self.cfg.servoj_lookahead,
             g=self.cfg.servoj_gain)
-        resp = self._send_motion(cmd)
-        if resp and not resp.startswith('0'):
-            code = resp.split(',')[0].strip()
-            log.warning('[MOVE] ServoJ erro %s', code)
-            if code in ('-50001', '-1', '-2', '-3'):
-                # -50001: servo subsystem não pronto (estado pós-PTP).
-                # -1: robô desabilitado / comando não executável agora.
-                # -2: robô em alarme. -3: modo errado para ServoJ.
-                raise CR10RealDriverError(f'ServoJ não executável ({code})')
+        self._last_send_t = time.time()
+        if self.dry_run:
+            log.info('[DRY-RUN dash] %s', cmd)
+            return
+        if self._dash is None:
+            raise CR10RealDriverError('Dashboard não conectado')
+        with self._dash_lock:
+            log.debug('[DASH→] %s', cmd)
+            self._dash.sendall((cmd + '\n').encode('ascii'))
+            # Lê resposta com timeout curto — não bloqueia o ciclo de 30 ms.
+            # Timeout normal significa "ACK ainda não chegou", não erro.
+            self._dash.settimeout(self.cfg.servoj_recv_timeout_s)
+            try:
+                resp = self._recv_line(self._dash)
+                if resp and not resp.startswith('0'):
+                    code = resp.split(',')[0].strip()
+                    log.warning('[MOVE] ServoJ erro %s', code)
+                    if code in ('-50001', '-1', '-2', '-3'):
+                        raise CR10RealDriverError(
+                            f'ServoJ não executável ({code})')
+            except socket.timeout:
+                pass  # normal — ACK chega depois, drenado pelo próximo _send_dash
+            finally:
+                self._dash.settimeout(self.cfg.recv_timeout_s)
 
     def servo_j_urdf(self, q_urdf: Sequence[float]) -> None:
         """Wrapper que aplica `urdf_to_dobot` antes de chamar `servo_j`."""
@@ -484,6 +529,18 @@ class CR10RealDriver:
             log.info('[DASH] Halt → %s', resp)
         except CR10RealDriverError as exc:
             log.warning('[DASH] Halt falhou: %s', exc)
+
+    def drag_teach(self, enable: bool) -> None:
+        """DragTeachSwitch(1|0) — habilita/desabilita modo de arrasto livre."""
+        if self.dry_run:
+            log.info('[DRY-RUN] DragTeachSwitch(%d)', int(enable))
+            return
+        status = 1 if enable else 0
+        resp = self._send_dash(f'DragTeachSwitch({status})')
+        log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
+        if resp and not resp.startswith('0'):
+            code = resp.split(',')[0].strip()
+            raise CR10RealDriverError(f'DragTeachSwitch falhou (code={code})')
 
     def pause(self) -> None:
         """Pause() — pausa a fila de movimentos (retomável com Continue())."""

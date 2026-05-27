@@ -9,15 +9,21 @@
     Z: -6.5 mm … +108 mm  (comprimento total ≈ 114.5 mm)
 
   Cadeia de links:
-    Link6 → force_sensor_link (célula de carga, 12.7 mm) → touch_tool_link → tcp_link
+    Link6 → lower_coupling_link (acoplador ⌀80×15 mm) → force_sensor_link (célula 60 mm)
+          → upper_coupling_link (acoplador ⌀80×15 mm) → touch_tool_link → tcp_link
 
   Convenção de frames:
-    • force_sensor_link / origem: coincide com o flange do robô (Link6).
+    • lower_coupling_link / origem: coincide com o flange do robô (Link6).
+      Disco ⌀80×15 mm, slot 52×13 mm encaixa a base da célula de carga.
+    • force_sensor_link / origem: topo do acoplador inferior (+15 mm de Link6).
       Célula de carga 50.8×60×12.7 mm, mesh centralizado em X/Y por offset visual.
-    • touch_tool_link / origem: face superior da célula em pé (+60 mm em Z de Link6).
+    • upper_coupling_link / origem: topo da célula em pé (+15+60=75 mm de Link6).
+      Mesmo disco do inferior; slot encaixa o topo da célula.
+    • touch_tool_link / origem: topo do acoplador superior (+75+15=90 mm de Link6).
       O fundo do STL (Z = -6.5 mm no espaço da malha) é alinhado com +0.0065 m.
     • tcp_link: face de contato quadrada 20×20 mm (ponta do probe),
-      situado em 0.060 + 0.1145 = 0.1745 m acima do flange (Link6).
+      situado em 0.007+0.052+0.015+0.1145 = 0.1885 m acima do flange (Link6).
+      A célula entra 8 mm dentro de cada acoplador (slot 52×13 mm passante).
 
   Uso standalone (Gazebo):
     Altere o parent do joint "touch_tool_attach" de "Link6" para "world",
@@ -53,7 +59,39 @@
   </link>
 
   <!-- ══════════════════════════════════════════════════════════════════
-       CÉLULA DE CARGA (entre Link6 e touch_tool_link)
+       ACOPLADOR INFERIOR (entre Link6 e célula de carga)
+       Disco ⌀80×15 mm em alumínio; slot 52×13 mm encaixa na base da célula.
+       Mesh: X[−40..40] Y[−40..40] Z[0..15] mm — já centrado em X/Y.
+  ══════════════════════════════════════════════════════════════════ -->
+  <link name="lower_coupling_link">
+    <inertial>
+      <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+      <mass value="0.200"/>
+      <!-- disco Al: Ixx=Iyy=(1/12)m(3R²+H²)=8.4e-5; Izz=(1/2)mR²=1.6e-4 -->
+      <inertia ixx="8.4e-5" ixy="0.0" ixz="0.0"
+               iyy="8.4e-5" iyz="0.0"
+               izz="1.6e-4"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://touch_pack/meshes/Acoplador_CelulaDeCarga_Uniaxial.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="coupling_gray">
+        <color rgba="0.35 0.35 0.40 1.0"/>
+      </material>
+    </visual>
+    <collision name="col_lower_coupling">
+      <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.040" length="0.015"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       CÉLULA DE CARGA (entre acoplador inferior e acoplador superior)
        STL original: X[0..50.8] Y[0..60] Z[0..12.7] mm — unidade mm.
        Offset visual −25.4 mm em X e −30 mm em Y para centralizar o mesh
        no eixo Z do flange. Colisão: caixa 50.8×60×12.7 mm.
@@ -82,6 +120,36 @@
       <origin xyz="0 0 0.030" rpy="0 0 0"/>
       <geometry>
         <box size="0.0508 0.0127 0.060"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       ACOPLADOR SUPERIOR (entre célula de carga e touch_tool)
+       Mesma geometria do inferior; encaixa no topo da célula de carga.
+  ══════════════════════════════════════════════════════════════════ -->
+  <link name="upper_coupling_link">
+    <inertial>
+      <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+      <mass value="0.200"/>
+      <inertia ixx="8.4e-5" ixy="0.0" ixz="0.0"
+               iyy="8.4e-5" iyz="0.0"
+               izz="1.6e-4"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://touch_pack/meshes/Acoplador_CelulaDeCarga_Uniaxial.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="coupling_gray">
+        <color rgba="0.35 0.35 0.40 1.0"/>
+      </material>
+    </visual>
+    <collision name="col_upper_coupling">
+      <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.040" length="0.015"/>
       </geometry>
     </collision>
   </link>
@@ -149,19 +217,42 @@
 
   <!-- ══════════════════════════════════════════════════════════════════
        JUNTAS
+       Célula entra 8 mm dentro de cada acoplador (slot passante 52×13 mm);
+       7 mm de anel do acoplador fica visível em cada extremidade da célula.
+
+       Cadeia e offsets (medidos a partir de Link6):
+         lower_coupling  0 mm       (flange)
+         force_sensor    +7 mm      (célula entra 8 mm no acoplador inferior)
+         upper_coupling  +59 mm     (célula entra 8 mm no acoplador superior)
+         touch_tool      +74 mm
+         tcp_link        +188.5 mm
   ══════════════════════════════════════════════════════════════════ -->
-  <!-- Célula de carga acoplada ao flange do robô. -->
-  <joint name="force_sensor_attach" type="fixed">
+  <!-- Acoplador inferior no flange. -->
+  <joint name="lower_coupling_attach" type="fixed">
     <parent link="Link6"/>
-    <child link="force_sensor_link"/>
+    <child link="lower_coupling_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- Touch tool acoplado ao topo da célula em pé (+60 mm). -->
-  <joint name="touch_tool_attach" type="fixed">
+  <!-- Célula inicia 7 mm acima do flange — entra 8 mm no acoplador inferior. -->
+  <joint name="force_sensor_attach" type="fixed">
+    <parent link="lower_coupling_link"/>
+    <child link="force_sensor_link"/>
+    <origin xyz="0 0 0.007" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Acoplador superior começa 8 mm antes do topo da célula (+52 mm). -->
+  <joint name="upper_coupling_attach" type="fixed">
     <parent link="force_sensor_link"/>
+    <child link="upper_coupling_link"/>
+    <origin xyz="0 0 0.052" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Touch tool sobre o acoplador superior (+15 mm). -->
+  <joint name="touch_tool_attach" type="fixed">
+    <parent link="upper_coupling_link"/>
     <child link="touch_tool_link"/>
-    <origin xyz="0 0 0.060" rpy="0 0 0"/>
+    <origin xyz="0 0 0.015" rpy="0 0 0"/>
   </joint>
 
   <!-- tcp_link na ponta: 6.5 mm (offset base) + 108 mm (tip) = 114.5 mm. -->
@@ -174,11 +265,6 @@
   <!-- ══════════════════════════════════════════════════════════════════
        PROPRIEDADES GAZEBO
   ══════════════════════════════════════════════════════════════════ -->
-  <!--
-    Corpo: contato moderadamente rígido (kp=1e5), amortecimento médio
-    (kd=100), atrito moderado (μ=0.6) — adequado para pressionar
-    superfícies macias (fantomas) sem ricochete.
-  -->
   <gazebo reference="touch_tool_link">
     <self_collide>false</self_collide>
     <gravity>true</gravity>
@@ -191,13 +277,35 @@
     <maxVel>0.05</maxVel>
   </gazebo>
 
-  <!-- Link6 placeholder: sem auto-colisão. -->
   <gazebo reference="Link6">
     <self_collide>false</self_collide>
   </gazebo>
 
-  <!-- Célula de carga: rígida, contato moderado. -->
   <gazebo reference="force_sensor_link">
+    <self_collide>false</self_collide>
+    <gravity>true</gravity>
+    <mu1>0.40</mu1>
+    <mu2>0.40</mu2>
+    <kp>1.0e5</kp>
+    <kd>100.0</kd>
+    <maxContacts>4</maxContacts>
+    <minDepth>0.0002</minDepth>
+    <maxVel>0.05</maxVel>
+  </gazebo>
+
+  <gazebo reference="lower_coupling_link">
+    <self_collide>false</self_collide>
+    <gravity>true</gravity>
+    <mu1>0.40</mu1>
+    <mu2>0.40</mu2>
+    <kp>1.0e5</kp>
+    <kd>100.0</kd>
+    <maxContacts>4</maxContacts>
+    <minDepth>0.0002</minDepth>
+    <maxVel>0.05</maxVel>
+  </gazebo>
+
+  <gazebo reference="upper_coupling_link">
     <self_collide>false</self_collide>
     <gravity>true</gravity>
     <mu1>0.40</mu1>

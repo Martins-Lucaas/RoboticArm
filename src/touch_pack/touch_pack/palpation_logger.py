@@ -100,6 +100,7 @@ class PalpationLogger(Node):
             ts = datetime.now().strftime('%Y%m%d_%H%M%S')
             csv_path = os.path.join(OUTPUT_DIR, f'{ts}__samples.csv')
             json_path = os.path.join(OUTPUT_DIR, f'{ts}__params.json')
+            fh = None
             try:
                 fh = open(csv_path, 'w', newline='')
                 writer = csv.writer(fh)
@@ -110,6 +111,8 @@ class PalpationLogger(Node):
             except OSError as exc:
                 self.get_logger().error(
                     f'Falha ao criar arquivos de run: {exc}')
+                if fh is not None:
+                    fh.close()
                 return
             self._csv_fh = fh
             self._csv_writer = writer

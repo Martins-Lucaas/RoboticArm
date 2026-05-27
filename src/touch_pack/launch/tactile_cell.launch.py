@@ -194,14 +194,40 @@ def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str) -> str
 
 def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
                               arm_gz: str) -> str:
-    """Injeta Célula de Carga + TouchTool Square 20×20 mm + tcp_link no CR10.
+    """Injeta acopladores + Célula de Carga + TouchTool Square 20×20 mm + tcp_link no CR10.
 
-    Cadeia: Link6 → force_sensor_link (12.7 mm) → touch_tool_link → tcp_link.
+    Cadeia (offsets desde Link6):
+      lower_coupling (+0mm) → force_sensor (+7mm, entra 8mm no acoplador inferior)
+      → upper_coupling (+59mm, entra 8mm no topo da célula)
+      → touch_tool (+74mm) → tcp_link (+188.5mm)
     """
-    sensor_mesh = os.path.join(touch_pack_share, 'meshes', 'Celula De Carga.stl')
-    tool_mesh   = os.path.join(touch_pack_share, 'meshes', 'touch_tool_square_20x20.stl')
+    sensor_mesh   = os.path.join(touch_pack_share, 'meshes', 'Celula De Carga.stl')
+    tool_mesh     = os.path.join(touch_pack_share, 'meshes', 'touch_tool_square_20x20.stl')
+    coupling_mesh = os.path.join(touch_pack_share, 'meshes', 'Acoplador_CelulaDeCarga_Uniaxial.stl')
 
     tool_snippet = f'''
+    <!-- ── Acoplador inferior (Link6 → base da célula) ───────────── -->
+    <link name="lower_coupling_link">
+      <inertial>
+        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+        <mass value="0.200"/>
+        <inertia ixx="8.4e-5" ixy="0.0" ixz="0.0"
+                 iyy="8.4e-5" iyz="0.0" izz="1.6e-4"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="coupling_gray">
+          <color rgba="0.35 0.35 0.40 1.0"/>
+        </material>
+      </visual>
+      <collision name="col_lower_coupling">
+        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+        <geometry><cylinder radius="0.040" length="0.015"/></geometry>
+      </collision>
+    </link>
     <!-- ── Célula de Carga (em pé: Rx+90°, mesh-Y→+Z robô) ──────── -->
     <link name="force_sensor_link">
       <inertial>
@@ -222,6 +248,28 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
       <collision name="col_sensor">
         <origin xyz="0 0 0.030" rpy="0 0 0"/>
         <geometry><box size="0.0508 0.0127 0.060"/></geometry>
+      </collision>
+    </link>
+    <!-- ── Acoplador superior (topo da célula → touch_tool) ─────── -->
+    <link name="upper_coupling_link">
+      <inertial>
+        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+        <mass value="0.200"/>
+        <inertia ixx="8.4e-5" ixy="0.0" ixz="0.0"
+                 iyy="8.4e-5" iyz="0.0" izz="1.6e-4"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="coupling_gray">
+          <color rgba="0.35 0.35 0.40 1.0"/>
+        </material>
+      </visual>
+      <collision name="col_upper_coupling">
+        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
+        <geometry><cylinder radius="0.040" length="0.015"/></geometry>
       </collision>
     </link>
     <!-- ── Touch Tool ─────────────────────────────────────────────── -->
@@ -251,17 +299,29 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
       </collision>
     </link>
     <link name="tcp_link"/>
-    <!-- célula de carga ao flange -->
-    <joint name="force_sensor_attach" type="fixed">
+    <!-- acoplador inferior no flange -->
+    <joint name="lower_coupling_attach" type="fixed">
       <parent link="Link6"/>
-      <child link="force_sensor_link"/>
+      <child link="lower_coupling_link"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </joint>
-    <!-- touch tool ao topo da célula em pé (+60 mm) -->
-    <joint name="touch_tool_attach" type="fixed">
+    <!-- célula inicia +7 mm: entra 8 mm dentro do acoplador inferior -->
+    <joint name="force_sensor_attach" type="fixed">
+      <parent link="lower_coupling_link"/>
+      <child link="force_sensor_link"/>
+      <origin xyz="0 0 0.007" rpy="0 0 0"/>
+    </joint>
+    <!-- acoplador superior começa 8 mm antes do topo da célula (+52 mm) -->
+    <joint name="upper_coupling_attach" type="fixed">
       <parent link="force_sensor_link"/>
+      <child link="upper_coupling_link"/>
+      <origin xyz="0 0 0.052" rpy="0 0 0"/>
+    </joint>
+    <!-- touch tool sobre o acoplador superior (+15 mm) -->
+    <joint name="touch_tool_attach" type="fixed">
+      <parent link="upper_coupling_link"/>
       <child link="touch_tool_link"/>
-      <origin xyz="0 0 0.060" rpy="0 0 0"/>
+      <origin xyz="0 0 0.015" rpy="0 0 0"/>
     </joint>
     <joint name="tcp_alias_joint" type="fixed">
       <parent link="touch_tool_link"/>
@@ -270,7 +330,25 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
     </joint>'''
 
     tool_gz = (
+        '\n  <gazebo reference="lower_coupling_link">'
+        '<self_collide>false</self_collide>'
+        '<gravity>true</gravity>'
+        '<mu1>0.40</mu1><mu2>0.40</mu2>'
+        '<kp>1.0e5</kp><kd>100.0</kd>'
+        '<maxContacts>4</maxContacts>'
+        '<minDepth>0.0002</minDepth>'
+        '<maxVel>0.05</maxVel>'
+        '</gazebo>'
         '\n  <gazebo reference="force_sensor_link">'
+        '<self_collide>false</self_collide>'
+        '<gravity>true</gravity>'
+        '<mu1>0.40</mu1><mu2>0.40</mu2>'
+        '<kp>1.0e5</kp><kd>100.0</kd>'
+        '<maxContacts>4</maxContacts>'
+        '<minDepth>0.0002</minDepth>'
+        '<maxVel>0.05</maxVel>'
+        '</gazebo>'
+        '\n  <gazebo reference="upper_coupling_link">'
         '<self_collide>false</self_collide>'
         '<gravity>true</gravity>'
         '<mu1>0.40</mu1><mu2>0.40</mu2>'
@@ -298,12 +376,21 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
 # ──────────────────────────────────────────────────────────────────────
 # OpaqueFunction: monta nodes/handlers após resolver os argumentos
 # ──────────────────────────────────────────────────────────────────────
+_CONTROL_MODE_MAP = {
+    'sim_only':      'SIM_ONLY',
+    'mirror':        'MIRROR',
+    'real_from_sim': 'REAL_FROM_SIM',
+}
+
+
 def launch_setup(context, *args, **kwargs):
     end_effector = LaunchConfiguration('end_effector').perform(context)
     control_mode = LaunchConfiguration('control_mode').perform(context)
     robot_ip     = LaunchConfiguration('robot_ip').perform(context)
     robot_dry    = LaunchConfiguration('robot_dry_run').perform(context)
     no_gui_val   = LaunchConfiguration('no_gui').perform(context)
+
+    robot_mode = _CONTROL_MODE_MAP.get(control_mode, 'SIM_ONLY')
 
     pkg_touch  = get_package_share_directory('touch_pack')
     pkg_gazebo = get_package_share_directory('gazebo_ros')
@@ -334,13 +421,13 @@ def launch_setup(context, *args, **kwargs):
         package='gazebo_ros',
         executable='spawn_entity.py',
         arguments=['-file', urdf_spawn_path, '-entity', 'cr10_tcp',
-                   '-x', '0', '-y', '0', '-z', '0.75'],
+                   '-x', '0.30', '-y', '0', '-z', '0.75'],
         parameters=[{'use_sim_time': True}])
 
     # ── Home setter ───────────────────────────────────────────────────
     home_setter = Node(
         package='touch_pack', executable='gazebo_home_setter',
-        parameters=[{'use_sim_time': True}])
+        parameters=[{'use_sim_time': True, 'robot_ip': robot_ip}])
 
     # ── Controllers ───────────────────────────────────────────────────
     load_jsb = Node(
@@ -363,7 +450,9 @@ def launch_setup(context, *args, **kwargs):
 
     gui_node = Node(
         package='touch_pack', executable='palpation_gui',
-        parameters=[{'use_sim_time': True}],
+        parameters=[{'use_sim_time': True,
+                     'robot_ip':   robot_ip,
+                     'robot_mode': robot_mode}],
         condition=UnlessCondition(LaunchConfiguration('no_gui')))
 
     logger_node = Node(

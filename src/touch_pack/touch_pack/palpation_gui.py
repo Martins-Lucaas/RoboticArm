@@ -159,6 +159,7 @@ HOME_POSE_FILE = os.path.expanduser('~/.config/touch_pack/home_pose.json')
 # reescrito sempre que o usuário conectar com sucesso ou trocar de modo.
 ROBOT_CONFIG_FILE = os.path.expanduser('~/.config/touch_pack/robot.json')
 LC_CALIB_FILE     = os.path.expanduser('~/.config/touch_pack/load_cell_calib.json')
+POSES_FILE        = os.path.expanduser('~/.config/touch_pack/poses.json')
 ROBOT_CONFIG_DEFAULTS = {
     'hand_ip':    '192.168.5.103',
     'robot_ip':   '192.168.5.2',
@@ -291,6 +292,8 @@ class PalpationGUI(Node):
         self._eci_enabled = False
         self._eci_prefix = self.declare_parameter(
             'eci_prefix', '/covvi/hand').value
+        self._param_robot_ip   = self.declare_parameter('robot_ip',   '').value
+        self._param_robot_mode = self.declare_parameter('robot_mode', '').value
         self._eci_srv = None
         self._eci_msg = None
         self._cli_eci_grip = None
@@ -356,6 +359,11 @@ class PalpationGUI(Node):
         # dos campos refletirem o último valor usado.
         self._robot_cfg: dict[str, str] = dict(ROBOT_CONFIG_DEFAULTS)
         self._load_robot_config()
+        # Parâmetros ROS sobrescrevem robot.json (permitem override via launch/CLI).
+        if self._param_robot_ip:
+            self._robot_cfg['robot_ip'] = self._param_robot_ip
+        if self._param_robot_mode in ('SIM_ONLY', 'MIRROR', 'REAL_FROM_SIM'):
+            self._robot_cfg['robot_mode'] = self._param_robot_mode
 
         # ─── Célula de carga (load cell UDP via force_receiver_node) ─
         self._lc_voltage: float          = 0.0
@@ -375,6 +383,23 @@ class PalpationGUI(Node):
         # Subprocesso do force_receiver_node (gerenciado pelo botão Conectar)
         self._force_rx_proc: subprocess.Popen | None = None
         self._force_rx_should_be_alive: bool = False
+
+        # ─── Poses & Movimentos ──────────────────────────────────────
+        self._poses: list[dict] = []        # [{id, name, q_deg:[6]}]
+        self._movements: list[dict] = []    # [{id, name, pose_ids, speed_pct, dur_s}]
+        self._next_pose_id: int = 1
+        self._next_movement_id: int = 1
+        self._drag_enabled: bool = False
+        self._exec_stop = threading.Event()
+        self._exec_thread: threading.Thread | None = None
+        self._exec_movement_id: int | None = None
+        # Refs de widgets (preenchidos em _build_poses_tab)
+        self._poses_lbx: tk.Listbox | None = None
+        self._movs_lbx: tk.Listbox | None = None
+        self._mov_detail_outer: tk.Frame | None = None
+        self._mov_detail_inner: tk.Frame | None = None
+        self._drag_btn = None
+        self._load_poses_data()
 
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
@@ -544,18 +569,21 @@ class PalpationGUI(Node):
         nb = ttk.Notebook(self.root, style='Tactile.TNotebook')
         nb.pack(fill='both', expand=True, padx=18, pady=18)
 
-        tab_palp = tk.Frame(nb, bg=BG)
-        tab_man  = tk.Frame(nb, bg=BG)
-        tab_lc   = tk.Frame(nb, bg=BG)
-        nb.add(tab_palp, text='Palpação')
-        nb.add(tab_man,  text='Controle Manual')
-        nb.add(tab_lc,   text='Célula de Carga')
+        tab_palp  = tk.Frame(nb, bg=BG)
+        tab_man   = tk.Frame(nb, bg=BG)
+        tab_lc    = tk.Frame(nb, bg=BG)
+        tab_poses = tk.Frame(nb, bg=BG)
+        nb.add(tab_palp,  text='Palpação')
+        nb.add(tab_man,   text='Controle Manual')
+        nb.add(tab_lc,    text='Célula de Carga')
+        nb.add(tab_poses, text='Poses & Movimentos')
 
         # ttk.Progressbar foi removida (causava segfault com Canvas embed).
         # _scrollable agora é seguro para todas as abas.
         self._build_palpation_tab(self._scrollable(tab_palp))
         self._build_manual_tab(self._scrollable(tab_man))
         self._build_loadcell_tab(tab_lc)   # sub-abas são scrolláveis internamente
+        self._build_poses_tab(tab_poses)   # layout próprio — sem _scrollable externo
 
     def _scrollable(self, parent: tk.Frame) -> tk.Frame:
         """Envolve `parent` num Canvas com scrollbar vertical e retorna o
@@ -931,8 +959,8 @@ class PalpationGUI(Node):
         except (ValueError, tk.TclError):
             return
         try:
-            with self._real_lock:
-                self._real_driver._send_dash(f'SpeedFactor({v})')
+            # _send_dash já serializa via _dash_lock interno — _real_lock não necessário.
+            self._real_driver._send_dash(f'SpeedFactor({v})')
             self.get_logger().warning(
                 f'[SPEED] SpeedFactor({v})%% enviado ao CR10 real')
         except CR10RealDriverError as exc:
@@ -1036,6 +1064,12 @@ class PalpationGUI(Node):
         """
         if self._robot_mode != 'MIRROR':
             return
+        # Drag teach ativo → motores liberados, não enviar comandos de posição.
+        if self._drag_enabled:
+            return
+        # Execução de movimento via _execute_movement_worker → não interferir.
+        if self._exec_movement_id is not None:
+            return
         with self._lock:
             phase = self._latest_phase
         if phase not in ('IDLE', 'DONE', 'ABORTED'):
@@ -1084,6 +1118,30 @@ class PalpationGUI(Node):
                     or self._real_driver is None or _urdf_to_dobot is None):
                 _servoj_ready = False
                 continue
+            # Drag teach ativo → lê posição real e espelha para o Gazebo.
+            if self._drag_enabled:
+                _servoj_ready = False
+                drv = self._real_driver
+                if drv is None or not self._robot_connected:
+                    continue
+                try:
+                    q_urdf = drv.read_joints_urdf()
+                    msg = JointTrajectory()
+                    msg.joint_names = ARM_JOINTS
+                    pt = JointTrajectoryPoint()
+                    pt.positions = [float(v) for v in q_urdf]
+                    pt.velocities = [0.0] * 6
+                    # time_from_start = período do loop → Gazebo acompanha sem lag
+                    pt.time_from_start = Duration(sec=0, nanosec=30_000_000)
+                    msg.points.append(pt)
+                    self._arm_pub.publish(msg)
+                except Exception:
+                    pass
+                continue
+            # Execução de movimento em andamento → worker controla o braço real.
+            if self._exec_movement_id is not None:
+                _servoj_ready = False
+                continue
             # Jog manual: MovJ via _cb_arm_trajectory cuida do espelhamento.
             with self._lock:
                 phase = self._latest_phase
@@ -1097,33 +1155,33 @@ class PalpationGUI(Node):
             last = self._mirror_last_target
             if last is not None and np.max(np.abs(q_new - last)) < 0.0001:
                 continue   # braço estacionário — sem ServoJ redundante
+            # Captura referência local: evita corrida com connect/disconnect sem
+            # segurar _real_lock no caminho quente (servo_j usa _dash_lock interno).
+            drv = self._real_driver
+            if drv is None or not self._robot_connected:
+                continue
             try:
-                with self._real_lock:
-                    drv = self._real_driver
-                    if drv is None or not self._robot_connected:
-                        continue
-                    try:
-                        drv.servo_j_urdf(positions)
-                        _servoj_ready = True
-                    except CR10RealDriverError:
-                        drv.prepare_servoj()
-                        drv.servo_j_urdf(positions)
-                        _servoj_ready = True
+                try:
+                    drv.servo_j_urdf(positions)
+                    _servoj_ready = True
+                except CR10RealDriverError:
+                    # -50001: subsistema ServoJ não pronto (pós-PTP).
+                    # prepare_servoj envia ClearError+Continue e aguarda 50 ms.
+                    drv.prepare_servoj()
+                    drv.servo_j_urdf(positions)
+                    _servoj_ready = True
             except CR10RealDriverError as exc:
                 self.get_logger().warning(f'ServoJ falhou: {exc}')
                 _servoj_ready = False
                 continue
             self._mirror_last_target = q_new
             _diag_count += 1
-            if _diag_count >= 90:
+            if _diag_count >= 330:   # ~10 s (era 90 = 2.7 s — causava jitter periódico)
                 _diag_count = 0
+                # Diagnóstico fora do caminho crítico: apenas loga, não bloqueia ServoJ.
                 try:
-                    with self._real_lock:
-                        drv = self._real_driver
-                        if drv is not None:
-                            ang = drv.get_angle_deg()
-                            self.get_logger().warning(
-                                f'[MIRROR-POS] GetAngle real: {ang}')
+                    ang = drv.get_angle_deg()
+                    self.get_logger().info(f'[MIRROR-POS] GetAngle real: {ang}')
                 except Exception:
                     pass
 
@@ -1157,8 +1215,9 @@ class PalpationGUI(Node):
             if drv is None or not self._robot_connected:
                 return
             try:
-                with self._real_lock:
-                    w = drv.read_tcp_force()
+                # Sem _real_lock: read_tcp_force usa porta 30004 (_feed_lock
+                # interno) — independente do ServoJ em 29999 (_dash_lock).
+                w = drv.read_tcp_force()
             except Exception as exc:
                 self.get_logger().error(
                     f'Force bridge falhou: {exc}')
@@ -1250,7 +1309,11 @@ class PalpationGUI(Node):
 
         req = self._eci_srv.SetDigitPosn.Request()
         req.speed = self._eci_msg.Speed()
-        req.speed.value = 50
+        try:
+            sf = float(self.speed_factor_var.get())
+        except (ValueError, tk.TclError):
+            sf = SPEED_FACTOR_DEFAULT
+        req.speed.value = max(1, min(100, int(sf)))
         req.thumb  = _to_eci('Thumb',  deg_dict.get('Thumb',  0.0))
         req.index  = _to_eci('Index',  deg_dict.get('Index',  0.0))
         req.middle = _to_eci('Middle', deg_dict.get('Middle', 0.0))
@@ -1330,8 +1393,8 @@ class PalpationGUI(Node):
             self._set_status('kinematics não disponível.', DANGER)
             return
         try:
-            with self._real_lock:
-                q_dobot_rad = self._real_driver.read_joints_rad()
+            # read_joints_rad usa porta 30004 (_feed_lock interno) — _real_lock não necessário.
+            q_dobot_rad = self._real_driver.read_joints_rad()
         except CR10RealDriverError as exc:
             self._set_status(f'Falha ao ler juntas: {exc}', DANGER)
             return
@@ -1961,6 +2024,10 @@ class PalpationGUI(Node):
     def _lc_calib_reset(self) -> None:
         self._lc_calib_points = []
         self._lc_zero_voltage = None
+        with self._lock:
+            self._lc_calibrated = False
+            self._lc_tare_done = False
+            self._lc_tare_voltage = 0.0
         self.lc_mass_var.set(0.100)
         self.lc_zero_status_lbl.config(text='Não capturado', fg=WARN)
         self.lc_step_lbl.config(
@@ -2150,12 +2217,662 @@ class PalpationGUI(Node):
 
         self.root.after(100, self._refresh_lc_panel)
 
+    # ──────────────────────────────────────────────────────────────────
+    # Aba "Poses & Movimentos"
+    # ──────────────────────────────────────────────────────────────────
+    def _build_poses_tab(self, root: tk.Frame) -> None:
+        """Layout dois-colunas: esquerda=Poses (fixa 310px), direita=Movimentos."""
+        left = tk.Frame(root, bg=BG, width=310)
+        left.pack(side='left', fill='y', padx=(12, 6), pady=12)
+        left.pack_propagate(False)
+
+        right = tk.Frame(root, bg=BG)
+        right.pack(side='left', fill='both', expand=True, padx=(6, 12), pady=12)
+
+        # ── LEFT: Poses ──────────────────────────────────────────────
+        tk.Label(left, text='Poses', bg=BG, fg=TEXT, font=FONT_HEAD).pack(anchor='w')
+        tk.Frame(left, bg=BORDER, height=1).pack(fill='x', pady=(4, 8))
+
+        btn_row = tk.Frame(left, bg=BG)
+        btn_row.pack(fill='x', pady=(0, 8))
+
+        self._drag_btn = tk.Button(
+            btn_row, text='🖐 Drag OFF',
+            command=self._toggle_drag,
+            bg=BTN_NEUTRAL, fg=TEXT,
+            activebackground=_shade(BTN_NEUTRAL, -0.08),
+            font=FONT_SMALL, relief='flat', bd=0, padx=8, pady=4,
+            cursor='hand2')
+        self._drag_btn.pack(side='left', padx=(0, 4))
+
+        tk.Button(
+            btn_row, text='📷 Robot',
+            command=self._capture_pose_robot,
+            bg=BTN_NEUTRAL, fg=TEXT,
+            activebackground=_shade(BTN_NEUTRAL, -0.08),
+            font=FONT_SMALL, relief='flat', bd=0, padx=8, pady=4,
+            cursor='hand2').pack(side='left', padx=(0, 4))
+
+        tk.Button(
+            btn_row, text='🎮 Sim',
+            command=self._capture_pose_sim,
+            bg=BTN_NEUTRAL, fg=TEXT,
+            activebackground=_shade(BTN_NEUTRAL, -0.08),
+            font=FONT_SMALL, relief='flat', bd=0, padx=8, pady=4,
+            cursor='hand2').pack(side='left')
+
+        lbx_frame = tk.Frame(left, bg=BG)
+        lbx_frame.pack(fill='both', expand=True)
+
+        p_scroll = ttk.Scrollbar(lbx_frame, orient='vertical')
+        p_scroll.pack(side='right', fill='y')
+
+        self._poses_lbx = tk.Listbox(
+            lbx_frame, yscrollcommand=p_scroll.set,
+            bg=PANEL, fg=TEXT, font=FONT_MONO_S,
+            selectbackground=PRIMARY, selectforeground='white',
+            relief='flat', bd=0, highlightthickness=1,
+            highlightbackground=BORDER, activestyle='none')
+        self._poses_lbx.pack(side='left', fill='both', expand=True)
+        p_scroll.config(command=self._poses_lbx.yview)
+
+        pose_act = tk.Frame(left, bg=BG)
+        pose_act.pack(fill='x', pady=(8, 0))
+
+        tk.Button(
+            pose_act, text='✏ Renomear',
+            command=self._rename_selected_pose,
+            bg=BTN_NEUTRAL, fg=TEXT,
+            activebackground=_shade(BTN_NEUTRAL, -0.08),
+            font=FONT_SMALL, relief='flat', bd=0, padx=8, pady=4,
+            cursor='hand2').pack(side='left', padx=(0, 4))
+
+        tk.Button(
+            pose_act, text='🗑 Deletar',
+            command=self._delete_selected_pose,
+            bg=DANGER, fg='white',
+            activebackground=DANGER_HV,
+            font=FONT_SMALL, relief='flat', bd=0, padx=8, pady=4,
+            cursor='hand2').pack(side='left')
+
+        # ── RIGHT: Movimentos ─────────────────────────────────────────
+        mov_hdr = tk.Frame(right, bg=BG)
+        mov_hdr.pack(fill='x')
+
+        tk.Label(mov_hdr, text='Movimentos', bg=BG, fg=TEXT,
+                 font=FONT_HEAD).pack(side='left', anchor='w')
+
+        tk.Button(
+            mov_hdr, text='+ Novo',
+            command=self._new_movement,
+            bg=PRIMARY, fg='white',
+            activebackground=PRIMARY_HV,
+            font=FONT_SMALL, relief='flat', bd=0, padx=10, pady=4,
+            cursor='hand2').pack(side='right')
+
+        tk.Frame(right, bg=BORDER, height=1).pack(fill='x', pady=(4, 8))
+
+        mov_lbx_frame = tk.Frame(right, bg=BG, height=120)
+        mov_lbx_frame.pack(fill='x')
+        mov_lbx_frame.pack_propagate(False)
+
+        m_scroll = ttk.Scrollbar(mov_lbx_frame, orient='vertical')
+        m_scroll.pack(side='right', fill='y')
+
+        self._movs_lbx = tk.Listbox(
+            mov_lbx_frame, yscrollcommand=m_scroll.set,
+            bg=PANEL, fg=TEXT, font=FONT_MONO_S,
+            selectbackground=PRIMARY, selectforeground='white',
+            relief='flat', bd=0, highlightthickness=1,
+            highlightbackground=BORDER, activestyle='none')
+        self._movs_lbx.pack(side='left', fill='both', expand=True)
+        m_scroll.config(command=self._movs_lbx.yview)
+        self._movs_lbx.bind('<<ListboxSelect>>', self._on_movement_select)
+
+        self._mov_detail_outer = tk.Frame(right, bg=BG)
+        self._mov_detail_outer.pack(fill='both', expand=True, pady=(8, 0))
+
+        self._refresh_poses_list()
+        self._refresh_movements_list()
+
+    # ── Dados: load / save ────────────────────────────────────────────
+    def _load_poses_data(self) -> None:
+        try:
+            with open(POSES_FILE) as f:
+                data = json.load(f)
+            self._poses = data.get('poses', [])
+            self._movements = data.get('movements', [])
+            self._next_pose_id = max((p['id'] for p in self._poses), default=0) + 1
+            self._next_movement_id = max(
+                (m['id'] for m in self._movements), default=0) + 1
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            self._poses = []
+            self._movements = []
+            self._next_pose_id = 1
+            self._next_movement_id = 1
+
+    def _save_poses_data(self) -> None:
+        os.makedirs(os.path.dirname(POSES_FILE), exist_ok=True)
+        with open(POSES_FILE, 'w') as f:
+            json.dump({'poses': self._poses, 'movements': self._movements},
+                      f, indent=2)
+
+    # ── Lookup helpers ────────────────────────────────────────────────
+    def _pose_by_id(self, pid: int) -> dict | None:
+        for p in self._poses:
+            if p['id'] == pid:
+                return p
+        return None
+
+    def _movement_by_id(self, mid: int) -> dict | None:
+        for m in self._movements:
+            if m['id'] == mid:
+                return m
+        return None
+
+    def _pose_label(self, p: dict) -> str:
+        q = p['q_deg']
+        parts = ' '.join(f'J{i + 1}={v:+.0f}°' for i, v in enumerate(q))
+        return f"{p['name']}  [{parts}]"
+
+    # ── Refresh widgets ───────────────────────────────────────────────
+    def _refresh_poses_list(self) -> None:
+        lbx = self._poses_lbx
+        if lbx is None:
+            return
+        lbx.delete(0, 'end')
+        for p in self._poses:
+            lbx.insert('end', self._pose_label(p))
+
+    def _refresh_movements_list(self, select_id: int | None = None) -> None:
+        lbx = self._movs_lbx
+        if lbx is None:
+            return
+        lbx.delete(0, 'end')
+        for m in self._movements:
+            lbx.insert('end', m['name'])
+        if select_id is not None:
+            for i, m in enumerate(self._movements):
+                if m['id'] == select_id:
+                    lbx.selection_set(i)
+                    lbx.see(i)
+                    break
+
+    def _on_movement_select(self, _event=None) -> None:
+        lbx = self._movs_lbx
+        if lbx is None:
+            return
+        sel = lbx.curselection()
+        if not sel:
+            return
+        self._refresh_movement_detail(self._movements[sel[0]])
+
+    def _refresh_movement_detail(self, mov: dict) -> None:
+        outer = self._mov_detail_outer
+        if outer is None:
+            return
+        if self._mov_detail_inner is not None:
+            self._mov_detail_inner.destroy()
+
+        inner = tk.Frame(outer, bg=PANEL,
+                         highlightthickness=1, highlightbackground=BORDER)
+        inner.pack(fill='both', expand=True)
+        self._mov_detail_inner = inner
+
+        # Header
+        hdr = tk.Frame(inner, bg=PANEL)
+        hdr.pack(fill='x', padx=12, pady=(10, 4))
+        tk.Label(hdr, text=mov['name'], bg=PANEL, fg=TEXT,
+                 font=FONT_HEAD).pack(side='left')
+        tk.Button(hdr, text='✏',
+                  command=lambda: self._rename_movement(mov['id']),
+                  bg=BTN_NEUTRAL, fg=TEXT,
+                  font=FONT_SMALL, relief='flat', bd=0,
+                  padx=6, pady=2, cursor='hand2').pack(side='left', padx=(8, 0))
+        tk.Button(hdr, text='🗑 Deletar',
+                  command=lambda: self._delete_movement(mov['id']),
+                  bg=DANGER, fg='white', activebackground=DANGER_HV,
+                  font=FONT_SMALL, relief='flat', bd=0,
+                  padx=8, pady=2, cursor='hand2').pack(side='right')
+        tk.Frame(inner, bg=BORDER, height=1).pack(fill='x')
+
+        body = tk.Frame(inner, bg=PANEL)
+        body.pack(fill='both', expand=True, padx=12, pady=8)
+
+        # ── Sequência ─────────────────────────────────────────────────
+        seq_col = tk.Frame(body, bg=PANEL)
+        seq_col.pack(side='left', fill='both', expand=True, padx=(0, 12))
+
+        tk.Label(seq_col, text='Sequência de Poses', bg=PANEL, fg=TEXT_MUTED,
+                 font=FONT_SMALL).pack(anchor='w')
+
+        seq_frame = tk.Frame(seq_col, bg=PANEL)
+        seq_frame.pack(fill='both', expand=True, pady=(4, 0))
+
+        seq_sb = ttk.Scrollbar(seq_frame, orient='vertical')
+        seq_sb.pack(side='right', fill='y')
+
+        seq_lbx = tk.Listbox(
+            seq_frame, yscrollcommand=seq_sb.set,
+            bg=BG, fg=TEXT, font=FONT_MONO_S,
+            selectbackground=PRIMARY, selectforeground='white',
+            relief='flat', bd=0, highlightthickness=0,
+            activestyle='none', height=6)
+        seq_lbx.pack(side='left', fill='both', expand=True)
+        seq_sb.config(command=seq_lbx.yview)
+
+        def _refresh_seq():
+            seq_lbx.delete(0, 'end')
+            for pid in mov['pose_ids']:
+                p = self._pose_by_id(pid)
+                seq_lbx.insert('end', p['name'] if p else f'[deletada:{pid}]')
+
+        _refresh_seq()
+
+        def _add_pose_to_seq():
+            lbx = self._poses_lbx
+            if lbx is None:
+                return
+            sel = lbx.curselection()
+            if not sel:
+                self._set_status('Selecione uma pose na lista à esquerda.', WARN)
+                return
+            mov['pose_ids'].append(self._poses[sel[0]]['id'])
+            _refresh_seq()
+            self._save_poses_data()
+
+        def _remove_pose_from_seq():
+            sel = seq_lbx.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            if 0 <= idx < len(mov['pose_ids']):
+                del mov['pose_ids'][idx]
+                _refresh_seq()
+                self._save_poses_data()
+
+        def _move_up():
+            sel = seq_lbx.curselection()
+            if not sel:
+                return
+            i = sel[0]
+            if i > 0:
+                mov['pose_ids'][i - 1], mov['pose_ids'][i] = \
+                    mov['pose_ids'][i], mov['pose_ids'][i - 1]
+                _refresh_seq()
+                seq_lbx.selection_set(i - 1)
+                self._save_poses_data()
+
+        def _move_down():
+            sel = seq_lbx.curselection()
+            if not sel:
+                return
+            i = sel[0]
+            if i < len(mov['pose_ids']) - 1:
+                mov['pose_ids'][i], mov['pose_ids'][i + 1] = \
+                    mov['pose_ids'][i + 1], mov['pose_ids'][i]
+                _refresh_seq()
+                seq_lbx.selection_set(i + 1)
+                self._save_poses_data()
+
+        seq_btns = tk.Frame(seq_col, bg=PANEL)
+        seq_btns.pack(fill='x', pady=(6, 0))
+
+        for txt, cmd in [('+ Adicionar', _add_pose_to_seq),
+                          ('−', _remove_pose_from_seq),
+                          ('↑', _move_up),
+                          ('↓', _move_down)]:
+            tk.Button(seq_btns, text=txt, command=cmd,
+                      bg=BTN_NEUTRAL, fg=TEXT,
+                      activebackground=_shade(BTN_NEUTRAL, -0.08),
+                      font=FONT_SMALL, relief='flat', bd=0,
+                      padx=8, pady=3, cursor='hand2').pack(side='left', padx=(0, 4))
+
+        # ── Controles + Execução ──────────────────────────────────────
+        ctrl_col = tk.Frame(body, bg=PANEL, width=190)
+        ctrl_col.pack(side='left', fill='y')
+        ctrl_col.pack_propagate(False)
+
+        tk.Label(ctrl_col, text='Velocidade (%)', bg=PANEL, fg=TEXT_MUTED,
+                 font=FONT_SMALL).pack(anchor='w')
+        spd_var = tk.IntVar(value=mov.get('speed_pct', 10))
+
+        def _on_spd(*_):
+            try:
+                v = max(1, min(100, int(spd_var.get())))
+                mov['speed_pct'] = v
+                self._save_poses_data()
+            except (ValueError, tk.TclError):
+                pass
+
+        tk.Spinbox(ctrl_col, from_=1, to=100, textvariable=spd_var,
+                   width=7, font=FONT_MONO_S, relief='flat', bd=1,
+                   command=_on_spd).pack(anchor='w', pady=(0, 10))
+        spd_var.trace_add('write', _on_spd)
+
+        tk.Label(ctrl_col, text='Duração/passo (s)', bg=PANEL, fg=TEXT_MUTED,
+                 font=FONT_SMALL).pack(anchor='w')
+        dur_var = tk.DoubleVar(value=mov.get('dur_s', 2.0))
+
+        def _on_dur(*_):
+            try:
+                v = max(0.1, float(dur_var.get()))
+                mov['dur_s'] = round(v, 2)
+                self._save_poses_data()
+            except (ValueError, tk.TclError):
+                pass
+
+        tk.Spinbox(ctrl_col, from_=0.1, to=60.0, increment=0.5,
+                   textvariable=dur_var, width=7, format='%.1f',
+                   font=FONT_MONO_S, relief='flat', bd=1,
+                   command=_on_dur).pack(anchor='w', pady=(0, 16))
+        dur_var.trace_add('write', _on_dur)
+
+        _mid = mov['id']
+        tk.Button(ctrl_col, text='▶ Executar',
+                  command=lambda: self._start_movement(_mid, loop=False),
+                  bg=OK, fg='white', activebackground='#15803d',
+                  font=FONT_SMALL, relief='flat', bd=0,
+                  padx=8, pady=4, cursor='hand2').pack(fill='x', pady=(0, 4))
+        tk.Button(ctrl_col, text='🔄 Loop',
+                  command=lambda: self._start_movement(_mid, loop=True),
+                  bg=WARN, fg='white', activebackground='#b45309',
+                  font=FONT_SMALL, relief='flat', bd=0,
+                  padx=8, pady=4, cursor='hand2').pack(fill='x', pady=(0, 4))
+
+        tk.Button(ctrl_col, text='⏹ Parar',
+                  command=self._stop_execution,
+                  bg=DANGER, fg='white', activebackground=DANGER_HV,
+                  font=FONT_SMALL, relief='flat', bd=0,
+                  padx=8, pady=4, cursor='hand2').pack(fill='x')
+
+    # ── Captura de poses ──────────────────────────────────────────────
+    def _capture_pose_robot(self) -> None:
+        drv = self._real_driver
+        if drv is None or not self._robot_connected:
+            self._set_status('Robô real não conectado — use 🎮 Sim.', WARN)
+            return
+        try:
+            q_urdf = drv.read_joints_urdf()
+            q_deg = [math.degrees(float(v)) for v in q_urdf]
+            self._add_pose(q_deg, prefix='Robot')
+        except Exception as exc:
+            self._set_status(f'Erro ao capturar pose real: {exc}', DANGER)
+
+    def _capture_pose_sim(self) -> None:
+        positions = self._latest_joint_rad
+        if positions is None:
+            self._set_status('Sem leitura de /joint_states — inicie a simulação.', WARN)
+            return
+        q_deg = [math.degrees(float(v)) for v in positions]
+        self._add_pose(q_deg, prefix='Sim')
+
+    def _add_pose(self, q_deg: list, prefix: str = 'Pose') -> None:
+        pid = self._next_pose_id
+        self._next_pose_id += 1
+        name = f'{prefix} {pid}'
+        pose = {'id': pid, 'name': name,
+                'q_deg': [round(float(v), 2) for v in q_deg[:6]]}
+        self._poses.append(pose)
+        self._save_poses_data()
+        self._refresh_poses_list()
+        self._set_status(f'Pose "{name}" capturada.', OK)
+
+    # ── Ações nas poses ───────────────────────────────────────────────
+    def _rename_selected_pose(self) -> None:
+        lbx = self._poses_lbx
+        if lbx is None:
+            return
+        sel = lbx.curselection()
+        if not sel:
+            self._set_status('Selecione uma pose para renomear.', WARN)
+            return
+        pose = self._poses[sel[0]]
+        new_name = self._ask_name_dialog('Renomear Pose', pose['name'])
+        if new_name:
+            pose['name'] = new_name
+            self._save_poses_data()
+            self._refresh_poses_list()
+
+    def _delete_selected_pose(self) -> None:
+        lbx = self._poses_lbx
+        if lbx is None:
+            return
+        sel = lbx.curselection()
+        if not sel:
+            self._set_status('Selecione uma pose para deletar.', WARN)
+            return
+        pose = self._poses[sel[0]]
+        pid = pose['id']
+        for m in self._movements:
+            m['pose_ids'] = [x for x in m['pose_ids'] if x != pid]
+        self._poses.pop(sel[0])
+        self._save_poses_data()
+        self._refresh_poses_list()
+        self._set_status(f'Pose "{pose["name"]}" deletada.', OK)
+
+    # ── Drag teach ────────────────────────────────────────────────────
+    def _toggle_drag(self) -> None:
+        drv = self._real_driver
+        if drv is None or not self._robot_connected:
+            self._set_status('Drag teach requer robô real conectado.', WARN)
+            return
+        new_state = not self._drag_enabled
+        try:
+            drv.drag_teach(new_state)
+            self._drag_enabled = new_state
+            btn = self._drag_btn
+            if btn is not None:
+                if new_state:
+                    btn.config(text='🖐 Drag ON', bg=WARN, fg='white',
+                               activebackground='#b45309')
+                else:
+                    btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
+                               activebackground=_shade(BTN_NEUTRAL, -0.08))
+            estado = 'ATIVO' if new_state else 'desativado'
+            self._set_status(f'Drag Teach {estado}.', WARN if new_state else OK)
+        except Exception as exc:
+            self._set_status(f'DragTeachSwitch falhou: {exc}', DANGER)
+
+    # ── Ações nos movimentos ──────────────────────────────────────────
+    def _new_movement(self) -> None:
+        name = self._ask_name_dialog(
+            'Novo Movimento', f'Movimento {self._next_movement_id}')
+        if name is None:
+            return
+        mid = self._next_movement_id
+        self._next_movement_id += 1
+        mov = {'id': mid, 'name': name, 'pose_ids': [],
+               'speed_pct': 10, 'dur_s': 2.0}
+        self._movements.append(mov)
+        self._save_poses_data()
+        self._refresh_movements_list(select_id=mid)
+        self._refresh_movement_detail(mov)
+
+    def _rename_movement(self, mov_id: int) -> None:
+        mov = self._movement_by_id(mov_id)
+        if mov is None:
+            return
+        new_name = self._ask_name_dialog('Renomear Movimento', mov['name'])
+        if new_name:
+            mov['name'] = new_name
+            self._save_poses_data()
+            self._refresh_movements_list(select_id=mov_id)
+            self._refresh_movement_detail(mov)
+
+    def _delete_movement(self, mov_id: int) -> None:
+        mov = self._movement_by_id(mov_id)
+        if mov is None:
+            return
+        name = mov['name']
+        self._movements = [m for m in self._movements if m['id'] != mov_id]
+        self._save_poses_data()
+        self._refresh_movements_list()
+        if self._mov_detail_inner is not None:
+            self._mov_detail_inner.destroy()
+            self._mov_detail_inner = None
+        self._set_status(f'Movimento "{name}" deletado.', OK)
+
+    # ── Execução de movimentos ────────────────────────────────────────
+    def _start_movement(self, mov_id: int, loop: bool = False) -> None:
+        if self._exec_thread is not None and self._exec_thread.is_alive():
+            self._set_status('Execução em andamento — pare primeiro.', WARN)
+            return
+        mov = self._movement_by_id(mov_id)
+        if mov is None:
+            return
+        if not mov['pose_ids']:
+            self._set_status('Adicione poses à sequência antes de executar.', WARN)
+            return
+        self._exec_stop.clear()
+        self._exec_movement_id = mov_id
+        self._exec_thread = threading.Thread(
+            target=self._execute_movement_worker,
+            args=(dict(mov), loop),
+            daemon=True, name='exec-movement')
+        self._exec_thread.start()
+        suffix = '  (loop)' if loop else ''
+        self._set_status(f'Executando "{mov["name"]}"{suffix}...', OK)
+
+    def _stop_execution(self) -> None:
+        self._exec_stop.set()
+        # Não limpa _exec_movement_id aqui — o finally do worker faz isso.
+        # Isso evita que _mirror_poll_loop retome ServoJ antes do MovJ atual terminar.
+        if (self._robot_mode == 'MIRROR' and self._robot_connected
+                and self._real_driver is not None):
+            try:
+                self._real_driver.halt()
+            except Exception:
+                pass
+        self._set_status('Execução interrompida.', WARN)
+
+    def _execute_movement_worker(self, mov: dict, loop: bool) -> None:
+        try:
+            self._run_movement_once(mov)
+            while loop and not self._exec_stop.is_set():
+                self._run_movement_once(mov)
+        except Exception as exc:
+            log.warning('Execução de movimento falhou: %s', exc)
+            self.root.after(
+                0, lambda: self._set_status(f'Execução falhou: {exc}', DANGER))
+        finally:
+            self._exec_movement_id = None
+
+    def _run_movement_once(self, mov: dict) -> None:
+        """Executa uma passagem completa pelo movimento.
+
+        Gazebo e robô real executam em paralelo: a trajetória multi-ponto é
+        publicada de uma vez no Gazebo; o robô real recebe MovJ por passo,
+        ambos cadenciados por `dur_s` segundos por pose.
+        """
+        dur_s = max(0.1, mov.get('dur_s', 2.0))
+        speed_pct = max(1, min(100, mov.get('speed_pct', 10)))
+        poses = [self._pose_by_id(pid) for pid in mov['pose_ids']]
+        poses = [p for p in poses if p is not None]
+        if not poses:
+            return
+
+        mode = self._robot_mode
+
+        if mode in ('SIM_ONLY', 'MIRROR'):
+            # Publica trajetória completa no Gazebo de uma vez.
+            msg = JointTrajectory()
+            msg.joint_names = ARM_JOINTS
+            for i, pose in enumerate(poses):
+                pt = JointTrajectoryPoint()
+                pt.positions = [math.radians(float(v)) for v in pose['q_deg']]
+                pt.velocities = [0.0] * 6
+                total_s = (i + 1) * dur_s
+                pt.time_from_start = Duration(
+                    sec=int(total_s),
+                    nanosec=int((total_s % 1.0) * 1_000_000_000))
+                msg.points.append(pt)
+            self._arm_pub.publish(msg)
+
+        if mode == 'MIRROR':
+            # Robô real: MovJ por pose, cadenciado por dur_s — paralelo ao Gazebo.
+            drv = self._real_driver
+            if drv is not None and self._robot_connected:
+                try:
+                    drv._send_dash(f'SpeedFactor({speed_pct})')
+                except Exception:
+                    pass
+                for pose in poses:
+                    if self._exec_stop.is_set():
+                        break
+                    t_step_start = time.monotonic()
+                    try:
+                        if _urdf_to_dobot is not None:
+                            q_urdf = np.array(
+                                [math.radians(float(v)) for v in pose['q_deg']])
+                            q_dobot_deg = np.degrees(_urdf_to_dobot(q_urdf)).tolist()
+                        else:
+                            q_dobot_deg = list(pose['q_deg'])
+                        drv.mov_j_joint_deg(q_dobot_deg)
+                    except Exception as exc:
+                        log.warning('MovJ falhou: %s', exc)
+                        break
+                    # Aguarda o restante de dur_s para este passo,
+                    # verificando _exec_stop a cada 100 ms.
+                    deadline = t_step_start + dur_s
+                    while not self._exec_stop.is_set():
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0.0:
+                            break
+                        self._exec_stop.wait(min(0.1, remaining))
+        elif mode == 'SIM_ONLY':
+            # Aguarda a trajetória completa ou sinalização de stop.
+            self._exec_stop.wait(len(poses) * dur_s)
+
+    # ── Diálogo de nome ───────────────────────────────────────────────
+    def _ask_name_dialog(self, title: str, initial: str = '') -> str | None:
+        result: list[str | None] = [None]
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=title, bg=BG, fg=TEXT, font=FONT_HEAD
+                 ).pack(padx=24, pady=(16, 8))
+        var = tk.StringVar(value=initial)
+        entry = tk.Entry(dlg, textvariable=var, font=FONT_LBL, width=32)
+        entry.pack(padx=24, pady=(0, 8))
+        entry.select_range(0, 'end')
+        entry.focus_set()
+
+        def _ok(_=None):
+            val = var.get().strip()
+            if val:
+                result[0] = val
+            dlg.destroy()
+
+        def _cancel(_=None):
+            dlg.destroy()
+
+        row = tk.Frame(dlg, bg=BG)
+        row.pack(pady=(0, 16))
+        tk.Button(row, text='OK', command=_ok,
+                  bg=PRIMARY, fg='white', font=FONT_LBL,
+                  relief='flat', bd=0, padx=16, pady=4,
+                  cursor='hand2').pack(side='left', padx=4)
+        tk.Button(row, text='Cancelar', command=_cancel,
+                  bg=BTN_NEUTRAL, fg=TEXT, font=FONT_LBL,
+                  relief='flat', bd=0, padx=16, pady=4,
+                  cursor='hand2').pack(side='left', padx=4)
+        entry.bind('<Return>', _ok)
+        entry.bind('<Escape>', _cancel)
+        dlg.wait_window()
+        return result[0]
+
     def _build_statusbar(self):
         self.status_var = tk.StringVar(value='pronto.')
         bar = tk.Frame(self.root, bg=PANEL, height=28)
         bar.pack(side='bottom', fill='x')
-        tk.Label(bar, textvariable=self.status_var, bg=PANEL, fg=TEXT_MUTED,
-                 anchor='w', font=FONT_LBL).pack(side='left', padx=18)
+        self._status_lbl = tk.Label(bar, textvariable=self.status_var,
+                                     bg=PANEL, fg=TEXT_MUTED,
+                                     anchor='w', font=FONT_LBL)
+        self._status_lbl.pack(side='left', padx=18)
 
     # ── helpers UI ────────────────────────────────────────────────────
     def _card(self, parent, title: str) -> tk.Frame:
@@ -2656,8 +3373,7 @@ class PalpationGUI(Node):
         try:
             sf = int(max(SPEED_FACTOR_MIN,
                          min(SPEED_FACTOR_MAX, self.speed_factor_var.get())))
-            with self._real_lock:
-                drv._send_dash(f'SpeedFactor({sf})')
+            drv._send_dash(f'SpeedFactor({sf})')
             log.warning('[CONNECT] SpeedFactor(%d)%% aplicado ao CR10', sf)
         except Exception as exc:
             log.warning('[CONNECT] SpeedFactor falhou na conexão: %s', exc)
@@ -2736,7 +3452,7 @@ class PalpationGUI(Node):
         self._robot_heartbeat_thread = None
 
     def _robot_heartbeat_loop(self) -> None:
-        HEARTBEAT_PERIOD_S = 2.0
+        HEARTBEAT_PERIOD_S = 5.0   # era 2 s — 5 s reduz interferência com ServoJ a 33 Hz
         MAX_FAILURES = 3
         failures = 0
         while not self._robot_heartbeat_stop.is_set():
@@ -2746,11 +3462,12 @@ class PalpationGUI(Node):
                 return
             ok = False
             try:
-                with self._real_lock:
-                    drv = self._real_driver
-                    if drv is None:
-                        return
-                    resp = drv.robot_mode()
+                # Captura referência sem _real_lock — robot_mode usa _dash_lock
+                # interno; OSError/CR10RealDriverError cobrem socket fechado.
+                drv = self._real_driver
+                if drv is None:
+                    return
+                resp = drv.robot_mode()
                 ok = bool(resp) and '{' in resp
             except (CR10RealDriverError, OSError):
                 ok = False
@@ -2955,10 +3672,15 @@ class PalpationGUI(Node):
     # Refresh do painel direito (Tk thread, 10 Hz)
     # ──────────────────────────────────────────────────────────────────
     def _refresh_status_panel(self):
+        # Lê force_var antes do _lock — é um acesso Tk e não deve estar sob lock
+        # (TclError dentro do lock causaria deadlock no shutdown).
+        try:
+            tgt = float(self.force_var.get())
+        except (ValueError, tk.TclError):
+            tgt = FORCE_DEFAULT
         with self._lock:
             phase = self._latest_phase
             f_normal = self._latest_force_normal
-            tgt = float(self.force_var.get())
             fx, fy, fz = self._fx, self._fy, self._fz
             last_ts = self._last_wrench_ts
             phase_t0 = self._phase_t_start
@@ -3033,8 +3755,7 @@ class PalpationGUI(Node):
         # Halt paralisa o movimento atual do braço real sem desabilitar.
         if self._robot_connected and self._real_driver is not None:
             try:
-                with self._real_lock:
-                    self._real_driver.halt()
+                self._real_driver.halt()
             except CR10RealDriverError as exc:
                 self.get_logger().warning(f'Halt após stop falhou: {exc}')
         # Congela o poll loop: define last_target = posição atual para que
@@ -3103,9 +3824,14 @@ class PalpationGUI(Node):
         # independente do slider de "Velocidade bruta" da aba manual.
         if self._robot_connected and self._real_driver is not None:
             try:
-                with self._real_lock:
-                    self._real_driver._send_dash('SpeedFactor(10)')
+                self._real_driver._send_dash('SpeedFactor(10)')
                 self.get_logger().info('[PALP] SpeedFactor(10) aplicado para palpação')
+                # Sincroniza o slider para que a GUI reflita o valor real.
+                self._suppressing = True
+                try:
+                    self.speed_factor_var.set(10)
+                finally:
+                    self._suppressing = False
             except CR10RealDriverError as exc:
                 self.get_logger().warning(f'SpeedFactor(10) falhou: {exc}')
 
@@ -3121,6 +3847,10 @@ class PalpationGUI(Node):
         # (Index estendido) automaticamente, já que o tactile_explorer
         # publica a pose da mão apenas no tópico do sim (ros2_control).
         self._send_eci_grip(7, 'Finger — palpação (Index estendido)')
+        # Envia posição explícita com velocidade controlada pelo slider
+        # (SetCurrentGrip usa velocidade interna do firmware; SetDigitPosn permite controle).
+        if self._eci_enabled:
+            self._schedule_eci_posn(HAND_POINT_DEG)
         self._set_status(
             f'/palpation/start — v={payload["speed_mms"]:.1f} mm/s, '
             f'F={payload["force_n"]:.2f} N, '
@@ -3134,6 +3864,10 @@ class PalpationGUI(Node):
 
     def _set_status(self, text: str, color: str = TEXT_MUTED):
         self.status_var.set(text)
+        try:
+            self._status_lbl.config(fg=color)
+        except AttributeError:
+            pass  # statusbar ainda não foi construída
 
     # ──────────────────────────────────────────────────────────────────
     # Loop ROS em thread separada

@@ -119,7 +119,7 @@ class ForceReceiverNode(Node):
             cb_msg = Bool(); cb_msg.data = is_cal
             self._calib_pub.publish(cb_msg)
 
-            if is_cal and abs(sl) > 1e-9:
+            if abs(sl) > 1e-9:
                 force = (v_sensor - ic) / sl
                 f_msg = Float32(); f_msg.data = float(force)
                 self._force_pub.publish(f_msg)

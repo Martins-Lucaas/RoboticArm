@@ -39,10 +39,15 @@ except Exception:
 class GazeboHomeSetter(Node):
     def __init__(self):
         super().__init__('gazebo_home_setter')
+        self.declare_parameter('robot_ip', '')
         self._cli = self.create_client(
             SetModelConfiguration, '/gazebo/set_model_configuration')
 
     def _robot_ip(self) -> str:
+        # ROS parameter tem prioridade (permite sobrescrever via launch/CLI).
+        param_ip = self.get_parameter('robot_ip').value.strip()
+        if param_ip:
+            return param_ip
         try:
             if os.path.exists(ROBOT_CONFIG_FILE):
                 with open(ROBOT_CONFIG_FILE) as fh:
@@ -115,7 +120,7 @@ class GazeboHomeSetter(Node):
             return False
 
         req = SetModelConfiguration.Request()
-        req.model_name = 'cr10_covvi'
+        req.model_name = 'cr10_tcp'
         req.urdf_param_name = ''
         req.joint_names = list(_ARM_JOINTS)
         req.joint_positions = joint_rad

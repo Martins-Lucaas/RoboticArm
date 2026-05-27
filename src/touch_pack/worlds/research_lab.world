@@ -9,10 +9,11 @@
       bloquear a visão das outras direções no Gazebo.
     • Piso e paredes com material Gazebo/Wood (textura de madeira clara) —
       reproduz o aspecto de uma "casa de madeira".
-    • UMA única mesa retangular de bancada no centro: o robô e a bancada
-      de palpação ficam ambos APOIADOS NESSA MESA (z = 0.75 no topo).
-      → spawn do CR10 em x=0, y=0, z=0.75
-      → spawn do test_bench em x≈0.55, y=0, z=0.75
+    • UMA única mesa retangular 110×60 cm (medida real da bancada):
+      o robô e a área de palpação ficam ambos APOIADOS NESSA MESA
+      (z = 0.75 m no topo).
+      → spawn do CR10 em x=0.30, y=0, z=0.75 (centro exato da mesa)
+      → área de trabalho simétrica: ±55 cm em X, ±30 cm em Y
     • Decoração: 2 armários encostados nas paredes, prateleira com livros,
       vaso de planta, abajur de chão e moldura de janela.
     • Iluminação difusa quente (1.0, 0.95, 0.80) — ambiente acolhedor.
@@ -160,44 +161,48 @@
     </model>
 
     <!-- ─────────────────── MESA PRINCIPAL DE LAB ────────────────────── -->
-    <!-- Tampo: 1.80 × 0.90 × 0.05 m, top em z=0.75 m (75 cm — bancada padrão).
-         Coordenada do CENTRO do tampo = (0.30, 0, 0.725) — o robô (em x=0)
-         e o painel de teste (em x≈0.55) ficam ambos no tampo dessa mesa. -->
+    <!-- Tampo: 1.10 × 0.60 × 0.05 m (110 × 60 cm — medida real da bancada).
+         Top em z=0.75 m (75 cm — altura padrão de bancada).
+         Centro do tampo = (0.30, 0, 0.725):
+           robô montado em x=0  → 30 cm da borda −X
+           área de palpação em  +X até x=0.85 m (borda +X da mesa) -->
     <model name="lab_table">
       <static>true</static>
       <link name="top">
         <pose>0.30 0 0.725 0 0 0</pose>
         <collision name="col">
-          <geometry><box><size>1.80 0.90 0.05</size></box></geometry>
+          <geometry><box><size>1.10 0.60 0.05</size></box></geometry>
           <surface>
             <friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction>
           </surface>
         </collision>
         <visual name="vis">
-          <geometry><box><size>1.80 0.90 0.05</size></box></geometry>
+          <geometry><box><size>1.10 0.60 0.05</size></box></geometry>
           <material>
-            <script>
-              <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/WoodPallet</name>
-            </script>
+            <ambient>0.78 0.78 0.78 1</ambient>
+            <diffuse>0.82 0.82 0.82 1</diffuse>
+            <specular>0.20 0.20 0.20 1</specular>
           </material>
         </visual>
       </link>
-      <!-- 4 pernas (cilindros finos). -->
+      <!-- 4 pernas — cantos inset 5 cm das bordas do novo tampo 1.10×0.60 m.
+           Centro do tampo em (0.30, 0):
+             X pernas: 0.30 ± 0.50  → −0.20 e +0.80
+             Y pernas: ±0.25 -->
       <link name="leg_a">
-        <pose>-0.55 -0.40 0.375 0 0 0</pose>
+        <pose>-0.20 -0.25 0.375 0 0 0</pose>
         <visual name="v"><geometry><cylinder><radius>0.025</radius><length>0.75</length></cylinder></geometry><material><script><name>Gazebo/DarkGrey</name></script></material></visual>
       </link>
       <link name="leg_b">
-        <pose>-0.55  0.40 0.375 0 0 0</pose>
+        <pose>-0.20  0.25 0.375 0 0 0</pose>
         <visual name="v"><geometry><cylinder><radius>0.025</radius><length>0.75</length></cylinder></geometry><material><script><name>Gazebo/DarkGrey</name></script></material></visual>
       </link>
       <link name="leg_c">
-        <pose> 1.15 -0.40 0.375 0 0 0</pose>
+        <pose> 0.80 -0.25 0.375 0 0 0</pose>
         <visual name="v"><geometry><cylinder><radius>0.025</radius><length>0.75</length></cylinder></geometry><material><script><name>Gazebo/DarkGrey</name></script></material></visual>
       </link>
       <link name="leg_d">
-        <pose> 1.15  0.40 0.375 0 0 0</pose>
+        <pose> 0.80  0.25 0.375 0 0 0</pose>
         <visual name="v"><geometry><cylinder><radius>0.025</radius><length>0.75</length></cylinder></geometry><material><script><name>Gazebo/DarkGrey</name></script></material></visual>
       </link>
     </model>

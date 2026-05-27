@@ -69,6 +69,17 @@ T_HAND_ATTACH = np.array([
     [0.0,  0.0,  0.0,  1.000],
 ], dtype=float)
 
+# TCP do TouchTool Square 20×20 mm com acopladores encaixados na célula de carga.
+# Cadeia desde Link6:
+#   lower_coupling (0mm) → force_sensor (+7mm, célula entra 8mm no acoplador)
+#   → upper_coupling (+59mm, célula entra 8mm) → touch_tool (+74mm) → tcp (+188.5mm)
+T_TOUCH_TOOL_ATTACH = np.array([
+    [1.0,  0.0,  0.0,  0.000],
+    [0.0,  1.0,  0.0,  0.000],
+    [0.0,  0.0,  1.0,  0.1885],  # 188.5 mm — ponta do probe 20×20 mm
+    [0.0,  0.0,  0.0,  1.000],
+], dtype=float)
+
 # Limites articulares — convenção URDF (rad).
 # Joints 2 e 4 têm offset de -π/2 em relação à convenção DH;
 # os limites físicos são mapeados de ±170° (DH) → [-260°, +80°] (URDF).
@@ -150,13 +161,16 @@ _JOINT_AXIS_SIGN = np.array([-1., 1., 1., 1., 1., 1.])
 
 
 def forward_kinematics(q: np.ndarray,
-                       include_hand: bool = True) -> np.ndarray:
+                       include_hand: bool = True,
+                       T_end: np.ndarray | None = None) -> np.ndarray:
     """
-    FK completa: base → flange Link6 (opcionalmente até hand_base_link COVVI).
+    FK completa: base → flange Link6 (opcionalmente até TCP do efector).
 
     Args:
         q:            ângulos das juntas URDF (6,) em rad
-        include_hand: aplica T_HAND_ATTACH ao resultado se True
+        include_hand: aplica T_HAND_ATTACH se True e T_end for None
+        T_end:        transform fixo Link6→TCP a usar no lugar de T_HAND_ATTACH;
+                      use T_TOUCH_TOOL_ATTACH para o modo palpação.
 
     Returns:
         T: pose do efetuador, matriz homogênea 4×4
@@ -164,7 +178,9 @@ def forward_kinematics(q: np.ndarray,
     T = np.eye(4)
     for (xyz, rpy), qi, asign in zip(_URDF_ORIGINS, q, _JOINT_AXIS_SIGN):
         T = T @ _make_T(xyz, rpy) @ _Rz4(asign * float(qi))
-    if include_hand:
+    if T_end is not None:
+        T = T @ T_end
+    elif include_hand:
         T = T @ T_HAND_ATTACH
     return T
 
@@ -182,8 +198,9 @@ def fk_partial(q: np.ndarray, n_links: int) -> np.ndarray:
 # Jacobiano geométrico (forma fechada)
 # ──────────────────────────────────────────────────────────────────────
 
-def jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """Jacobiano geométrico 6×6 do TCP (include_hand=True) no frame da base.
+def jacobian(q: np.ndarray, eps: float = 1e-6,
+             T_end: np.ndarray | None = None) -> np.ndarray:
+    """Jacobiano geométrico 6×6 do TCP no frame da base.
 
     Forma fechada — ~50× mais rápida que diferenças finitas e sem erro
     numérico de truncamento perto de singularidades. O parâmetro `eps`
@@ -198,21 +215,21 @@ def jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     `T_before_i` é o produto das transformações até a origem da junta i
     **sem aplicar Rzi(q_i)** — a rotação da própria junta não muda seu
     eixo, então qi só entra na posição de `p_end` e nas juntas seguintes.
+
+    Args:
+        T_end: transform fixo Link6→TCP; use T_TOUCH_TOOL_ATTACH para palpação.
     """
-    # T_end inclui o offset fixo da mão (T_HAND_ATTACH), igual à FK default.
-    p_end = forward_kinematics(q, include_hand=True)[:3, 3]
+    p_end = forward_kinematics(q, include_hand=True, T_end=T_end)[:3, 3]
 
     J = np.zeros((6, 6))
     T_accum = np.eye(4)
     for i, ((xyz, rpy), qi, asign) in enumerate(
             zip(_URDF_ORIGINS, q, _JOINT_AXIS_SIGN)):
-        # Aplica origem URDF: este é o frame onde a junta i gira em z.
         T_before = T_accum @ _make_T(xyz, rpy)
         z_i = T_before[:3, 2] * asign
         p_i = T_before[:3, 3]
         J[:3, i] = np.cross(z_i, p_end - p_i)
         J[3:, i] = z_i
-        # Avança pela rotação Rzi(q_i) para entrar no frame da próxima junta.
         T_accum = T_before @ _Rz4(asign * float(qi))
 
     return J

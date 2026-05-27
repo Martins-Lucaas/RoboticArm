@@ -74,6 +74,7 @@ from builtin_interfaces.msg import Duration
 from .kinematics import (
     forward_kinematics, jacobian,
     JOINT_MIN, JOINT_MAX, MIMIC_LIST as _MIMIC_LIST,
+    T_TOUCH_TOOL_ATTACH,
 )
 
 
@@ -156,6 +157,7 @@ class TactileExplorer(Node):
         self._q_lock = threading.Lock()
         self._current_q = _POINTING_SEED_Q.copy()
         self._stop_requested = threading.Event()
+        self._protocol_thread: threading.Thread | None = None
 
         cb = ReentrantCallbackGroup()
 
@@ -281,7 +283,9 @@ class TactileExplorer(Node):
                 except (KeyError, TypeError, ValueError) as exc:
                     self.get_logger().warn(
                         f'home_deg malformado: {exc} — usando seed default')
-        threading.Thread(target=self._run_protocol, daemon=True).start()
+        self._protocol_thread = threading.Thread(
+            target=self._run_protocol, daemon=True)
+        self._protocol_thread.start()
 
     # ──────────────────────────────────────────────────────────────────
     # Status
@@ -290,7 +294,9 @@ class TactileExplorer(Node):
         with self._ft_lock:
             f = self._ft_force.copy()
         with self._params_lock:
-            tgt = float(self._target_force_n)
+            tgt       = float(self._target_force_n)
+            speed_mms = self._slide_speed_mms
+            dist_mm   = self._slide_distance_mm
         msg = String()
         msg.data = json.dumps({
             'phase': self._phase,
@@ -298,8 +304,8 @@ class TactileExplorer(Node):
             'measured_force_normal_n': float(abs(f[2])),
             'measured_force_mag_n': float(np.linalg.norm(f)),
             'fx': float(f[0]), 'fy': float(f[1]), 'fz': float(f[2]),
-            'speed_mms': self._slide_speed_mms,
-            'distance_mm': self._slide_distance_mm,
+            'speed_mms': speed_mms,
+            'distance_mm': dist_mm,
             'hold_seconds': float(self.get_parameter('hold_seconds').value),
             'kp': self._kp, 'ki': self._ki, 'kd': self._kd,
         })
@@ -419,7 +425,7 @@ class TactileExplorer(Node):
         # p_start é a âncora para medir o progresso real do TCP via FK,
         # substituindo a integração de passos comandados (que acumula erro
         # por aproximação do Jacobiano e clipping de limites articulares).
-        T0 = forward_kinematics(self._q_now())
+        T0 = forward_kinematics(self._q_now(), T_end=T_TOUCH_TOOL_ATTACH)
         p_start = T0[:3, 3].copy()
 
         R0: np.ndarray | None = None
@@ -482,7 +488,7 @@ class TactileExplorer(Node):
             # FK do tick atual — única chamada por iteração.
             # Serve tanto para medir o progresso real quanto para as correções
             # de orientação, Z e perpendicular.
-            T_cur = forward_kinematics(q)
+            T_cur = forward_kinematics(q, T_end=T_TOUCH_TOOL_ATTACH)
             progress = float(np.dot(T_cur[:3, 3] - p_start, d))
 
             # Detecção de direção errada: se TCP persistentemente se afasta
@@ -516,7 +522,7 @@ class TactileExplorer(Node):
             v = max(1e-4, v)
             step = v * _CTRL_DT
 
-            J = jacobian(q)
+            J = jacobian(q, T_end=T_TOUCH_TOOL_ATTACH)
             twist = np.zeros(6)
             twist[:3] = d * step
 
@@ -560,7 +566,10 @@ class TactileExplorer(Node):
     # Mão COVVI
     # ──────────────────────────────────────────────────────────────────
     def _send_hand_pose(self, primary_rad: dict[str, float],
-                         duration_s: float = 1.8) -> None:
+                         duration_s: float | None = None) -> None:
+        if duration_s is None:
+            # Escala inversa ao speed_factor_pct: 10 % → 2.0 s, 100 % → 0.2 s
+            duration_s = max(0.3, 2.0 * (10.0 / max(1.0, self._speed_factor_pct)))
         names = list(_HAND_PRIMARY)
         positions = [float(primary_rad.get(j, 0.0)) for j in _HAND_PRIMARY]
         for mimic_name, driver, mult in _MIMIC_LIST:
@@ -583,7 +592,7 @@ class TactileExplorer(Node):
         """HOME — interpolação linear no espaço de juntas a ≤ 0.3 rad/s.
         Sem action server, sem pré-planejamento externo."""
         self._set_phase('HOME')
-        self._send_hand_pose(_HAND_POINTING_RAD, duration_s=2.0)
+        self._send_hand_pose(_HAND_POINTING_RAD)   # duração escala com speed_factor_pct
 
         q_home = (self._user_home_q.copy()
                   if self._user_home_q is not None
@@ -603,7 +612,7 @@ class TactileExplorer(Node):
         # Se a home customizada tiver o TCP em orientação incorreta, a fase
         # CONTACT desceria na direção errada (lock_ori manteria a orientação ruim).
         q_actual = self._q_now()
-        R_tcp = forward_kinematics(q_actual)[:3, :3]
+        R_tcp = forward_kinematics(q_actual, T_end=T_TOUCH_TOOL_ATTACH)[:3, :3]
         tcp_z_world = R_tcp[:, 2]   # terceira coluna = eixo Z do TCP no frame mundo
         if tcp_z_world[2] > -0.5:
             self.get_logger().warn(
@@ -635,7 +644,7 @@ class TactileExplorer(Node):
         # Garante consistência mesmo que a home customizada tenha orientação
         # diferente de [0,0,-1]. Se por algum motivo a norma for zero, cai para
         # world -Z (que é o caso padrão com home correta apontando para baixo).
-        T_pre = forward_kinematics(self._q_now())
+        T_pre = forward_kinematics(self._q_now(), T_end=T_TOUCH_TOOL_ATTACH)
         approach_dir = T_pre[:3, 2].copy()
         if float(np.linalg.norm(approach_dir)) < 0.1:
             approach_dir = np.array([0.0, 0.0, -1.0])
@@ -712,7 +721,7 @@ class TactileExplorer(Node):
                 dz = -v_cmd * dt
                 twist = np.array([0., 0., dz, 0., 0., 0.])
                 q = self._q_now()
-                J = jacobian(q)
+                J = jacobian(q, T_end=T_TOUCH_TOOL_ATTACH)
                 try:
                     dq = J.T @ np.linalg.solve(
                         J @ J.T + lam * lam * I6, twist)
@@ -771,7 +780,7 @@ class TactileExplorer(Node):
                          float(self.get_parameter('approach_v_max_mms').value) * 1e-3)
 
         # Retrocede na direção oposta ao approach (negativo do eixo Z do TCP).
-        T_pre = forward_kinematics(self._q_now())
+        T_pre = forward_kinematics(self._q_now(), T_end=T_TOUCH_TOOL_ATTACH)
         retract_dir = -T_pre[:3, 2].copy()
         if float(np.linalg.norm(retract_dir)) < 0.1:
             retract_dir = np.array([0.0, 0.0, +1.0])
@@ -782,11 +791,17 @@ class TactileExplorer(Node):
             lock_ori=True)
 
         self._settle(ticks=_SETTLE_TICKS * 2)
-        return outcome in ('done', 'stop')
+        return outcome == 'done'
 
     # ──────────────────────────────────────────────────────────────────
     # Orquestração
     # ──────────────────────────────────────────────────────────────────
+    def destroy_node(self):
+        self._stop_requested.set()
+        if self._protocol_thread is not None:
+            self._protocol_thread.join(timeout=2.0)
+        super().destroy_node()
+
     def _run_protocol(self):
         self._busy.set()
         try:
@@ -798,7 +813,8 @@ class TactileExplorer(Node):
                 self._set_phase('ABORTED'); return
             if not self._phase_sliding():
                 self._set_phase('ABORTED'); return
-            self._phase_retract()
+            if not self._phase_retract():
+                self._set_phase('ABORTED'); return
             self._set_phase('DONE')
             time.sleep(0.5)
             self._set_phase('IDLE')
