@@ -3,3 +3,8 @@ install/
 log/
 src/DOBOT_6Axis_ROS2_V4/
 src/eci_ros-main/
+
+# Python bytecode
+**/__pycache__/
+*.pyc
+*.pyo
