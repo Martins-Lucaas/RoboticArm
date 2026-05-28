@@ -2,10 +2,10 @@
 palpation_gui.py — Painel Tkinter (tema claro) da célula de palpação tátil.
 
 Funcionalidades:
-  • Spinbox + Slider sincronizados para Velocidade / Força / Distância.
+  • Spinbox + Slider sincronizados para Velocidade / Força / Ganhos PID.
   • Botão "▶ Iniciar Palpação" (publica /palpation/start).
   • Feedback em tempo real de /ft_sensor/wrench (semáforo OK/WARN/DANGER).
-  • Indicador de fase (IDLE/CONTACT/HOLD/SLIDING/RETRACT/DONE/ABORTED).
+  • Indicador de fase (IDLE/CONTACT/CALIBRATING/SLIDING/RETRACT/DONE/ABORTED).
   • Painel de conexão à MÃO COVVI real (IP + Conectar + ECI + PWR)
     — sobe o subprocesso `covvi_hand_driver server <IP>` e ativa o ECI.
   • Painel de conexão ao ROBÔ CR10 real (IP + Conectar + dropdown de modo
@@ -14,7 +14,7 @@ Funcionalidades:
   • Botão ⏹ E-STOP — chama StopRobot+DisableRobot e abre a mão.
 
 Comunicação ROS:
-  pub  /palpation/start    std_msgs/String   JSON {force_n, speed_mms, distance_mm}
+  pub  /palpation/start    std_msgs/String   JSON {force_n, speed_mms, kp, ki, kd, slide_dir}
   sub  /palpation/status   std_msgs/String   JSON {phase, measured_force_normal_n,...}
   sub  /ft_sensor/wrench   geometry_msgs/WrenchStamped
   cli  covvi_interfaces/SetCurrentGrip   (lazy)
@@ -112,14 +112,6 @@ FONT_MONO_S = ('JetBrains Mono', 10)
 # Faixas dos parâmetros — adequadas ao protocolo Gupta et al. 2021.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 1.0,  30.0,  10.0    # mm/s
 FORCE_MIN, FORCE_MAX, FORCE_DEFAULT = 0.2,   5.0,   1.0    # N
-DIST_MIN,  DIST_MAX,  DIST_DEFAULT  = 10.0, 200.0,  90.0   # mm
-# Distância em CENTÍMETROS entre o dedo (TCP na Home customizada) e a
-# superfície de palpação. Usada na fase CONTACT para definir até onde o
-# braço desce em -Z (ou pára antes se a força normal alvo for atingida).
-# Limite superior estendido para além de 20 cm — o alvo de palpação fica
-# bem abaixo da palma na Home customizada e o usuário pode ajustar a
-# altura da superfície/alvo.
-TGT_DIST_CM_MIN, TGT_DIST_CM_MAX, TGT_DIST_CM_DEFAULT = 0.5, 60.0, 5.0  # cm
 # Velocidade de aproximação (CONTACT/RETRACT) — perfil fast→slow no
 # explorer usa este valor como max; min é derivado como 20 % do max.
 APPROACH_MIN, APPROACH_MAX, APPROACH_DEFAULT = 5.0, 100.0, 50.0  # mm/s
@@ -129,11 +121,11 @@ SPEED_FACTOR_MIN, SPEED_FACTOR_MAX, SPEED_FACTOR_DEFAULT = 1, 100, 10  # %
 # Scales inversely: 100 % → 0.3 s, 1 % → 30 s.
 _VEL_BASE_S = 3.0   # duration at 10 %
 
-# Ganhos PID padrão do controle de força durante o HOLD. v_cmd (m/s) sai
+# Ganhos PID padrão do controle de força (CALIBRATING/SLIDING). v_cmd (m/s) sai
 # do PID a partir do erro em N; sintonize na própria GUI durante a
 # calibração — defaults conservadores por segurança.
-KP_DEFAULT, KP_MIN, KP_MAX, KP_STEP = 0.0010, 0.0, 0.020,  0.0005   # (m/s)/N
-KI_DEFAULT, KI_MIN, KI_MAX, KI_STEP = 0.0000, 0.0, 0.010,  0.0002   # (m/s)/(N·s)
+KP_DEFAULT, KP_MIN, KP_MAX, KP_STEP = 0.0030, 0.0, 0.020,  0.0005   # (m/s)/N
+KI_DEFAULT, KI_MIN, KI_MAX, KI_STEP = 0.0002, 0.0, 0.010,  0.0002   # (m/s)/(N·s)
 KD_DEFAULT, KD_MIN, KD_MAX, KD_STEP = 0.0000, 0.0, 0.005,  0.0001   # m/N
 
 # Período de publicação do bridge de força (real CR10 → /ft_sensor/wrench).
@@ -249,15 +241,15 @@ class PalpationGUI(Node):
         # compensados pela dinâmica) e publica como WrenchStamped no mesmo
         # tópico que o explorer e o painel da GUI já consomem — ou seja,
         # a leitura da última junta do robô espelha automaticamente para
-        # a tela e para o PID do HOLD.
+        # a tela e para o PID do CALIBRATING/SLIDING.
         self._wrench_pub = self.create_publisher(
             WrenchStamped, '/ft_sensor/wrench', QOS_SENSOR)
         # Tópico latched que indica se o drag teach está activo.
-        # Subscreva em /palpation/drag_mode (std_msgs/Bool) para saber quando
-        # o braço está em modo arrasto (True) ou controlo normal (False).
-        # Usa QOS_COMMAND (RELIABLE + TRANSIENT_LOCAL): novos subscribers
-        # recebem o último valor publicado imediatamente ao conectar.
         self._drag_pub = self.create_publisher(Bool, '/palpation/drag_mode', QOS_COMMAND)
+        # Publisher da força calibrada+tare para o tactile_explorer e display.
+        # Publicado em _cb_lc_voltage a cada pacote UDP da ESP32 (~50 Hz).
+        self._lc_force_net_pub = self.create_publisher(
+            Float32, '/load_cell/force_net', QOS_SENSOR)
 
         # ─── Publishers para comando direto (aba Controle Manual) ────
         # Os joint_trajectory_controllers expõem um tópico direto
@@ -279,13 +271,11 @@ class PalpationGUI(Node):
         self._last_wrench_ts: float = 0.0
         # Cronômetro de fase: marca quando a fase atual começou (wall-clock)
         # e a duração esperada (em segundos) — usada pela progress bar para
-        # SLIDING (distance/speed) e HOLD (hold_seconds publicado pelo
+        # SLIDING (distance/speed) e CALIBRATING; fases sem duração fixa
         # explorer). Para fases sem duração conhecida (CONTACT/RETRACT) a
         # barra mostra modo indeterminado.
         self._phase_t_start: float = time.time()
         self._latest_speed_mms: float = SPEED_DEFAULT
-        self._latest_distance_mm: float = DIST_DEFAULT
-        self._latest_hold_seconds: float = 5.0
 
         # ─── Mão COVVI (lazy) ────────────────────────────────────────
         self._hand_proc: subprocess.Popen | None = None
@@ -354,6 +344,8 @@ class PalpationGUI(Node):
             JointState, '/joint_states', self._cb_joint_states, 5)
         self.create_subscription(
             Float32, '/load_cell/voltage', self._cb_lc_voltage, QOS_SENSOR)
+        self.create_subscription(
+            Float32, '/load_cell/force_net', self._cb_lc_force_net_gui, QOS_SENSOR)
 
         # ─── Home pose customizável ──────────────────────────────────
         # Default (ARM_HOME_DEG) é sobrescrito se ~/.config/touch_pack/
@@ -386,6 +378,10 @@ class PalpationGUI(Node):
         # residual que faz o zero não bater após a calibração.
         self._lc_tare_voltage: float = 0.0
         self._lc_tare_done: bool = False
+        # Força de contato tare-compensada (N, positiva = compressão).
+        # Publicada em /load_cell/force_net e usada pelo explorer no PID.
+        self._lc_force_net: float = 0.0
+        self._lc_force_net_ts: float = 0.0
         # Subprocesso do force_receiver_node (gerenciado pelo botão Conectar)
         self._force_rx_proc: subprocess.Popen | None = None
         self._force_rx_should_be_alive: bool = False
@@ -396,6 +392,7 @@ class PalpationGUI(Node):
         self._next_pose_id: int = 1
         self._next_movement_id: int = 1
         self._drag_enabled: bool = False
+        self._drag_last_valid_q: np.ndarray | None = None  # guards against firmware zero-blip
         self._exec_stop = threading.Event()
         self._exec_thread: threading.Thread | None = None
         self._exec_movement_id: int | None = None
@@ -644,14 +641,12 @@ class PalpationGUI(Node):
 
         self.speed_var       = tk.DoubleVar(value=SPEED_DEFAULT)
         self.force_var       = tk.DoubleVar(value=FORCE_DEFAULT)
-        self.dist_var        = tk.DoubleVar(value=DIST_DEFAULT)
-        self.target_dist_var = tk.DoubleVar(value=TGT_DIST_CM_DEFAULT)
         # approach speed exposta via parâmetro ROS (não via slider Tk) —
         # adicionar mais um Spinbox+Scale na lista estava sendo associado
         # ao segfault do Tk.
         self.approach_var    = tk.DoubleVar(value=APPROACH_DEFAULT)
         # Ganhos PID enviados a cada /palpation/start; o explorer aplica
-        # no HOLD para manter a força normal alvo. Padrão conservador.
+        # no CALIBRATING/SLIDING para manter a força normal alvo. Padrão conservador.
         self.pid_kp_var      = tk.DoubleVar(value=KP_DEFAULT)
         self.pid_ki_var      = tk.DoubleVar(value=KI_DEFAULT)
         self.pid_kd_var      = tk.DoubleVar(value=KD_DEFAULT)
@@ -667,17 +662,6 @@ class PalpationGUI(Node):
                          unit='N', var=self.force_var,
                          vmin=FORCE_MIN, vmax=FORCE_MAX, step=0.1,
                          hint='Referência do artigo: 1.0 N')
-        self._param_row(params_card, label='Distância de Deslizamento',
-                         unit='mm', var=self.dist_var,
-                         vmin=DIST_MIN, vmax=DIST_MAX, step=5.0,
-                         hint='Referência do artigo: 90 mm')
-        # Distância CM dedo→alvo — descida desde a Home customizada.
-        self._param_row(params_card, label='Distância dedo→alvo',
-                         unit='cm', var=self.target_dist_var,
-                         vmin=TGT_DIST_CM_MIN, vmax=TGT_DIST_CM_MAX,
-                         step=0.5,
-                         hint='Distância vertical da Home até a superfície '
-                              '(o contato pára antes se a força for atingida)')
         # approach speed: slider removido (era novo _param_row que
         # parecia disparar o segfault do Tk). Continua sendo enviado no
         # payload com o valor default; para alterar use:
@@ -689,7 +673,7 @@ class PalpationGUI(Node):
         self._build_slide_dir_selector(params_card)
 
         # ── Calibração PID (Kp / Ki / Kd) ─────────────────────────────
-        pid_card = self._card(col_left, 'Calibração PID — Controle de Força (HOLD)')
+        pid_card = self._card(col_left, 'Calibração PID — Controle de Força')
         self._param_row(pid_card, label='Kp',
                          unit='(m/s)/N', var=self.pid_kp_var,
                          vmin=KP_MIN, vmax=KP_MAX, step=KP_STEP,
@@ -727,17 +711,17 @@ class PalpationGUI(Node):
         self.start_btn.pack(fill='x')
 
         fb_card = self._card(col_right,
-                              'Sensor de Força — Mirror do Robô (TCP)')
+                              'Célula de Carga — Força de Contato (N)')
 
         fnrow = tk.Frame(fb_card, bg=PANEL)
         fnrow.pack(fill='x', pady=(6, 4))
-        tk.Label(fnrow, text='Força Normal na Última Junta', font=FONT_LBL,
-                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
+        tk.Label(fnrow, text='Força de Compressão (tare-compensada)',
+                 font=FONT_LBL, bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
         self.force_value_lbl = tk.Label(
             fnrow, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
         self.force_value_lbl.pack(anchor='w', pady=(2, 2))
         self.force_status_lbl = tk.Label(
-            fnrow, text='aguardando /ft_sensor/wrench',
+            fnrow, text='aguardando /load_cell/force_net',
             font=FONT_LBL, bg=PANEL, fg=TEXT_DIM)
         self.force_status_lbl.pack(anchor='w')
 
@@ -752,11 +736,9 @@ class PalpationGUI(Node):
 
         compbox = tk.Frame(fb_card, bg=PANEL)
         compbox.pack(fill='x', pady=(2, 6))
-        # Palpação HORIZONTAL: Fz = força normal (vertical),
-        # Fy = direção do sliding, Fx = tangencial perpendicular.
-        self.fx_lbl = self._kv(compbox, 'Fx (tang.)', '0.00 N')
-        self.fy_lbl = self._kv(compbox, 'Fy (slide)',  '0.00 N')
-        self.fz_lbl = self._kv(compbox, 'Fz (normal)', '0.00 N')
+        self.fz_lbl  = self._kv(compbox, 'F net (LC)',   '0.00 N')
+        self.fx_lbl  = self._kv(compbox, 'Tare V',       '—  V')
+        self.fy_lbl  = self._kv(compbox, 'LC bruto',     '0.00 N')
 
         tk.Frame(fb_card, bg=BORDER, height=1).pack(fill='x', pady=8)
         prow = tk.Frame(fb_card, bg=PANEL)
@@ -810,7 +792,7 @@ class PalpationGUI(Node):
                         vmin=SPEED_FACTOR_MIN, vmax=SPEED_FACTOR_MAX, step=1,
                         hint='Afeta jog manual (MovJ/PTP) e duração no Gazebo. '
                              'NÃO afeta streaming durante palpação (CONTACT/'
-                             'HOLD/SLIDING/RETRACT usam ServoJ com velocidade '
+                             'CALIBRATING/SLIDING/RETRACT usam ServoJ com velocidade '
                              'própria definida nos parâmetros acima).')
         self.speed_factor_var.trace_add(
             'write', lambda *_: self._apply_speed_factor_if_active())
@@ -985,7 +967,7 @@ class PalpationGUI(Node):
         # Bloqueia publish de slider durante palpação ativa: o explorer está
         # fazendo streaming no mesmo tópico JTC a 33 Hz. Um publish do slider
         # substituiria o setpoint do explorer por uma posição arbitrária,
-        # causando solavanco e desestabilizando o controle de força no HOLD.
+        # causando solavanco e desestabilizando o controle de força no CALIBRATING/SLIDING.
         with self._lock:
             _phase = self._latest_phase
         if _phase not in ('IDLE', 'DONE', 'ABORTED'):
@@ -1107,7 +1089,7 @@ class PalpationGUI(Node):
         _cb_arm_trajectory → _mirror_movj_debounced com SpeedFactor + MovJ,
         idêntico ao padrão da DobotAPI do fabricante.
 
-        ServoJ é usado apenas durante palpação contínua (CONTACT/HOLD/
+        ServoJ é usado apenas durante palpação contínua (CONTACT/CALIBRATING/
         SLIDING/RETRACT) onde a latência baixa supera a vantagem do SpeedFactor.
         """
         _servoj_ready = False
@@ -1136,7 +1118,18 @@ class PalpationGUI(Node):
                 if drv is None or not self._robot_connected:
                     continue
                 try:
-                    q_urdf = drv.read_joints_urdf()
+                    q_urdf = drv.read_joints_urdf_latest()
+                    # Guard 1: firmware zero-blip right after DragTeachSwitch(1).
+                    # A real robot is never at all-zeros (that is arm fully extended
+                    # upright — it cannot reach there from operating positions).
+                    if np.linalg.norm(q_urdf) < 0.05:
+                        continue
+                    # Guard 2: reject physically-impossible jumps (>60° in 30 ms).
+                    _last = self._drag_last_valid_q
+                    if (_last is not None
+                            and np.max(np.abs(q_urdf - _last)) > math.radians(60)):
+                        continue
+                    self._drag_last_valid_q = q_urdf
                     msg = JointTrajectory()
                     msg.joint_names = ARM_JOINTS
                     pt = JointTrajectoryPoint()
@@ -1874,10 +1867,29 @@ class PalpationGUI(Node):
 
     # ── Callbacks ROS — célula de carga ──────────────────────────────
     def _cb_lc_voltage(self, msg: Float32) -> None:
+        v = float(msg.data)
         with self._lock:
-            self._lc_voltage = float(msg.data)
-            self._lc_voltage_buf.append(float(msg.data))
+            self._lc_voltage = v
+            self._lc_voltage_buf.append(v)
             self._lc_last_ts = time.time()
+            tare_done  = self._lc_tare_done
+            tare_v     = self._lc_tare_voltage
+            slope      = self._lc_calib_slope
+            calibrated = self._lc_calibrated
+        if calibrated and tare_done and abs(slope) > 1e-9:
+            f_net = (v - tare_v) / slope   # compressão → positivo (tensão sobe com compressão)
+            out = Float32()
+            out.data = float(f_net)
+            try:
+                self._lc_force_net_pub.publish(out)
+            except Exception:
+                pass
+
+    def _cb_lc_force_net_gui(self, msg: Float32) -> None:
+        """Recebe /load_cell/force_net → atualiza display da aba Palpação."""
+        with self._lock:
+            self._lc_force_net = float(msg.data)
+            self._lc_force_net_ts = time.time()
 
     # ── Calibração — load / save ──────────────────────────────────────
     def _load_lc_calib(self) -> None:
@@ -2202,10 +2214,9 @@ class PalpationGUI(Node):
                      f'slope={slope:.4f}  intercept={intercept:.4f}',
                 fg=OK)
 
-            # Força de compressão ⊥ mesa = derivada da calibração por tração,
-            # sinal invertido: robô pressionando → V cai abaixo do tare → resultado positivo.
+            # Força de compressão ⊥ mesa: tensão SOBE com compressão → (v - tare_v) positivo.
             if tare_done:
-                f_compress = (tare_v - voltage) / slope   # positivo = compressão, negativo = tração
+                f_compress = (voltage - tare_v) / slope   # positivo = compressão, negativo = tração
                 color = OK if abs(f_compress) < 100 else WARN
                 self.lc_normal_force_lbl.config(
                     text=f'{f_compress:+6.2f}  N', fg=color)
@@ -2706,6 +2717,10 @@ class PalpationGUI(Node):
             else:
                 self._set_status(f'DragTeachSwitch falhou: {exc}', DANGER)
                 return
+        # Always reset to None: Guard 2 in the poll loop seeds from the first
+        # valid REAL-ROBOT read, not from Gazebo.  If seeded from Gazebo and
+        # the real robot is >60° away, Guard 2 would block all reads forever.
+        self._drag_last_valid_q = None
         self._drag_enabled = new_state
         self._publish_drag_state(new_state)
         btn = self._drag_btn
@@ -3546,8 +3561,7 @@ class PalpationGUI(Node):
                 # Auto-detecção de drag: modo ≠ 5 (idle) e ≠ 6 (running) indica
                 # que o controlador mudou de estado — tipicamente modo 9 = DragTeach.
                 # Ajustar ROBOT_MODE_DRAG em real_driver.py se necessário.
-                # Guarda mode_int is not None: regex sem match (resposta malformada)
-                # não deve disparar auto-disable erroneamente.
+                # Guard: regex sem match (resposta malformada) não dispara auto-disable.
                 if mode_int is not None:
                     with self._lock:
                         phase = self._latest_phase
@@ -3557,6 +3571,7 @@ class PalpationGUI(Node):
                             self.get_logger().warning(
                                 '[DRAG-WATCH] Drag físico detectado (modo=%d) — '
                                 'tracking real→sim activado automaticamente.', mode_int)
+                            self._drag_last_valid_q = None
                             self._drag_enabled = True
                             self.root.after(0, self._update_drag_btn_auto, True)
                         elif not is_drag and self._drag_enabled:
@@ -3564,6 +3579,7 @@ class PalpationGUI(Node):
                                 '[DRAG-WATCH] Drag desactivado (modo=%d) — '
                                 'tracking real→sim desligado.', mode_int)
                             self._drag_enabled = False
+                            self._drag_last_valid_q = None
                             self.root.after(0, self._update_drag_btn_auto, False)
             else:
                 failures += 1
@@ -3712,7 +3728,7 @@ class PalpationGUI(Node):
 
         NÃO substitui o botão físico de E-STOP do controlador CR.
         """
-        # 1. Aborta o tactile_explorer FSM (CONTACT/HOLD/SLIDING param).
+        # 1. Aborta o tactile_explorer FSM (CONTACT/CALIBRATING/SLIDING param).
         #    Sem isso o explorer continua publicando setpoints no JTC e o
         #    robô executa trajetórias acumuladas quando se recuperar do Stop.
         stop_msg = String()
@@ -3777,10 +3793,6 @@ class PalpationGUI(Node):
             try:
                 self._latest_speed_mms = float(data.get(
                     'speed_mms', self._latest_speed_mms))
-                self._latest_distance_mm = float(data.get(
-                    'distance_mm', self._latest_distance_mm))
-                self._latest_hold_seconds = float(data.get(
-                    'hold_seconds', self._latest_hold_seconds))
             except (TypeError, ValueError):
                 pass
 
@@ -3788,72 +3800,64 @@ class PalpationGUI(Node):
     # Refresh do painel direito (Tk thread, 10 Hz)
     # ──────────────────────────────────────────────────────────────────
     def _refresh_status_panel(self):
-        # Lê force_var antes do _lock — é um acesso Tk e não deve estar sob lock
-        # (TclError dentro do lock causaria deadlock no shutdown).
         try:
             tgt = float(self.force_var.get())
         except (ValueError, tk.TclError):
             tgt = FORCE_DEFAULT
         with self._lock:
-            phase = self._latest_phase
-            f_normal = self._latest_force_normal
-            fx, fy, fz = self._fx, self._fy, self._fz
-            last_ts = self._last_wrench_ts
-            phase_t0 = self._phase_t_start
-            speed_mms = self._latest_speed_mms
-            distance_mm = self._latest_distance_mm
-            hold_s = self._latest_hold_seconds
+            phase     = self._latest_phase
+            f_net     = self._lc_force_net        # positivo = compressão
+            lc_ts     = self._lc_force_net_ts
+            lc_v      = self._lc_voltage
+            lc_slope  = self._lc_calib_slope
+            lc_ic     = self._lc_calib_intercept
+            lc_cal    = self._lc_calibrated
+            lc_tare_v = self._lc_tare_voltage
+            lc_tared  = self._lc_tare_done
+            phase_t0  = self._phase_t_start
 
-        has_data = last_ts > 0.0
+        has_data = lc_ts > 0.0 and (time.time() - lc_ts) < 3.0
         if not has_data:
             self.force_value_lbl.config(text='—   N', fg=TEXT_DIM)
             self.force_status_lbl.config(
-                text='aguardando /ft_sensor/wrench', fg=TEXT_DIM)
+                text='aguardando /load_cell/force_net (inicie o receptor UDP)',
+                fg=TEXT_DIM)
             self.err_value_lbl.config(text='—  N', fg=TEXT_DIM)
+            self.fz_lbl.config(text='—  N')
+            self.fx_lbl.config(text='—  V')
+            self.fy_lbl.config(text='—  N')
         else:
-            err = abs(f_normal - tgt)
-            if f_normal < 0.05:
-                # F≈0 é tratado como modo CALIBRAÇÃO (não como erro): o
-                # explorer mantém o experimento rodando mesmo sem contato.
-                color, status = WARN, ('calibração — sem contato; '
-                                        'experimento continua')
+            err = abs(f_net - tgt)
+            if not lc_tared or f_net < 0.05:
+                color, status = WARN, 'sem contato / tare não realizado'
             elif err <= 0.10:
-                color, status = OK, 'estável dentro da tolerância (±0.10 N)'
+                color, status = OK, 'estável (±0.10 N)'
             elif err <= 0.25:
                 color, status = WARN, 'oscilando (±0.25 N)'
             else:
                 color, status = DANGER, 'fora da tolerância'
             self.force_value_lbl.config(
-                text=f'{f_normal:6.2f}  N', fg=color)
+                text=f'{f_net:+6.2f}  N', fg=color)
             self.force_status_lbl.config(text=status, fg=color)
             self.err_value_lbl.config(text=f'{err:5.2f}  N', fg=color)
-
-        self.fx_lbl.config(text=f'{fx:+6.2f} N')
-        self.fy_lbl.config(text=f'{fy:+6.2f} N')
-        self.fz_lbl.config(text=f'{fz:+6.2f} N')
+            self.fz_lbl.config(text=f'{f_net:+6.2f} N')
+            tare_txt = f'{lc_tare_v:.4f} V' if lc_tared else 'não realizado'
+            self.fx_lbl.config(text=tare_txt)
+            lc_bruto = (lc_v - lc_ic) / lc_slope if lc_cal and abs(lc_slope) > 1e-9 else 0.0
+            self.fy_lbl.config(text=f'{lc_bruto:+6.2f} N')
 
         phase_color = {
-            'IDLE': TEXT_MUTED, 'CONTACT': PRIMARY, 'HOLD': WARN,
+            'IDLE': TEXT_MUTED, 'CONTACT': PRIMARY, 'CALIBRATING': WARN,
             'SLIDING': PRIMARY, 'RETRACT': TEXT_MUTED,
             'DONE': OK, 'ABORTED': DANGER,
         }.get(phase, TEXT)
         self.phase_lbl.config(text=phase, fg=phase_color)
 
-        # Cronômetro só por label (sem Progressbar). SLIDING/HOLD têm
-        # duração esperada; CONTACT/RETRACT mostram só tempo decorrido.
+        # Cronômetro só por label (sem Progressbar). SLIDING mostra só
+        # tempo decorrido (sem distância fixa); CONTACT/RETRACT/CALIBRATING idem.
         elapsed = max(0.0, time.time() - phase_t0)
-        expected: float | None = None
-        if phase == 'SLIDING' and speed_mms > 0.01:
-            expected = distance_mm / speed_mms
-        elif phase == 'HOLD' and hold_s > 0.01:
-            expected = hold_s
         if phase in ('IDLE', 'DONE', 'ABORTED'):
             self.timer_lbl.config(text='—', fg=TEXT_DIM)
-        elif expected is not None:
-            pct = min(100.0, 100.0 * elapsed / expected)
-            self.timer_lbl.config(
-                text=f'{elapsed:4.1f}s / {expected:4.1f}s ({pct:4.0f}%)',
-                fg=phase_color)
         else:
             self.timer_lbl.config(text=f'{elapsed:4.1f}s', fg=phase_color)
 
@@ -3889,15 +3893,12 @@ class PalpationGUI(Node):
         try:
             speed = self._clamp_var(self.speed_var, SPEED_MIN, SPEED_MAX)
             force = self._clamp_var(self.force_var, FORCE_MIN, FORCE_MAX)
-            dist = self._clamp_var(self.dist_var, DIST_MIN, DIST_MAX)
-            tgt = self._clamp_var(self.target_dist_var,
-                                    TGT_DIST_CM_MIN, TGT_DIST_CM_MAX)
             approach = self._clamp_var(self.approach_var,
                                         APPROACH_MIN, APPROACH_MAX,
                                         default=APPROACH_DEFAULT)
         finally:
             self._suppressing = False
-        if None in (speed, force, dist, tgt, approach):
+        if None in (speed, force, approach):
             self._set_status('Parâmetros inválidos.', DANGER)
             return
         kp = self._clamp_var(self.pid_kp_var, KP_MIN, KP_MAX,
@@ -3912,14 +3913,12 @@ class PalpationGUI(Node):
         payload = {
             'speed_mms':          float(speed),
             'force_n':            float(force),
-            'distance_mm':        float(dist),
-            'target_distance_cm': float(tgt),
             # Velocidade da descida CONTACT / subida RETRACT (mm/s).
             # Explorer aplica como approach_v_max_mms; min = 20 % do max.
             'approach_speed_mms': float(approach),
             # Direção XY (mundo) do sliding — string '+X' / '-X' / '+Y' / '-Y'.
             'slide_dir':          self.slide_dir_var.get(),
-            # Ganhos do PID de força aplicados no HOLD pelo explorer.
+            # Ganhos do PID de força aplicados no CALIBRATING/SLIDING pelo explorer.
             'kp': float(kp if kp is not None else KP_DEFAULT),
             'ki': float(ki if ki is not None else KI_DEFAULT),
             'kd': float(kd if kd is not None else KD_DEFAULT),
@@ -3951,6 +3950,30 @@ class PalpationGUI(Node):
             except CR10RealDriverError as exc:
                 self.get_logger().warning(f'SpeedFactor(10) falhou: {exc}')
 
+        # ── Auto-inicia o force_receiver_node se não estiver rodando ──────
+        rx_running = (self._force_rx_proc is not None
+                      and self._force_rx_proc.poll() is None)
+        if not rx_running:
+            self._connect_force_receiver()
+            # Aguarda 1.8 s para UDP bind + primeiros pacotes, depois tara e inicia.
+            self._set_status(
+                'Aguardando célula de carga (iniciando receptor UDP)...', WARN)
+            self.root.after(1800, lambda p=payload: self._auto_tare_and_start(p))
+            return
+
+        # force_receiver já rodando — garante tare antes de iniciar.
+        if not self._lc_tare_done:
+            self._lc_do_tare()
+        self._do_palpation_start(payload)
+
+    def _auto_tare_and_start(self, payload: dict) -> None:
+        """Chamado 1.8 s após o force_receiver_node ser iniciado."""
+        if not self._lc_tare_done:
+            self._lc_do_tare()
+        self._do_palpation_start(payload)
+
+    def _do_palpation_start(self, payload: dict) -> None:
+        """Envia /palpation/start após garantir que a LC está pronta."""
         # Limpa o log de movimentos da sessão anterior para que o dedup do
         # mirror poll não bloqueie os primeiros ServoJ desta sessão.
         with self._mirror_timer_lock:
@@ -3970,8 +3993,7 @@ class PalpationGUI(Node):
         self._set_status(
             f'/palpation/start — v={payload["speed_mms"]:.1f} mm/s, '
             f'F={payload["force_n"]:.2f} N, '
-            f'slide={payload["distance_mm"]:.0f} mm {payload["slide_dir"]}, '
-            f'descida={payload["target_distance_cm"]:.1f} cm '
+            f'dir={payload["slide_dir"]} '
             f'@ {payload["approach_speed_mms"]:.0f} mm/s | '
             f'vel junta {payload["speed_factor_pct"]:.0f}% | '
             f'PID Kp={payload["kp"]:.4g} Ki={payload["ki"]:.4g} '

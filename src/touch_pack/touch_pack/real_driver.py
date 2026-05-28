@@ -318,10 +318,23 @@ class CR10RealDriver:
             if expect_reply:
                 self._drain_stale_responses()
             log.debug('[DASH→] %s', cmd)
-            self._dash.sendall((cmd + '\n').encode('ascii'))
+            try:
+                self._dash.sendall((cmd + '\n').encode('ascii'))
+            except OSError as exc:
+                # BrokenPipeError, ConnectionResetError, etc. — socket perdido.
+                # Marca como desconectado e converte para CR10RealDriverError
+                # para que todos os handlers existentes na GUI possam capturar.
+                self._dash = None
+                raise CR10RealDriverError(
+                    f'Socket dashboard perdido ao enviar "{cmd}": {exc}') from exc
             if not expect_reply:
                 return ''
-            resp = self._recv_line(self._dash)
+            try:
+                resp = self._recv_line(self._dash)
+            except OSError as exc:
+                self._dash = None
+                raise CR10RealDriverError(
+                    f'Socket dashboard perdido ao receber resposta de "{cmd}": {exc}') from exc
             log.debug('[DASH←] %s', resp)
             return resp
 
@@ -483,7 +496,12 @@ class CR10RealDriver:
             raise CR10RealDriverError('Dashboard não conectado')
         with self._dash_lock:
             log.debug('[DASH→] %s', cmd)
-            self._dash.sendall((cmd + '\n').encode('ascii'))
+            try:
+                self._dash.sendall((cmd + '\n').encode('ascii'))
+            except OSError as exc:
+                self._dash = None
+                raise CR10RealDriverError(
+                    f'Socket dashboard perdido (ServoJ): {exc}') from exc
             # Lê resposta com timeout curto — não bloqueia o ciclo de 30 ms.
             # Timeout normal significa "ACK ainda não chegou", não erro.
             self._dash.settimeout(self.cfg.servoj_recv_timeout_s)
@@ -498,7 +516,8 @@ class CR10RealDriver:
             except socket.timeout:
                 pass  # normal — ACK chega depois, drenado pelo próximo _send_dash
             finally:
-                self._dash.settimeout(self.cfg.recv_timeout_s)
+                if self._dash is not None:
+                    self._dash.settimeout(self.cfg.recv_timeout_s)
 
     def servo_j_urdf(self, q_urdf: Sequence[float]) -> None:
         """Wrapper que aplica `urdf_to_dobot` antes de chamar `servo_j`."""
@@ -579,28 +598,36 @@ class CR10RealDriver:
             self._request_control_with_retry(retries=2, delay_s=0.3)
             resp_cl = self._send_dash('SetCollisionLevel(0)')
             log.info('[DASH] SetCollisionLevel(0) pré-drag → %s', resp_cl)
-            # Garantia: se DragTeachSwitch lançar OSError ou outro erro de
-            # socket (em vez de retornar código não-0), o SetCollisionLevel(0)
-            # que acabou de ser enviado é restaurado.
-            try:
-                resp = self._send_dash(f'DragTeachSwitch({status})')
-            except Exception:
-                try:
-                    self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
-                except Exception:
-                    pass
-                raise
-            log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
-            if resp and not resp.startswith('0'):
+        resp = self._send_dash(f'DragTeachSwitch({status})')
+        log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
+        if resp and not resp.startswith('0'):
+            if enable:
+                # Re-enable path failed — restore collision level and report.
                 self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
                 code = resp.split(',')[0].strip()
-                raise CR10RealDriverError(f'DragTeachSwitch falhou (code={code})')
-        else:
-            resp = self._send_dash(f'DragTeachSwitch({status})')
-            log.info('[DASH] DragTeachSwitch(%d) → %s', status, resp)
-            if resp and not resp.startswith('0'):
-                code = resp.split(',')[0].strip()
-                raise CR10RealDriverError(f'DragTeachSwitch falhou (code={code})')
+                raise CR10RealDriverError(f'DragTeachSwitch(1) falhou (code={code})')
+            else:
+                # -1000/-1 on disable: gravity may have triggered servo alarms
+                # during drag.  ClearError + Continue re-arms, then retry once.
+                log.warning('[DASH] DragTeachSwitch(0) retornou %s — '
+                            'ClearError + retry', resp.split(',')[0].strip())
+                try:
+                    self._send_dash('ClearError()')
+                    self._send_dash('Continue()')
+                    time.sleep(0.1)
+                except CR10RealDriverError as _e:
+                    log.warning('[DASH] ClearError pré-drag-off falhou: %s', _e)
+                resp = self._send_dash('DragTeachSwitch(0)')
+                log.info('[DASH] DragTeachSwitch(0) retry → %s', resp)
+                if resp and not resp.startswith('0'):
+                    code = resp.split(',')[0].strip()
+                    raise CR10RealDriverError(
+                        f'DragTeachSwitch(0) falhou após retry (code={code})')
+        if enable:
+            # Firmware briefly reports q_actual=0 during drag mode transition.
+            # Wait for the controller to stabilise before the first feedback read.
+            time.sleep(0.15)
+        if not enable:
             resp_cl = self._send_dash(f'SetCollisionLevel({self.cfg.collision_level})')
             log.info('[DASH] SetCollisionLevel(%d) restaurado → %s',
                      self.cfg.collision_level, resp_cl)
@@ -693,6 +720,60 @@ class CR10RealDriver:
     def read_joints_urdf(self) -> np.ndarray:
         """Idem, mas já na convenção URDF (joint2 e joint4 ajustados)."""
         q = self.read_joints_rad()
+        if _HAS_CONV:
+            q = dobot_to_urdf(q)
+        return q
+
+    def read_joints_urdf_latest(self) -> np.ndarray:
+        """Como read_joints_urdf() mas drena o backlog antes de ler.
+
+        O feedback streaming a 125 Hz acumula ~3 pacotes por tick de 33 Hz.
+        Sem drenagem o atraso cresce indefinidamente (até ~480 ms com buffer
+        cheio).  Aqui usamos MSG_PEEK para contar pacotes completos disponíveis
+        e descartamos todos menos o último — mantendo o alinhamento de stream
+        (só consumimos múltiplos inteiros de FEEDBACK_PACKET_SIZE).
+        """
+        if self.dry_run:
+            return np.zeros(6, dtype=np.float64)
+        if self._feed is None:
+            raise CR10RealDriverError('Feedback port não conectado')
+        with self._feed_lock:
+            # ── contagem de pacotes via peek ──────────────────────────────
+            orig_to = self._feed.gettimeout()
+            self._feed.settimeout(0.001)
+            n_buffered = 0
+            try:
+                peeked = self._feed.recv(FEEDBACK_PACKET_SIZE * 64,
+                                         socket.MSG_PEEK)
+                n_buffered = len(peeked) // FEEDBACK_PACKET_SIZE
+            except (socket.timeout, BlockingIOError):
+                pass
+            finally:
+                self._feed.settimeout(orig_to)
+            # ── descartar (n_buffered-1) pacotes obsoletos ─────────────────
+            n_skip = max(0, n_buffered - 1)
+            for _ in range(n_skip):
+                consumed = b''
+                while len(consumed) < FEEDBACK_PACKET_SIZE:
+                    chunk = self._feed.recv(FEEDBACK_PACKET_SIZE - len(consumed))
+                    if not chunk:
+                        raise CR10RealDriverError('Feedback port fechado')
+                    consumed += chunk
+            # ── ler o pacote mais recente (ou aguardar o próximo) ──────────
+            buf = b''
+            while len(buf) < FEEDBACK_PACKET_SIZE:
+                chunk = self._feed.recv(FEEDBACK_PACKET_SIZE - len(buf))
+                if not chunk:
+                    raise CR10RealDriverError('Feedback port fechado')
+                buf += chunk
+        if n_skip:
+            log.debug('[FEED] drag drain: %d pacotes obsoletos descartados', n_skip)
+        q_deg = np.frombuffer(buf, offset=FEEDBACK_Q_ACTUAL_OFFSET,
+                              count=6, dtype='<f8').copy()
+        if not np.all(np.isfinite(q_deg)) or np.any(np.abs(q_deg) > 400.0):
+            raise CR10RealDriverError(
+                f'Leitura de juntas inválida (drag): {q_deg}')
+        q = np.deg2rad(q_deg)
         if _HAS_CONV:
             q = dobot_to_urdf(q)
         return q

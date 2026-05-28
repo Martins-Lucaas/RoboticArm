@@ -3,7 +3,7 @@ tactile_explorer.py — Backend ROS 2 da célula de palpação tátil.
 
 Coreografia (Gupta et al., 2021) sobre uma SUPERFÍCIE HORIZONTAL.
 
-    IDLE  →  HOME  →  CONTACT  →  HOLD  →  SLIDING  →  RETRACT  →  IDLE
+    IDLE  →  HOME  →  CONTACT  →  CALIBRATING  →  SLIDING  →  RETRACT  →  HOME  →  IDLE
 
 Arquitetura de controle:
   Todas as fases de movimento usam STREAMING DIRETO de setpoints a 33 Hz
@@ -20,11 +20,11 @@ Arquitetura de controle:
       (step_m = v_ms × dt), independente do SpeedFactor do controlador.
 
 Fases:
-  HOME      Interpolação linear no espaço de juntas a ≤ 0.3 rad/s.
-  CONTACT   Streaming Jacobiano em −Z com perfil fast→slow e check de Fz.
-  HOLD      PID de Fz (unchanged — já era streaming).
-  SLIDING   Streaming Jacobiano em XY (direção configurável) velocidade cte.
-  RETRACT   Streaming Jacobiano em +Z com mesmo perfil do CONTACT.
+  HOME         Interpolação linear no espaço de juntas a ≤ 0.3 rad/s.
+  CONTACT      Streaming Jacobiano em −Z até detectar força (célula calibrada).
+  CALIBRATING  PID de força: estabiliza no setpoint antes de deslizar.
+  SLIDING      Streaming Jacobiano lateral + PID de força em Z simultâneos.
+  RETRACT      Streaming Jacobiano em +Z para afastar da superfície.
 
 Interface ROS:
   sub /palpation/start    std_msgs/String   JSON params
@@ -35,7 +35,6 @@ Interface ROS:
   pub /cr10_group_controller/joint_trajectory  (streaming direto)
 
 Parâmetros ROS:
-  hold_seconds         5.0    duração da fase HOLD
   retract_mm           80.0   recuo em RETRACT
   approach_v_max_mms   50.0   velocidade inicial da descida (mm/s)
   approach_v_min_mms    5.0   velocidade final da descida (mm/s)
@@ -65,8 +64,7 @@ _QOS_SENSOR = QoSProfile(
     durability=QoSDurabilityPolicy.VOLATILE,
     history=QoSHistoryPolicy.KEEP_LAST, depth=1)
 
-from std_msgs.msg import String
-from geometry_msgs.msg import WrenchStamped
+from std_msgs.msg import String, Float32
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
@@ -100,20 +98,33 @@ _HAND_POINTING_RAD = {
 
 _HAND_PRIMARY = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
 
-# Limiar de contato para o HOLD-PID.
-_FORCE_CONTACT_FLOOR_N = 0.05
+# ── Célula de carga calibrada (/load_cell/force_net) ─────────────────────────
+# O force_receiver_node publica força calibrada (N). A GUI aplica tara
+# (voltage0 - v_now) / slope → compressão é POSITIVA, repouso ≈ 0 N.
+# fz_corrected() retorna diretamente o valor tare-compensado positivo.
+_CONTACT_DETECT_N   = 0.2    # N: limiar de detecção de contato (positivo)
+_APPROACH_SAFETY_M  = 0.60   # m: descida máxima de segurança no CONTACT
+_SLIDING_SAFETY_M   = 0.30   # m: distância máxima de segurança no SLIDING
 
-# Saturações de segurança do PID de força no HOLD.
+# ── CALIBRATING — PID de força ────────────────────────────────────────────────
+_CALIB_STABLE_TOL_N  = 0.3   # N: tolerância de estabilidade
+_CALIB_STABLE_TICKS  = 20    # ticks consecutivos estáveis → transita (600 ms)
+_CALIB_TIMEOUT_S     = 30.0  # s: timeout do CALIBRATING
+_FORCE_LOST_TICKS    = int(2.0 / 0.030)  # ticks sem contato antes de parar SLIDING
+
+# Saturações de segurança do PID de força.
 _PID_V_MAX_MS = 0.005   # 5 mm/s
 _PID_I_MAX_Ns = 5.0
-_PID_DT_S     = 0.030   # período do loop (33 Hz)
 
 # ── Parâmetros do loop de streaming ──────────────────────────────────────────
 _CTRL_DT    = 0.030   # período de cada passo (33 Hz)
-_CTRL_LOOK  = 0.10    # time_from_start enviado ao controller (s)
+_CTRL_LOOK  = 0.10    # time_from_start do _settle (s)
+_CTRL_WIN   = 10      # waypoints por batch de streaming (10 × 30 ms = 300 ms)
+_SLIDE_WIN  = 3       # janela do SLIDING com PID (3 × 30 ms = 90 ms lookahead)
+_PID_DT_S   = _CTRL_DT
 _JAC_LAM    = 0.01    # regularização DLS
 _ORI_GAIN   = 0.5     # ganho de correção de orientação
-_Z_CORR_GAIN = 0.5   # ganho de correção de posição Z durante sliding (P-controller por tick)
+_Z_CORR_GAIN = 0.5   # ganho de correção perpendicular durante sliding
 _HOME_MAX_RAD_S = 0.30  # velocidade máxima do HOME (≈ 17°/s por junta)
 _SETTLE_TICKS   = 6     # ticks de espera entre fases (6 × 30 ms = 180 ms)
 
@@ -128,13 +139,12 @@ class TactileExplorer(Node):
     def __init__(self):
         super().__init__('tactile_explorer')
 
-        self.declare_parameter('hold_seconds',        5.0)
         self.declare_parameter('retract_mm',          80.0)
         self.declare_parameter('arm_base_z',          0.78)
         self.declare_parameter('approach_v_max_mms',  50.0)
         self.declare_parameter('approach_v_min_mms',   5.0)
-        self.declare_parameter('kp', 0.001)
-        self.declare_parameter('ki', 0.0)
+        self.declare_parameter('kp', 0.003)
+        self.declare_parameter('ki', 0.0002)
         self.declare_parameter('kd', 0.0)
 
         self._phase: str = 'IDLE'
@@ -142,18 +152,15 @@ class TactileExplorer(Node):
         self._params_lock = threading.Lock()
         self._target_force_n: float = 1.0
         self._slide_speed_mms: float = 10.0
-        self._slide_distance_mm: float = 90.0
-        self._target_distance_cm: float = 5.0
         self._slide_dir_vec: np.ndarray = np.array([0.0, 1.0])
+        self._approach_dir: np.ndarray | None = None
         self._user_home_q: np.ndarray | None = None
         self._kp: float = float(self.get_parameter('kp').value)
         self._ki: float = float(self.get_parameter('ki').value)
         self._kd: float = float(self.get_parameter('kd').value)
         self._speed_factor_pct: float = 10.0   # % do slider da GUI (padrão 10 %)
-        self._ft_lock = threading.Lock()
-        self._ft_force = np.zeros(3, dtype=np.float64)
-        self._ft_torque = np.zeros(3, dtype=np.float64)
-        self._ft_stamp_s: float = 0.0
+        self._lc_lock = threading.Lock()
+        self._lc_force_net: float = 0.0   # compressão positiva, tare-compensada
         self._q_lock = threading.Lock()
         self._current_q = _POINTING_SEED_Q.copy()
         self._stop_requested = threading.Event()
@@ -165,8 +172,8 @@ class TactileExplorer(Node):
                                   self._cb_start, _QOS_COMMAND, callback_group=cb)
         self.create_subscription(String, '/palpation/stop',
                                   self._cb_stop, 10, callback_group=cb)
-        self.create_subscription(WrenchStamped, '/ft_sensor/wrench',
-                                  self._cb_wrench, _QOS_SENSOR, callback_group=cb)
+        self.create_subscription(Float32, '/load_cell/force_net',
+                                  self._cb_lc_force_net, _QOS_SENSOR, callback_group=cb)
         self.create_subscription(JointState, '/joint_states',
                                   self._cb_joints, 50, callback_group=cb)
 
@@ -188,22 +195,15 @@ class TactileExplorer(Node):
     # ──────────────────────────────────────────────────────────────────
     # Callbacks
     # ──────────────────────────────────────────────────────────────────
-    _FT_MAX_PLAUSIBLE_N = 500.0
+    _LC_MAX_PLAUSIBLE_N = 100.0
 
-    def _cb_wrench(self, msg: WrenchStamped):
-        fx, fy, fz = msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z
-        if not (math.isfinite(fx) and math.isfinite(fy) and math.isfinite(fz)
-                and abs(fx) < self._FT_MAX_PLAUSIBLE_N
-                and abs(fy) < self._FT_MAX_PLAUSIBLE_N
-                and abs(fz) < self._FT_MAX_PLAUSIBLE_N):
+    def _cb_lc_force_net(self, msg: Float32) -> None:
+        """Recebe /load_cell/force_net — compressão positiva, tare-compensada."""
+        val = float(msg.data)
+        if not math.isfinite(val) or abs(val) > self._LC_MAX_PLAUSIBLE_N:
             return
-        with self._ft_lock:
-            self._ft_force = np.array([fx, fy, fz], dtype=np.float64)
-            self._ft_torque = np.array(
-                [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
-                dtype=np.float64)
-            self._ft_stamp_s = (
-                msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
+        with self._lc_lock:
+            self._lc_force_net = val
 
     def _cb_joints(self, msg: JointState):
         idx = {n: i for i, n in enumerate(msg.name)}
@@ -233,10 +233,6 @@ class TactileExplorer(Node):
                 payload.get('force_n', self._target_force_n))
             self._slide_speed_mms = float(
                 payload.get('speed_mms', self._slide_speed_mms))
-            self._slide_distance_mm = float(
-                payload.get('distance_mm', self._slide_distance_mm))
-            self._target_distance_cm = float(
-                payload.get('target_distance_cm', self._target_distance_cm))
             approach = payload.get('approach_speed_mms')
             if approach is not None:
                 try:
@@ -291,25 +287,26 @@ class TactileExplorer(Node):
     # Status
     # ──────────────────────────────────────────────────────────────────
     def _publish_status(self):
-        with self._ft_lock:
-            f = self._ft_force.copy()
+        with self._lc_lock:
+            force_net = self._lc_force_net
         with self._params_lock:
             tgt       = float(self._target_force_n)
             speed_mms = self._slide_speed_mms
-            dist_mm   = self._slide_distance_mm
         msg = String()
         msg.data = json.dumps({
             'phase': self._phase,
             'target_force_n': tgt,
-            'measured_force_normal_n': float(abs(f[2])),
-            'measured_force_mag_n': float(np.linalg.norm(f)),
-            'fx': float(f[0]), 'fy': float(f[1]), 'fz': float(f[2]),
+            'force_net_n': float(force_net),
+            'measured_force_normal_n': float(abs(force_net)),
             'speed_mms': speed_mms,
-            'distance_mm': dist_mm,
-            'hold_seconds': float(self.get_parameter('hold_seconds').value),
             'kp': self._kp, 'ki': self._ki, 'kd': self._kd,
         })
         self._status_pub.publish(msg)
+
+    def _fz_corrected(self) -> float:
+        """Força de contato tare-compensada (N). Positivo = compressão."""
+        with self._lc_lock:
+            return self._lc_force_net
 
     def _set_phase(self, phase: str):
         self._phase = phase
@@ -410,7 +407,8 @@ class TactileExplorer(Node):
                            lock_ori: bool = False,
                            lock_z: bool = False,
                            lock_perp: bool = False,
-                           force_threshold_n: float | None = None) -> str:
+                           force_threshold_n: float | None = None,
+                           win: int = _CTRL_WIN) -> str:
         d = np.asarray(direction, dtype=float).flatten()
         nd = float(np.linalg.norm(d))
         if nd < 1e-9 or total_m <= 0.0:
@@ -483,9 +481,7 @@ class TactileExplorer(Node):
                 return 'error'
 
             if force_threshold_n is not None:
-                with self._ft_lock:
-                    fz = float(abs(self._ft_force[2]))
-                if fz >= force_threshold_n:
+                if self._fz_corrected() >= force_threshold_n:
                     return 'force'
 
             q = self._q_now().copy()
@@ -527,44 +523,183 @@ class TactileExplorer(Node):
             v = max(1e-4, v)
             step = v * _CTRL_DT
 
-            J = jacobian(q, T_end=T_TOUCH_TOOL_ATTACH)
-            twist = np.zeros(6)
-            twist[:3] = d * step
+            # ── Batch de `win` waypoints (janela deslizante) ─────────────────
+            # Cada mensagem contém `win` pontos com timestamps cumulativos.
+            # O JTC interpola S-curve sobre toda a janela → coordenação suave
+            # de múltiplas juntas sem reinício de planejamento entre passos.
+            # A janela desliza 1 passo (_CTRL_DT) por tick; a cada 30 ms
+            # o batch é atualizado com o estado real lido de /joint_states.
+            msg = JointTrajectory()
+            msg.joint_names = list(_ARM_JOINTS)
+            q_iter = q.copy()
+            T_iter = T_cur
+            v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+            singular = False
+            for k in range(1, win + 1):
+                tw = np.zeros(6)
+                tw[:3] = d * step
+                if R0 is not None:
+                    R_err = R0 @ T_iter[:3, :3].T
+                    tw[3:] = _ORI_GAIN * 0.5 * np.array([
+                        R_err[2, 1] - R_err[1, 2],
+                        R_err[0, 2] - R_err[2, 0],
+                        R_err[1, 0] - R_err[0, 1],
+                    ])
+                if z0 is not None:
+                    tw[2] += _Z_CORR_GAIN * (z0 - float(T_iter[2, 3]))
+                if perp_dir is not None and p0_perp is not None:
+                    perp_err = p0_perp - float(T_iter[:3, 3] @ perp_dir)
+                    tw[:3] += _Z_CORR_GAIN * perp_err * perp_dir
+                J_k = jacobian(q_iter, T_end=T_TOUCH_TOOL_ATTACH)
+                try:
+                    dq_k = J_k.T @ np.linalg.solve(
+                        J_k @ J_k.T + _JAC_LAM**2 * I6, tw)
+                except np.linalg.LinAlgError:
+                    singular = True
+                    break
+                q_next = np.clip(q_iter + dq_k, JOINT_MIN, JOINT_MAX)
+                vel_k = np.clip((q_next - q_iter) / _CTRL_DT, -v_lim, v_lim)
+                pt = JointTrajectoryPoint()
+                pt.positions = [float(x) for x in q_next]
+                pt.velocities = [float(x) for x in vel_k]
+                t_k = k * _CTRL_DT
+                pt.time_from_start = Duration(
+                    sec=int(t_k), nanosec=int((t_k - int(t_k)) * 1e9))
+                msg.points.append(pt)
+                q_iter = q_next
+                if k < win:
+                    T_iter = forward_kinematics(q_iter, T_end=T_TOUCH_TOOL_ATTACH)
+            if singular:
+                self.get_logger().warn('Jacobiano singular — passo descartado.')
+                time.sleep(_CTRL_DT)
+                continue
+            if msg.points:
+                self._arm_traj_pub.publish(msg)
+            time.sleep(_CTRL_DT)
 
+        return 'done'
+
+    # ──────────────────────────────────────────────────────────────────
+    # Trajetória Cartesiana em batch completo (SLIDING / RETRACT).
+    #
+    # Pré-computa todos os N waypoints via Jacobiano iterado e os envia
+    # em UMA única JointTrajectory. O JTC planeja a S-curve sobre o
+    # conjunto inteiro — sem reinício a cada tick, sem instabilidade de
+    # coordenação multi-junta independente da distância percorrida.
+    #
+    # Não monitora força: use _cartesian_stream para fases reativas.
+    # Retorna: 'done' | 'stop' | 'error'
+    # ──────────────────────────────────────────────────────────────────
+    def _cartesian_batch_to(self, direction: np.ndarray, total_m: float, *,
+                              v_const_ms: float | None = None,
+                              v_max_ms: float | None = None,
+                              v_min_ms: float | None = None,
+                              lock_ori: bool = False,
+                              lock_z: bool = False,
+                              lock_perp: bool = False) -> str:
+        d = np.asarray(direction, dtype=float).flatten()
+        nd = float(np.linalg.norm(d))
+        if nd < 1e-9 or total_m <= 0.0:
+            self.get_logger().error('_cartesian_batch_to: direção/distância inválida.')
+            return 'error'
+        d /= nd
+
+        constant = v_const_ms is not None
+        if not constant and (v_max_ms is None or v_min_ms is None):
+            self.get_logger().error(
+                '_cartesian_batch_to: forneça v_const_ms OU (v_max_ms, v_min_ms).')
+            return 'error'
+
+        v_ref = float(v_const_ms) if constant else float(v_max_ms)
+        v_ref = max(1e-4, v_ref)
+        N = max(1, int(math.ceil(total_m / (v_ref * _CTRL_DT))))
+
+        q = self._q_now()
+        T0 = forward_kinematics(q, T_end=T_TOUCH_TOOL_ATTACH)
+
+        R0 = T0[:3, :3].copy() if lock_ori else None
+        z0 = float(T0[2, 3]) if lock_z else None
+        perp_dir: np.ndarray | None = None
+        p0_perp: float | None = None
+        if lock_perp:
+            perp = np.array([-d[1], d[0], 0.0])
+            pnorm = float(np.linalg.norm(perp))
+            if pnorm > 1e-9:
+                perp_dir = perp / pnorm
+                p0_perp = float(T0[:3, 3] @ perp_dir)
+
+        I6 = np.eye(6)
+        v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+        self.get_logger().info(
+            f'_cartesian_batch_to: pré-computando {N} waypoints '
+            f'({total_m*1e3:.1f}mm @ {v_ref*1e3:.1f}mm/s) ...')
+
+        msg = JointTrajectory()
+        msg.joint_names = list(_ARM_JOINTS)
+        q_iter = q.copy()
+        T_iter = T0
+
+        for k in range(1, N + 1):
+            u = (k - 1) / max(1, N - 1)
+            if constant:
+                v_k = float(v_const_ms)
+            else:
+                v_k = float(v_min_ms) + (float(v_max_ms) - float(v_min_ms)) * (1.0 - u) ** 2
+            v_k = max(1e-4, v_k)
+            step = v_k * _CTRL_DT
+
+            tw = np.zeros(6)
+            tw[:3] = d * step
             if R0 is not None:
-                R_err = R0 @ T_cur[:3, :3].T
-                err_vec = 0.5 * np.array([
+                R_err = R0 @ T_iter[:3, :3].T
+                tw[3:] = _ORI_GAIN * 0.5 * np.array([
                     R_err[2, 1] - R_err[1, 2],
                     R_err[0, 2] - R_err[2, 0],
                     R_err[1, 0] - R_err[0, 1],
                 ])
-                twist[3:] = _ORI_GAIN * err_vec
             if z0 is not None:
-                twist[2] += _Z_CORR_GAIN * (z0 - float(T_cur[2, 3]))
+                tw[2] += _Z_CORR_GAIN * (z0 - float(T_iter[2, 3]))
             if perp_dir is not None and p0_perp is not None:
-                perp_err = p0_perp - float(T_cur[:3, 3] @ perp_dir)
-                twist[:3] += _Z_CORR_GAIN * perp_err * perp_dir
+                perp_err = p0_perp - float(T_iter[:3, 3] @ perp_dir)
+                tw[:3] += _Z_CORR_GAIN * perp_err * perp_dir
 
+            J_k = jacobian(q_iter, T_end=T_TOUCH_TOOL_ATTACH)
             try:
-                dq = J.T @ np.linalg.solve(J @ J.T + _JAC_LAM**2 * I6, twist)
+                dq_k = J_k.T @ np.linalg.solve(J_k @ J_k.T + _JAC_LAM**2 * I6, tw)
             except np.linalg.LinAlgError:
-                self.get_logger().warn('Jacobiano singular — passo descartado.')
-                time.sleep(_CTRL_DT)
-                continue
+                self.get_logger().warn(f'Batch: Jacobiano singular no passo {k} — truncando.')
+                break
 
-            q_cmd = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
-            dq_actual = q_cmd - q
-            v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
-            vel_cmd = np.clip(dq_actual / _CTRL_DT, -v_lim, v_lim)
-            # time_from_start = _CTRL_DT (não _CTRL_LOOK + _CTRL_DT):
-            # com T=30ms e vel_hint=dq/30ms a spline cúbica é monotônica —
-            # vel_hint e horizonte são consistentes. Com T=130ms e vel=dq/30ms
-            # (4.3× maior que dq/T) a spline overshoot na direção oposta por
-            # ~73ms antes de corrigir, e como o stream substitui a cada 30ms
-            # o TCP nunca sai da zona errada → direção invertida observada.
-            self._stream_q(q_cmd, _CTRL_DT, velocities=vel_cmd)
+            q_next = np.clip(q_iter + dq_k, JOINT_MIN, JOINT_MAX)
+            vel_k = np.clip((q_next - q_iter) / _CTRL_DT, -v_lim, v_lim)
+            if k == N:
+                vel_k = np.zeros(6)
+
+            pt = JointTrajectoryPoint()
+            pt.positions = [float(x) for x in q_next]
+            pt.velocities = [float(x) for x in vel_k]
+            t_k = k * _CTRL_DT
+            pt.time_from_start = Duration(
+                sec=int(t_k), nanosec=int((t_k - int(t_k)) * 1e9))
+            msg.points.append(pt)
+            q_iter = q_next
+            T_iter = forward_kinematics(q_iter, T_end=T_TOUCH_TOOL_ATTACH)
+
+        if not msg.points:
+            return 'error'
+
+        self._arm_traj_pub.publish(msg)
+        self.get_logger().info(
+            f'_cartesian_batch_to: {len(msg.points)} pts publicados '
+            f'(duração {len(msg.points)*_CTRL_DT:.1f}s)')
+
+        t_end = time.monotonic() + len(msg.points) * _CTRL_DT + 0.5
+        while time.monotonic() < t_end:
+            if self._stop_requested.is_set():
+                self._stop_requested.clear()
+                self._settle()
+                return 'stop'
             time.sleep(_CTRL_DT)
-
         return 'done'
 
     # ──────────────────────────────────────────────────────────────────
@@ -688,146 +823,279 @@ class TactileExplorer(Node):
         return True
 
     def _phase_contact(self) -> bool:
-        """CONTACT — streaming em −Z a velocidade constante (slider approach) com monitor de Fz.
-        Termina quando |Fz| ≥ target_force ou a distância máxima é percorrida."""
+        """CONTACT — desce em −Z até detectar força ou distância de segurança."""
         self._set_phase('CONTACT')
         self._settle()
 
-        with self._params_lock:
-            target_force = float(self._target_force_n)
-            descent_m = float(self._target_distance_cm) * 0.01
         v_approach = max(0.001,
                          float(self.get_parameter('approach_v_max_mms').value) * 1e-3)
 
-        # Direção de approach = eixo Z do TCP na pose atual (direção dos dedos).
-        # Garante consistência mesmo que a home customizada tenha orientação
-        # diferente de [0,0,-1]. Se por algum motivo a norma for zero, cai para
-        # world -Z (que é o caso padrão com home correta apontando para baixo).
         T_pre = forward_kinematics(self._q_now(), T_end=T_TOUCH_TOOL_ATTACH)
         approach_dir = T_pre[:3, 2].copy()
         if float(np.linalg.norm(approach_dir)) < 0.1:
             approach_dir = np.array([0.0, 0.0, -1.0])
+        self._approach_dir = approach_dir.copy()
 
         self.get_logger().info(
-            f'CONTACT: descida até {descent_m*100:.1f} cm, '
-            f'velocidade constante {v_approach*1000:.0f} mm/s, '
-            f'alvo Fz={target_force:.2f} N, '
-            f'direção approach={approach_dir.round(3)}')
+            f'CONTACT: descida até {_APPROACH_SAFETY_M*100:.0f} cm (segurança), '
+            f'velocidade {v_approach*1000:.0f} mm/s, '
+            f'limiar contato {_CONTACT_DETECT_N:.2f} N (LC tare-compensada), '
+            f'direção={approach_dir.round(3)}')
 
+        # Usa _cartesian_stream com limiar da LC tare-compensada (positivo).
         outcome = self._cartesian_stream(
-            approach_dir, descent_m,
+            approach_dir, _APPROACH_SAFETY_M,
             v_const_ms=v_approach,
             lock_ori=True,
-            force_threshold_n=target_force)
+            force_threshold_n=_CONTACT_DETECT_N)
 
-        # Settle imediato ao detectar contato ou fim da descida.
         self._settle()
 
         if outcome == 'force':
-            self.get_logger().info('CONTACT: força-alvo atingida.')
+            self.get_logger().info(
+                f'CONTACT: detectado! fz_corr={self._fz_corrected():.3f} N')
             return True
         if outcome == 'done':
             self.get_logger().warn(
-                f'CONTACT: descida completa sem Fz ≥ {target_force} N '
-                '— modo CALIBRAÇÃO.')
-            return True
-        return False   # 'stop' ou 'error'
+                'CONTACT: distância de segurança atingida sem força — abortando.')
+            return False
+        return False
 
-    def _phase_hold(self) -> bool:
-        """HOLD — PID de Fz a 33 Hz (streaming individual por tick)."""
-        self._set_phase('HOLD')
-        hold_s = float(self.get_parameter('hold_seconds').value)
+    def _phase_calibrating(self) -> bool:
+        """CALIBRATING — PID de força até estabilizar no setpoint do usuário.
+
+        Move ao longo do eixo de approach (normal à superfície) para regular
+        a força medida pela célula calibrada. Transita para SLIDING quando
+        |erro| < _CALIB_STABLE_TOL_N por _CALIB_STABLE_TICKS ticks seguidos.
+        """
+        self._set_phase('CALIBRATING')
         with self._params_lock:
             target_f = float(self._target_force_n)
             kp, ki, kd = self._kp, self._ki, self._kd
 
-        dt = _PID_DT_S
+        approach_dir = (self._approach_dir if self._approach_dir is not None
+                        else np.array([0., 0., -1.]))
+        I6 = np.eye(6)
+        v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+        dt = _CTRL_DT
+
         integral = 0.0
         prev_err = 0.0
-        ever_in_contact = False
-        lam = 0.01
-        I6 = np.eye(6)
+        stable_ticks = 0
+        t_start = time.time()
 
         self.get_logger().info(
-            f'HOLD-PID: alvo {target_f:.2f} N, '
-            f'Kp={kp:.4g} Ki={ki:.4g} Kd={kd:.4g}, '
-            f'duração {hold_s:.1f} s')
+            f'CALIBRATING: alvo={target_f:.2f} N  '
+            f'Kp={kp:.4g} Ki={ki:.4g} Kd={kd:.4g}  '
+            f'timeout={_CALIB_TIMEOUT_S:.0f} s')
 
-        t_end = time.time() + hold_s
-        while time.time() < t_end:
+        while True:
             if self._stop_requested.is_set():
                 self._stop_requested.clear()
-                self.get_logger().warn('[STOP] HOLD interrompido.')
+                self.get_logger().warn('[STOP] CALIBRATING interrompido.')
                 return False
-            t0 = time.time()
-            with self._ft_lock:
-                fz = float(abs(self._ft_force[2]))
-            if fz > _FORCE_CONTACT_FLOOR_N:
-                ever_in_contact = True
 
-            err = target_f - fz
-            if ever_in_contact:
-                integral = float(np.clip(
-                    integral + err * dt, -_PID_I_MAX_Ns, _PID_I_MAX_Ns))
-            else:
-                integral = 0.0
+            if time.time() - t_start > _CALIB_TIMEOUT_S:
+                self.get_logger().error(
+                    f'CALIBRATING: timeout {_CALIB_TIMEOUT_S:.0f} s '
+                    f'(estável {stable_ticks}/{_CALIB_STABLE_TICKS} ticks).')
+                return False
+
+            t0 = time.time()
+
+            fz_corr = self._fz_corrected()
+            f_mag = abs(fz_corr)
+            err = target_f - f_mag
+
+            integral = float(np.clip(
+                integral + err * dt, -_PID_I_MAX_Ns, _PID_I_MAX_Ns))
             deriv = (err - prev_err) / dt
             prev_err = err
 
-            if ever_in_contact:
-                v_cmd = kp * err + ki * integral + kd * deriv
-                v_cmd = float(np.clip(v_cmd, -_PID_V_MAX_MS, _PID_V_MAX_MS))
-                dz = -v_cmd * dt
-                twist = np.array([0., 0., dz, 0., 0., 0.])
-                q = self._q_now()
-                J = jacobian(q, T_end=T_TOUCH_TOOL_ATTACH)
-                try:
-                    dq = J.T @ np.linalg.solve(
-                        J @ J.T + lam * lam * I6, twist)
-                except np.linalg.LinAlgError:
-                    dq = np.zeros(6)
-                q_new = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
-                # HOLD: usa time_from_start=dt (sem lookahead extra) para que
-                # as correções de força tomem efeito em 30 ms, não 130 ms.
-                # Um lookahead de 100 ms no PID causa atraso de 4 ticks →
-                # integrador acumula antes do efeito → overshoot e ruídos.
-                v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
-                vel_hold = np.clip((q_new - q) / dt, -v_lim, v_lim)
-                self._stream_q(q_new, dt, velocities=vel_hold)
+            v_cmd = float(np.clip(
+                kp * err + ki * integral + kd * deriv,
+                -_PID_V_MAX_MS, _PID_V_MAX_MS))
+
+            # Desloca ao longo do eixo de approach (normal à superfície).
+            tw = np.zeros(6)
+            tw[:3] = approach_dir * v_cmd * dt
+
+            q = self._q_now()
+            J = jacobian(q, T_end=T_TOUCH_TOOL_ATTACH)
+            try:
+                dq = J.T @ np.linalg.solve(
+                    J @ J.T + _JAC_LAM**2 * I6, tw)
+            except np.linalg.LinAlgError:
+                time.sleep(dt)
+                continue
+
+            q_new = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
+            vel = np.clip((q_new - q) / dt, -v_lim, v_lim)
+            self._stream_q(q_new, dt, velocities=vel)
+
+            # Critério de estabilidade
+            if abs(err) < _CALIB_STABLE_TOL_N:
+                stable_ticks += 1
+                if stable_ticks >= _CALIB_STABLE_TICKS:
+                    self.get_logger().info(
+                        f'CALIBRATING: estável! '
+                        f'fz_corr={fz_corr:.3f} N, err={err:.3f} N')
+                    return True
+            else:
+                stable_ticks = 0
 
             elapsed = time.time() - t0
             if elapsed < dt:
                 time.sleep(dt - elapsed)
 
-        if not ever_in_contact:
-            self.get_logger().info(
-                f'HOLD-PID: |Fz| nunca > {_FORCE_CONTACT_FLOOR_N} N '
-                '— modo CALIBRAÇÃO.')
-        return True
-
     def _phase_sliding(self) -> bool:
-        """SLIDING — streaming Cartesiano retilíneo em XY a velocidade cte."""
+        """SLIDING — movimento lateral com PID de força simultâneo.
+
+        Streaming rolling-window (_SLIDE_WIN pts) combinando:
+          • passo lateral constante em dir_world (velocidade do usuário)
+          • correção PID ao longo de approach_dir (força normal alvo)
+          • lock de orientação e posição perpendicular
+        Para quando: STOP, força perdida, distância de segurança.
+        """
         self._set_phase('SLIDING')
         self._settle()
 
         with self._params_lock:
-            dist_m  = self._slide_distance_mm * 1e-3
             speed_ms = max(0.001, self._slide_speed_mms * 1e-3)
-            dir_xy  = self._slide_dir_vec.copy()
+            dir_xy   = self._slide_dir_vec.copy()
+            target_f = float(self._target_force_n)
+            kp, ki, kd = self._kp, self._ki, self._kd
+
+        approach_dir = (self._approach_dir if self._approach_dir is not None
+                        else np.array([0., 0., -1.]))
 
         dir_world = np.array([float(dir_xy[0]), float(dir_xy[1]), 0.0])
+        dn = float(np.linalg.norm(dir_world))
+        if dn < 1e-9:
+            self.get_logger().error('SLIDING: direção inválida.')
+            return False
+        dir_world /= dn
+
+        T_start = forward_kinematics(self._q_now(), T_end=T_TOUCH_TOOL_ATTACH)
+        R0     = T_start[:3, :3].copy()
+        p_start = T_start[:3, 3].copy()
+
+        perp = np.array([-dir_world[1], dir_world[0], 0.0])
+        pnorm = float(np.linalg.norm(perp))
+        perp_dir = perp / pnorm if pnorm > 1e-9 else None
+        p0_perp  = float(p_start @ perp_dir) if perp_dir is not None else None
+
+        I6 = np.eye(6)
+        v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
+        dt = _CTRL_DT
+
+        integral = 0.0
+        prev_err  = 0.0
+        force_lost_count = 0
 
         self.get_logger().info(
-            f'SLIDING: {dist_m*1000:.0f} mm em '
-            f'({dir_world[0]:+.0f},{dir_world[1]:+.0f},0) '
-            f'@ {speed_ms*1000:.1f} mm/s')
+            f'SLIDING: speed={speed_ms*1e3:.1f} mm/s  '
+            f'dir=({dir_world[0]:+.0f},{dir_world[1]:+.0f},0)  '
+            f'alvo={target_f:.2f} N  segurança={_SLIDING_SAFETY_M*1e3:.0f} mm')
 
-        outcome = self._cartesian_stream(
-            dir_world, dist_m, v_const_ms=speed_ms,
-            lock_ori=True, lock_z=True, lock_perp=True)
+        while True:
+            if self._stop_requested.is_set():
+                self._stop_requested.clear()
+                break
+
+            t0 = time.time()
+
+            # Verifica distância de segurança
+            q = self._q_now()
+            T_cur = forward_kinematics(q, T_end=T_TOUCH_TOOL_ATTACH)
+            progress = float(np.dot(T_cur[:3, 3] - p_start, dir_world))
+            if progress >= _SLIDING_SAFETY_M:
+                self.get_logger().info(
+                    f'SLIDING: distância de segurança '
+                    f'{_SLIDING_SAFETY_M*1e3:.0f} mm atingida.')
+                break
+
+            # PID de força
+            fz_corr = self._fz_corrected()
+            f_mag   = abs(fz_corr)
+
+            if f_mag < _CONTACT_DETECT_N:
+                force_lost_count += 1
+                if force_lost_count > _FORCE_LOST_TICKS:
+                    self.get_logger().warn(
+                        'SLIDING: força perdida por > 2 s — parando.')
+                    break
+            else:
+                force_lost_count = 0
+
+            err = target_f - f_mag
+            integral = float(np.clip(
+                integral + err * dt, -_PID_I_MAX_Ns, _PID_I_MAX_Ns))
+            deriv = (err - prev_err) / dt
+            prev_err = err
+
+            v_force = float(np.clip(
+                kp * err + ki * integral + kd * deriv,
+                -_PID_V_MAX_MS, _PID_V_MAX_MS))
+
+            # ── Rolling-window de _SLIDE_WIN waypoints ──────────────────
+            msg = JointTrajectory()
+            msg.joint_names = list(_ARM_JOINTS)
+            q_iter = q.copy()
+            T_iter = T_cur
+            singular = False
+
+            for k in range(1, _SLIDE_WIN + 1):
+                tw = np.zeros(6)
+                # Passo lateral constante + correção de força normal
+                tw[:3] = dir_world * speed_ms * dt + approach_dir * v_force * dt
+                # Lock de orientação
+                R_err = R0 @ T_iter[:3, :3].T
+                tw[3:] = _ORI_GAIN * 0.5 * np.array([
+                    R_err[2, 1] - R_err[1, 2],
+                    R_err[0, 2] - R_err[2, 0],
+                    R_err[1, 0] - R_err[0, 1],
+                ])
+                # Lock perpendicular
+                if perp_dir is not None and p0_perp is not None:
+                    perp_err = p0_perp - float(T_iter[:3, 3] @ perp_dir)
+                    tw[:3] += _Z_CORR_GAIN * perp_err * perp_dir
+
+                J_k = jacobian(q_iter, T_end=T_TOUCH_TOOL_ATTACH)
+                try:
+                    dq_k = J_k.T @ np.linalg.solve(
+                        J_k @ J_k.T + _JAC_LAM**2 * I6, tw)
+                except np.linalg.LinAlgError:
+                    singular = True
+                    break
+
+                q_next = np.clip(q_iter + dq_k, JOINT_MIN, JOINT_MAX)
+                vel_k  = np.clip((q_next - q_iter) / dt, -v_lim, v_lim)
+                if k == _SLIDE_WIN:
+                    vel_k = np.zeros(6)
+
+                pt = JointTrajectoryPoint()
+                pt.positions  = [float(x) for x in q_next]
+                pt.velocities = [float(x) for x in vel_k]
+                t_k = k * dt
+                pt.time_from_start = Duration(
+                    sec=int(t_k), nanosec=int((t_k - int(t_k)) * 1e9))
+                msg.points.append(pt)
+                q_iter = q_next
+                if k < _SLIDE_WIN:
+                    T_iter = forward_kinematics(q_iter, T_end=T_TOUCH_TOOL_ATTACH)
+
+            if singular:
+                self.get_logger().warn('SLIDING: Jacobiano singular — passo descartado.')
+            elif msg.points:
+                self._arm_traj_pub.publish(msg)
+
+            elapsed = time.time() - t0
+            if elapsed < dt:
+                time.sleep(dt - elapsed)
 
         self._settle()
-        return outcome in ('done', 'force')
+        return True
 
     def _phase_retract(self) -> bool:
         """RETRACT — streaming em +Z a velocidade constante (slider approach)."""
@@ -844,7 +1112,7 @@ class TactileExplorer(Node):
         if float(np.linalg.norm(retract_dir)) < 0.1:
             retract_dir = np.array([0.0, 0.0, +1.0])
 
-        outcome = self._cartesian_stream(
+        outcome = self._cartesian_batch_to(
             retract_dir, retract_m,
             v_const_ms=v_approach,
             lock_ori=True)
@@ -868,12 +1136,14 @@ class TactileExplorer(Node):
                 self._set_phase('ABORTED'); return
             if not self._phase_contact():
                 self._set_phase('ABORTED'); return
-            if not self._phase_hold():
+            if not self._phase_calibrating():
                 self._set_phase('ABORTED'); return
             if not self._phase_sliding():
                 self._set_phase('ABORTED'); return
             if not self._phase_retract():
                 self._set_phase('ABORTED'); return
+            # Retorna à posição home após concluir
+            self._phase_goto_home()
             self._set_phase('DONE')
             time.sleep(0.5)
             self._set_phase('IDLE')
