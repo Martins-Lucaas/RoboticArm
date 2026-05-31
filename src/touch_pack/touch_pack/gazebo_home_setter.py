@@ -28,10 +28,11 @@ _ARM_HOME_DEG_DEFAULT = {
 }
 
 try:
-    from .real_driver import CR10RealDriver, CR10RealDriverError
+    from .real_driver import CR10RealDriver, CR10RealDriverConfig, CR10RealDriverError
     _DRIVER_OK = True
 except Exception:
     CR10RealDriver = None
+    CR10RealDriverConfig = None
     CR10RealDriverError = Exception
     _DRIVER_OK = False
 
@@ -65,7 +66,8 @@ class GazeboHomeSetter(Node):
         Retorna None se o robô não estiver disponível."""
         if not _DRIVER_OK or CR10RealDriver is None:
             return None
-        drv = CR10RealDriver(ip=ip)
+        cfg = CR10RealDriverConfig(readonly=True) if CR10RealDriverConfig else None
+        drv = CR10RealDriver(ip=ip, config=cfg)
         try:
             drv.connect()
             q = drv.read_joints_urdf()
@@ -102,19 +104,10 @@ class GazeboHomeSetter(Node):
         ip = self._robot_ip()
         joint_rad = self._read_robot_joints_urdf(ip)
 
-        if joint_rad is not None:
-            source = f'robô real ({ip})'
-        else:
+        if joint_rad is None:
             joint_rad = self._home_from_file()
-            source = 'home_pose.json'
 
-        summary = '  '.join(
-            f'{j[-1]}={math.degrees(r):+.1f}°'
-            for j, r in zip(_ARM_JOINTS, joint_rad))
-        self.get_logger().info(
-            f'[home_setter] Posição ({source}): {summary}')
-
-        if not self._cli.wait_for_service(timeout_sec=15.0):
+        if not self._cli.wait_for_service(timeout_sec=60.0):
             self.get_logger().error(
                 '[home_setter] /gazebo/set_model_configuration indisponível.')
             return False

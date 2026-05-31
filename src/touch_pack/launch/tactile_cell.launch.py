@@ -499,13 +499,17 @@ def launch_setup(context, *args, **kwargs):
     force_rx_node = Node(
         package='touch_pack', executable='force_receiver')
 
-    app_nodes = [explorer_node, gui_node, logger_node, force_rx_node]
+    # Nós que não dependem de controllers — sobem logo após home_setter.
+    early_nodes = [gui_node, logger_node, force_rx_node]
+    # Explorer precisa da action do cr10_group_controller — sobe por último.
+    late_nodes  = [explorer_node]
 
     # ── Cadeia de dependências: varia com end_effector ────────────────
     after_spawn = RegisterEventHandler(
         OnProcessExit(target_action=spawn_robot, on_exit=[home_setter]))
+    # GUI, logger e force_rx sobem em paralelo com load_jsb — sem esperar controllers.
     after_home = RegisterEventHandler(
-        OnProcessExit(target_action=home_setter, on_exit=[load_jsb]))
+        OnProcessExit(target_action=home_setter, on_exit=[load_jsb] + early_nodes))
     after_jsb = RegisterEventHandler(
         OnProcessExit(target_action=load_jsb, on_exit=[load_arm]))
 
@@ -517,11 +521,11 @@ def launch_setup(context, *args, **kwargs):
         after_arm = RegisterEventHandler(
             OnProcessExit(target_action=load_arm, on_exit=[load_hand]))
         after_last = RegisterEventHandler(
-            OnProcessExit(target_action=load_hand, on_exit=app_nodes))
+            OnProcessExit(target_action=load_hand, on_exit=late_nodes))
         chain = [after_spawn, after_home, after_jsb, after_arm, after_last]
     else:  # touch_tool — sem hand controller
         after_arm = RegisterEventHandler(
-            OnProcessExit(target_action=load_arm, on_exit=app_nodes))
+            OnProcessExit(target_action=load_arm, on_exit=late_nodes))
         chain = [after_spawn, after_home, after_jsb, after_arm]
 
     return [gazebo, rsp, spawn_robot] + chain

@@ -66,6 +66,9 @@ sudo apt update && sudo apt install -y \
 # numpy<2 é obrigatório — cv_bridge do Humble é compilado contra NumPy 1.x
 pip install "numpy<2" opencv-python
 
+# Driver da mão COVVI — biblioteca ECI proprietária da COVVI Robotics
+pip install covvi-eci==1.1.6
+
 # Opcional — detector YOLOv8 (apenas grasp_ml_pack com use_yolo:=true)
 pip install ultralytics
 ```

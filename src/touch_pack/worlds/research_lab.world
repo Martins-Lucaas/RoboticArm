@@ -74,9 +74,9 @@
     <!-- ─────────────────── FÍSICA (ODE estável) ─────────────────────── -->
     <physics name="default_physics" default="0" type="ode">
       <gravity>0 0 -9.81</gravity>
-      <max_step_size>0.001</max_step_size>
+      <max_step_size>0.004</max_step_size>
       <real_time_factor>1.0</real_time_factor>
-      <real_time_update_rate>1000</real_time_update_rate>
+      <real_time_update_rate>250</real_time_update_rate>
       <ode>
         <solver><type>quick</type><iters>50</iters><sor>1.3</sor></solver>
         <constraints>

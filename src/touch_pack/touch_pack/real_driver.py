@@ -99,6 +99,7 @@ class CR10RealDriverConfig:
     servoj_period_s: float = 0.030   # 33 Hz recomendado
     servoj_lookahead: int = 20       # [20,100]; 20 = resposta imediata (era 50)
     servoj_gain: int = 500           # [200, 1000]
+    readonly: bool = False           # True = só leitura (pula RequestControl)
 
 
 class CR10RealDriverError(RuntimeError):
@@ -192,7 +193,10 @@ class CR10RealDriver:
             # Sessões anteriores que não fizeram close() limpo retêm o token
             # até o TCP detectar a desconexão — retentar com backoff resolve
             # o caso mais comum (timeout da sessão anterior).
-            self._request_control_with_retry()
+            # Em modo readonly (só leitura via porta 30004) o token não é
+            # necessário — pular evita 2 s de espera desnecessária no startup.
+            if not self.cfg.readonly:
+                self._request_control_with_retry()
             # Keep-alive: envia RobotMode() a cada 50 s para evitar timeout.
             self._start_keepalive()
         except OSError as exc:
@@ -727,52 +731,58 @@ class CR10RealDriver:
     def read_joints_urdf_latest(self) -> np.ndarray:
         """Como read_joints_urdf() mas drena o backlog antes de ler.
 
-        O feedback streaming a 125 Hz acumula ~3 pacotes por tick de 33 Hz.
-        Sem drenagem o atraso cresce indefinidamente (até ~480 ms com buffer
-        cheio).  Aqui usamos MSG_PEEK para contar pacotes completos disponíveis
-        e descartamos todos menos o último — mantendo o alinhamento de stream
-        (só consumimos múltiplos inteiros de FEEDBACK_PACKET_SIZE).
+        O feedback streaming a 125 Hz acumula pacotes continuamente. Sem
+        drenagem o atraso cresce indefinidamente (até centenas de ms quando
+        o robô ficou parado por vários segundos sem leituras).
+
+        Estratégia: flush não-bloqueante (esvazia TODO o buffer com
+        settimeout(0)) + leitura bloqueante do próximo pacote fresco.
+        Após flush completo o firmware garante que o próximo dado recebido
+        começa no início de um novo pacote — alinhamento automático.
         """
         if self.dry_run:
             return np.zeros(6, dtype=np.float64)
         if self._feed is None:
             raise CR10RealDriverError('Feedback port não conectado')
         with self._feed_lock:
-            # ── contagem de pacotes via peek ──────────────────────────────
             orig_to = self._feed.gettimeout()
-            self._feed.settimeout(0.001)
-            n_buffered = 0
+            # ── flush não-bloqueante: descarta todo o backlog ─────────────
+            flushed = 0
+            self._feed.settimeout(0.0)
             try:
-                peeked = self._feed.recv(FEEDBACK_PACKET_SIZE * 64,
-                                         socket.MSG_PEEK)
-                n_buffered = len(peeked) // FEEDBACK_PACKET_SIZE
-            except (socket.timeout, BlockingIOError):
+                while True:
+                    chunk = self._feed.recv(65536)
+                    if not chunk:
+                        raise CR10RealDriverError('Feedback port fechado')
+                    flushed += len(chunk)
+            except (BlockingIOError, socket.timeout):
                 pass
             finally:
                 self._feed.settimeout(orig_to)
-            # ── descartar (n_buffered-1) pacotes obsoletos ─────────────────
-            n_skip = max(0, n_buffered - 1)
-            for _ in range(n_skip):
-                consumed = b''
-                while len(consumed) < FEEDBACK_PACKET_SIZE:
-                    chunk = self._feed.recv(FEEDBACK_PACKET_SIZE - len(consumed))
+            if flushed:
+                log.debug('[FEED] drain: %d bytes descartados', flushed)
+            # ── lê o próximo pacote fresco com recuperação de alinhamento ──
+            # Após flush, o próximo dado que chega é o início de um pacote
+            # novo → alinhamento garantido pelo firmware na primeira tentativa.
+            # As tentativas extras cobrem o caso raro de flush mid-byte.
+            buf = b''
+            for _attempt in range(4):
+                buf = b''
+                while len(buf) < FEEDBACK_PACKET_SIZE:
+                    chunk = self._feed.recv(FEEDBACK_PACKET_SIZE - len(buf))
                     if not chunk:
                         raise CR10RealDriverError('Feedback port fechado')
-                    consumed += chunk
-            # ── ler o pacote mais recente (ou aguardar o próximo) ──────────
-            buf = b''
-            while len(buf) < FEEDBACK_PACKET_SIZE:
-                chunk = self._feed.recv(FEEDBACK_PACKET_SIZE - len(buf))
-                if not chunk:
-                    raise CR10RealDriverError('Feedback port fechado')
-                buf += chunk
-        if n_skip:
-            log.debug('[FEED] drag drain: %d pacotes obsoletos descartados', n_skip)
+                    buf += chunk
+                msg_size = struct.unpack_from('<H', buf, 0)[0]
+                if msg_size == FEEDBACK_PACKET_SIZE:
+                    break
+                log.debug('[FEED] latest: desalinhado após flush '
+                          '(MessageSize=%d, attempt=%d)', msg_size, _attempt + 1)
         q_deg = np.frombuffer(buf, offset=FEEDBACK_Q_ACTUAL_OFFSET,
                               count=6, dtype='<f8').copy()
         if not np.all(np.isfinite(q_deg)) or np.any(np.abs(q_deg) > 400.0):
             raise CR10RealDriverError(
-                f'Leitura de juntas inválida (drag): {q_deg}')
+                f'Leitura de juntas inválida: {q_deg}')
         q = np.deg2rad(q_deg)
         if _HAS_CONV:
             q = dobot_to_urdf(q)
