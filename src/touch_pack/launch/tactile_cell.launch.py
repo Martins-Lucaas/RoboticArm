@@ -130,10 +130,16 @@ def _build_robot_urdf(end_effector: str):
         cr10_urdf)
 
     # ── Fim do URDF: links/juntas do efector + Gazebo refs ────────────
+    # Unifica selfCollide no xacro: substitui true→false antes de adicionar
+    # arm_gz, evitando "multiple inconsistent <self_collide>" do parser_urdf.
+    cr10_urdf = cr10_urdf.replace('<selfCollide>true</selfCollide>',
+                                   '<selfCollide>false</selfCollide>')
     arm_links = re.findall(r'<link\s+name="([^"]+)"', cr10_urdf)
+    # Só adiciona self_collide para links sem <gazebo reference="..."> no xacro.
+    existing_arm_gz = set(re.findall(r'<gazebo\s+reference="([^"]+)"', cr10_urdf))
     arm_gz = ''.join(
         f'\n  <gazebo reference="{n}"><self_collide>false</self_collide></gazebo>'
-        for n in arm_links)
+        for n in arm_links if n not in existing_arm_gz)
 
     if end_effector == 'hand':
         full_urdf = _build_hand_suffix(cr10_urdf, hand_pack_share, arm_gz)
@@ -183,6 +189,12 @@ def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str) -> str
     hand_body = _fix_virtual_link_inertia(hand_body)
     hand_body = clamp_hand_joint_limits(hand_body)
     hand_body = _stabilize_hand_joints(hand_body)
+    # Remove <gazebo reference="..."> estáticos com propriedades de física (mu1,
+    # kd, etc.) para evitar "multiple inconsistent" do parser_urdf ao reduzir
+    # fixed joints: o loop abaixo adiciona valores canônicos para todos os links.
+    hand_body = re.sub(
+        r'<gazebo\s+reference="[^"]+">(?:(?!</gazebo>).)*?<mu1>(?:(?!</gazebo>).)*?</gazebo>\s*',
+        '', hand_body, flags=re.DOTALL)
     hand_body = inject_visual_skin_layer(hand_body)
 
     hand_link_names = re.findall(r'<link\s+name="([^"]+)"', hand_body)
@@ -463,7 +475,8 @@ def launch_setup(context, *args, **kwargs):
     # ── Home setter ───────────────────────────────────────────────────
     home_setter = Node(
         package='touch_pack', executable='gazebo_home_setter',
-        parameters=[{'use_sim_time': True, 'robot_ip': robot_ip}])
+        parameters=[{'use_sim_time': True, 'robot_ip': robot_ip,
+                     'end_effector': end_effector}])
 
     # ── Controllers ───────────────────────────────────────────────────
     load_jsb = Node(

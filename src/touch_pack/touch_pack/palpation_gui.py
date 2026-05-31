@@ -208,21 +208,28 @@ HAND_POINT_DEG = {'Thumb': 30, 'Index': 0, 'Middle': 80,
 #   • graus  → pose equivalente para visualizar no sim Gazebo (juntas primárias)
 # Os ângulos foram derivados das presets de fábrica (escala ECI 0–200 → graus:
 # dedos /200×90°, Rotate /200×60°) e respeitam HAND_LIMITS_DEG.
-COVVI_GRIPS: dict[str, tuple[int, dict[str, float]]] = {
-    'Tripod':       (1,  {'Thumb': 56, 'Index': 52, 'Middle': 52, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
-    'Power':        (2,  {'Thumb': 70, 'Index': 74, 'Middle': 74, 'Ring': 72, 'Little': 70, 'Rotate': 12}),
-    'Trigger':      (3,  {'Thumb': 45, 'Index':  0, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 21}),
-    'Prec. Open':   (4,  {'Thumb': 23, 'Index': 23, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
-    'Prec. Closed': (5,  {'Thumb': 47, 'Index': 45, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
-    'Key':          (6,  {'Thumb': 52, 'Index': 59, 'Middle': 59, 'Ring': 56, 'Little': 52, 'Rotate':  3}),
-    'Finger':       (7,  {'Thumb': 27, 'Index':  0, 'Middle': 45, 'Ring': 45, 'Little': 45, 'Rotate': 18}),
-    'Cylinder':     (8,  {'Thumb': 59, 'Index': 68, 'Middle': 70, 'Ring': 68, 'Little': 63, 'Rotate': 11}),
-    'Column':       (9,  {'Thumb': 45, 'Index': 63, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 24}),
-    'Relaxed':      (10, {'Thumb':  9, 'Index':  9, 'Middle':  9, 'Ring':  9, 'Little':  9, 'Rotate':  2}),
-    'Glove':        (11, {'Thumb':  0, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate':  0}),
-    'Tap':          (12, {'Thumb':  0, 'Index':  0, 'Middle': 72, 'Ring': 72, 'Little': 72, 'Rotate': 15}),
-    'Grab':         (13, {'Thumb': 74, 'Index': 79, 'Middle': 79, 'Ring': 79, 'Little': 77, 'Rotate': 14}),
-    'Tripod Open':  (14, {'Thumb': 27, 'Index': 23, 'Middle': 23, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
+COVVI_GRIPS: dict[str, tuple[int | None, dict[str, float]]] = {
+    'Tripod':       (1,    {'Thumb': 56, 'Index': 52, 'Middle': 52, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
+    'Power':        (2,    {'Thumb': 70, 'Index': 74, 'Middle': 74, 'Ring': 72, 'Little': 70, 'Rotate': 12}),
+    'Trigger':      (3,    {'Thumb': 45, 'Index':  0, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 21}),
+    'Prec. Open':   (4,    {'Thumb': 23, 'Index': 23, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
+    'Prec. Closed': (5,    {'Thumb': 47, 'Index': 45, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
+    'Key':          (6,    {'Thumb': 52, 'Index': 59, 'Middle': 59, 'Ring': 56, 'Little': 52, 'Rotate':  3}),
+    'Finger':       (7,    {'Thumb': 27, 'Index':  0, 'Middle': 45, 'Ring': 45, 'Little': 45, 'Rotate': 18}),
+    'Cylinder':     (8,    {'Thumb': 59, 'Index': 68, 'Middle': 70, 'Ring': 68, 'Little': 63, 'Rotate': 11}),
+    'Column':       (9,    {'Thumb': 45, 'Index': 63, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 24}),
+    'Relaxed':      (10,   {'Thumb':  9, 'Index':  9, 'Middle':  9, 'Ring':  9, 'Little':  9, 'Rotate':  2}),
+    'Glove':        (11,   {'Thumb':  0, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate':  0}),
+    'Tap':          (12,   {'Thumb':  0, 'Index':  0, 'Middle': 72, 'Ring': 72, 'Little': 72, 'Rotate': 15}),
+    'Grab':         (13,   {'Thumb': 74, 'Index': 79, 'Middle': 79, 'Ring': 79, 'Little': 77, 'Rotate': 14}),
+    'Tripod Open':  (14,   {'Thumb': 27, 'Index': 23, 'Middle': 23, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
+    # ── Poses gestuais personalizadas (sem preset ECI de fábrica) ────────
+    # eci_id=None → só move o sim; não envia SetCurrentGrip ao real.
+    'Rock':         (None, {'Thumb': 25, 'Index':  0, 'Middle': 78, 'Ring': 78, 'Little':  0, 'Rotate':  8}),
+    'Phone':        (None, {'Thumb':  0, 'Index': 75, 'Middle': 75, 'Ring': 75, 'Little':  0, 'Rotate':  5}),
+    'Peace':        (None, {'Thumb': 45, 'Index':  0, 'Middle':  0, 'Ring': 78, 'Little': 78, 'Rotate': 12}),
+    'Count 3':      (None, {'Thumb': 55, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little': 78, 'Rotate':  8}),
+    'Count 4':      (None, {'Thumb': 55, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate':  5}),
 }
 
 # MIMIC_LIST centralizada em kinematics.py (importada acima junto com
