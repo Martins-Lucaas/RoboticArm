@@ -109,6 +109,51 @@ FONT_BIG    = ('Segoe UI', 26, 'bold')
 FONT_MONO   = ('JetBrains Mono', 11)
 FONT_MONO_S = ('JetBrains Mono', 10)
 
+
+def _resolve_fonts(root) -> None:
+    """Remapeia as famílias de fonte preferidas para fontes REALMENTE
+    instaladas no sistema, evitando o segfault do Tk 8.6.
+
+    'Segoe UI' e 'JetBrains Mono' normalmente não existem no Linux. Quando
+    uma família é ausente, o Tk/Tcl desta plataforma resolve via fontconfig
+    repetidamente e corrompe a memória interna — o crash então aparece de
+    forma deslocada na criação de qualquer widget posterior (Tk_InitOptions),
+    sensível ao layout do heap. Resolver as famílias para fontes presentes
+    elimina a substituição e, com ela, a corrupção. Em sistemas que TÊM as
+    fontes preferidas, nada muda (a preferida é a primeira da lista).
+
+    Deve ser chamado logo após criar o root Tk e ANTES de construir a UI.
+    """
+    global FONT_TITLE, FONT_HEAD, FONT_LBL, FONT_SMALL, FONT_BIG
+    global FONT_MONO, FONT_MONO_S
+    try:
+        import tkinter.font as tkfont
+        available = set(tkfont.families(root))
+    except Exception:
+        return
+
+    def pick(prefs):
+        for fam in prefs:
+            if fam in available:
+                return fam
+        return None
+
+    sans = pick(['Segoe UI', 'Ubuntu', 'Cantarell', 'Noto Sans',
+                 'DejaVu Sans', 'Liberation Sans', 'Arial'])
+    mono = pick(['JetBrains Mono', 'DejaVu Sans Mono', 'Ubuntu Mono',
+                 'Liberation Mono', 'Noto Sans Mono', 'Courier New'])
+
+    def remap(spec, fam):
+        return spec if fam is None else (fam, *spec[1:])
+
+    FONT_TITLE  = remap(FONT_TITLE,  sans)
+    FONT_HEAD   = remap(FONT_HEAD,   sans)
+    FONT_LBL    = remap(FONT_LBL,    sans)
+    FONT_SMALL  = remap(FONT_SMALL,  sans)
+    FONT_BIG    = remap(FONT_BIG,    sans)
+    FONT_MONO   = remap(FONT_MONO,   mono)
+    FONT_MONO_S = remap(FONT_MONO_S, mono)
+
 # Faixas dos parâmetros — adequadas ao protocolo Gupta et al. 2021.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 1.0,  30.0,  10.0    # mm/s
 FORCE_MIN, FORCE_MAX, FORCE_DEFAULT = 0.2,   5.0,   1.0    # N
@@ -172,6 +217,29 @@ HAND_CLOSE_DEG = {'Thumb': 70, 'Index': 80, 'Middle': 80,
 HAND_POINT_DEG = {'Thumb': 30, 'Index': 0, 'Middle': 80,
                   'Ring':  80, 'Little': 80, 'Rotate': 0}
 
+# ── Grip-patterns embutidos da mão COVVI (CurrentGripID 1–14) ─────────
+# Para cada padrão de pega:
+#   • eci_id → SetCurrentGrip move a MÃO REAL via ECI (id de fábrica COVVI)
+#   • graus  → pose equivalente para visualizar no sim Gazebo (juntas primárias)
+# Os ângulos foram derivados das presets de fábrica (escala ECI 0–200 → graus:
+# dedos /200×90°, Rotate /200×60°) e respeitam HAND_LIMITS_DEG.
+COVVI_GRIPS: dict[str, tuple[int, dict[str, float]]] = {
+    'Tripod':       (1,  {'Thumb': 56, 'Index': 52, 'Middle': 52, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
+    'Power':        (2,  {'Thumb': 70, 'Index': 74, 'Middle': 74, 'Ring': 72, 'Little': 70, 'Rotate': 12}),
+    'Trigger':      (3,  {'Thumb': 45, 'Index':  0, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 21}),
+    'Prec. Open':   (4,  {'Thumb': 23, 'Index': 23, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
+    'Prec. Closed': (5,  {'Thumb': 47, 'Index': 45, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
+    'Key':          (6,  {'Thumb': 52, 'Index': 59, 'Middle': 59, 'Ring': 56, 'Little': 52, 'Rotate':  3}),
+    'Finger':       (7,  {'Thumb': 27, 'Index':  0, 'Middle': 45, 'Ring': 45, 'Little': 45, 'Rotate': 18}),
+    'Cylinder':     (8,  {'Thumb': 59, 'Index': 68, 'Middle': 70, 'Ring': 68, 'Little': 63, 'Rotate': 11}),
+    'Column':       (9,  {'Thumb': 45, 'Index': 63, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 24}),
+    'Relaxed':      (10, {'Thumb':  9, 'Index':  9, 'Middle':  9, 'Ring':  9, 'Little':  9, 'Rotate':  2}),
+    'Glove':        (11, {'Thumb':  0, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate':  0}),
+    'Tap':          (12, {'Thumb':  0, 'Index':  0, 'Middle': 72, 'Ring': 72, 'Little': 72, 'Rotate': 15}),
+    'Grab':         (13, {'Thumb': 74, 'Index': 79, 'Middle': 79, 'Ring': 79, 'Little': 77, 'Rotate': 14}),
+    'Tripod Open':  (14, {'Thumb': 27, 'Index': 23, 'Middle': 23, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
+}
+
 # MIMIC_LIST centralizada em kinematics.py (importada acima junto com
 # urdf_to_dobot). Se o import falhar, definimos lista vazia — a expansão
 # de juntas mimic vira no-op em vez de derrubar a GUI inteira.
@@ -192,9 +260,14 @@ def _shade(hex_color: str, factor: float) -> str:
 
 
 def _hdr_btn(parent, icon: str, label: str, command, *,
-              bg=BTN_NEUTRAL, fg=TEXT, font=FONT_LBL, padx=12, pady=5):
+              bg=BTN_NEUTRAL, fg=TEXT, font=None, padx=12, pady=5):
     """Botão estilizado da barra superior — ícone Unicode + label,
     com troca dinâmica de estado via `btn.set_state(icon, label, bg, fg)`."""
+    # font=None (não FONT_LBL) no default: defaults são avaliados no import,
+    # antes de _resolve_fonts() remapear as famílias. Resolver aqui em runtime
+    # garante a família já corrigida.
+    if font is None:
+        font = FONT_LBL
     state = {'bg': bg, 'fg': fg}
     text = f' {icon}  {label} ' if icon else f' {label} '
     btn = tk.Button(parent, text=text, command=command,
@@ -290,14 +363,31 @@ class PalpationGUI(Node):
             'eci_prefix', '/covvi/hand').value
         self._param_robot_ip   = self.declare_parameter('robot_ip',   '').value
         self._param_robot_mode = self.declare_parameter('robot_mode', '').value
+        # ─── Efetuador final vindo do launch (hand | touch_tool) ─────────
+        # REGRA (até o usuário pedir o contrário): o modo Palpação só fica
+        # disponível quando a célula é aberta COM o touch_tool. Aberta sem o
+        # touch_tool (ex.: end_effector:=hand) a aba Palpação é bloqueada —
+        # ver gate em _build_body. Default 'touch_tool' para não capar a GUI
+        # rodada de forma standalone (sem o launch passar o parâmetro).
+        self._end_effector = str(self.declare_parameter(
+            'end_effector', 'touch_tool').value).strip().lower()
         self._eci_srv = None
         self._eci_msg = None
         self._cli_eci_grip = None
         self._cli_eci_posn = None
         self._cli_hand_pwr_on = None
         self._cli_hand_pwr_off = None
+        self._cli_eci_realtime = None
         self._hand_powered = False
         self._eci_posn_after: str | None = None
+        # ─── Versão B: mirror real→sim da mão (telemetria DigitPosnAll) ──
+        # A mão simulada segue a POSIÇÃO MEDIDA da mão física (escala ECI
+        # 0–200), de modo que o sim acompanhe a velocidade real, em vez de
+        # repetir o comando aberto do slider. Veja _on_real_hand_posn.
+        self._sub_real_hand_posn = None
+        self._hand_mirror_active: bool = False
+        self._hand_mirror_last_rx: float | None = None
+        self._hand_mirror_last_pub: float | None = None
 
         # ─── CR10 real (lazy) ────────────────────────────────────────
         self._real_driver = None    # CR10RealDriver | None
@@ -385,6 +475,13 @@ class PalpationGUI(Node):
         # Subprocesso do force_receiver_node (gerenciado pelo botão Conectar)
         self._force_rx_proc: subprocess.Popen | None = None
         self._force_rx_should_be_alive: bool = False
+        # Mini-painel de leitura da célula na aba Controle Manual (modo
+        # touch_tool). None no modo hand — o espelhamento em _refresh_lc_panel
+        # é ignorado quando não construído.
+        self._mlc_force_lbl = None
+        self._mlc_normal_lbl = None
+        self._mlc_voltage_lbl = None
+        self._mlc_status_lbl = None
 
         # ─── Poses & Movimentos ──────────────────────────────────────
         self._poses: list[dict] = []        # [{id, name, q_deg:[6]}]
@@ -393,6 +490,7 @@ class PalpationGUI(Node):
         self._next_movement_id: int = 1
         self._drag_enabled: bool = False
         self._drag_last_valid_q: np.ndarray | None = None  # guards against firmware zero-blip
+        self._drag_last_t: float | None = None             # t da última amostra (vel por diff. finita)
         self._exec_stop = threading.Event()
         self._exec_thread: threading.Thread | None = None
         self._exec_movement_id: int | None = None
@@ -407,6 +505,10 @@ class PalpationGUI(Node):
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
         self.root.withdraw()
+        # Remapeia fontes ausentes (Segoe UI/JetBrains Mono) → fontes
+        # instaladas ANTES de construir a UI: evita o segfault do Tk 8.6 ao
+        # resolver famílias inexistentes via fontconfig. Ver _resolve_fonts.
+        _resolve_fonts(self.root)
         self._build_ui()
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
         self.root.deiconify()
@@ -475,8 +577,12 @@ class PalpationGUI(Node):
         mid.pack(fill='x', padx=18, pady=(8, 10))
 
         # ── COVVI HAND ────────────────────────────────────────────────
+        # Só aparece no modo `hand` (a mão não existe com o touch_tool).
+        # Os widgets são sempre criados (callbacks os referenciam), mas o
+        # frame só é empacotado quando há mão.
         conn = tk.Frame(mid, bg=HEADER)
-        conn.pack(side='left')
+        if self._end_effector == 'hand':
+            conn.pack(side='left')
 
         tk.Label(conn, text='MÃO COVVI', font=FONT_SMALL,
                  bg=HEADER, fg='#cbd5e1'
@@ -545,8 +651,10 @@ class PalpationGUI(Node):
         mode_menu.grid(row=1, column=3, sticky='w')
 
         # ── ESP32 / LOAD CELL ─────────────────────────────────────────────
+        # Só aparece no modo `touch_tool` (célula de carga faz parte do TCP).
         conn_esp = tk.Frame(mid, bg=HEADER)
-        conn_esp.pack(side='left', padx=(28, 0))
+        if self._end_effector == 'touch_tool':
+            conn_esp.pack(side='left', padx=(28, 0))
         tk.Label(conn_esp, text='LOAD CELL (ESP32)', font=FONT_SMALL,
                  bg=HEADER, fg='#cbd5e1'
                  ).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
@@ -587,6 +695,30 @@ class PalpationGUI(Node):
         self._build_manual_tab(self._scrollable(tab_man))
         self._build_loadcell_tab(tab_lc)   # sub-abas são scrolláveis internamente
         self._build_poses_tab(tab_poses)   # layout próprio — sem _scrollable externo
+
+        # ── Gate do modo Palpação por end_effector ────────────────────────
+        # REGRA (até o usuário pedir o contrário): a aba/modo Palpação só fica
+        # disponível quando a célula é aberta COM o touch_tool. Aberta sem o
+        # touch_tool (ex.: end_effector:=hand), bloqueamos a aba Palpação
+        # (índice 0) e focamos em "Controle Manual". O guard em _on_start
+        # garante o bloqueio mesmo se a aba for reativada por outro caminho.
+        self._nb = nb
+        self._palpation_blocked = (self._end_effector != 'touch_tool')
+        if self._palpation_blocked:
+            nb.tab(0, text='Palpação 🔒', state='disabled')
+        # Modo hand: sem célula de carga → esconde a aba dedicada (a coluna
+        # da mão já ocupa o Controle Manual). Modo touch_tool: aba mantida e
+        # o Controle Manual mostra o mini-painel de leitura da célula.
+        if self._end_effector == 'hand':
+            try:
+                nb.hide(tab_lc)
+            except Exception:
+                pass
+        if self._palpation_blocked:
+            try:
+                nb.select(1)   # foca em Controle Manual
+            except Exception:
+                pass
 
     def _scrollable(self, parent: tk.Frame) -> tk.Frame:
         """Envolve `parent` num Canvas com scrollbar vertical e retorna o
@@ -845,6 +977,19 @@ class PalpationGUI(Node):
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True)
 
+        # ── Coluna direita: adapta ao efetuador final ─────────────────
+        #   hand       → controle da mão COVVI (sliders + presets + grips)
+        #   touch_tool → leitura ao vivo da célula de carga
+        # Mantém a aba "Controle Manual" limpa: mostra só o que faz sentido
+        # para o efetuador com que a célula foi aberta.
+        if self._end_effector == 'hand':
+            self._build_manual_hand_controls(col_hand)
+        else:
+            self._build_manual_lc_panel(col_hand)
+
+    def _build_manual_hand_controls(self, col_hand: tk.Frame) -> None:
+        """Coluna direita do Controle Manual no modo `hand`: sliders da mão
+        COVVI + presets (Abrir/Apontar/Fechar) + grips de fábrica."""
         # ── MÃO COVVI ─────────────────────────────────────────────────
         card_hand = self._card(col_hand, 'Mão COVVI — juntas primárias (graus)')
         self.hand_sliders: dict[str, tk.DoubleVar] = {}
@@ -884,6 +1029,95 @@ class PalpationGUI(Node):
                    font=FONT_LBL, relief='flat', bd=0, padx=12, pady=8,
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True, padx=(3, 0))
+
+        # ── Grip-patterns COVVI (padrões de pega de fábrica) ──────────
+        grips_card = self._card(col_hand, 'Grips COVVI — padrões de pega')
+        grow = tk.Frame(grips_card, bg=PANEL); grow.pack(fill='x')
+        self._covvi_grip_var = tk.StringVar(value=next(iter(COVVI_GRIPS)))
+        # tk.OptionMenu (Tk puro) em vez de ttk.Combobox: o ttk.Combobox
+        # embutido neste Canvas scrollable corrompia o estado interno do Tk
+        # e provocava segfault na criação de widgets (mesmo problema que levou
+        # à remoção da ttk.Progressbar — ver _build_body). O OptionMenu segue
+        # o padrão seguro já usado no seletor de modo do robô no header.
+        grip_menu = tk.OptionMenu(grow, self._covvi_grip_var, *COVVI_GRIPS.keys())
+        grip_menu.config(bg=BTN_NEUTRAL, fg=TEXT, font=FONT_MONO,
+                         relief='flat', highlightthickness=1,
+                         highlightbackground=BORDER,
+                         activebackground=PRIMARY, activeforeground='white')
+        grip_menu['menu'].config(bg=PANEL, fg=TEXT, font=FONT_MONO,
+                                 activebackground=PRIMARY, activeforeground='white')
+        grip_menu.pack(side='left', fill='x', expand=True, ipady=2)
+        tk.Button(grow, text='✓  Aplicar', command=self._apply_covvi_grip,
+                   bg=PRIMARY, fg='white', activebackground=PRIMARY_HV,
+                   activeforeground='white', font=FONT_LBL, relief='flat',
+                   bd=0, padx=12, pady=6, cursor='hand2'
+                   ).pack(side='left', padx=(6, 0))
+        tk.Label(grips_card,
+                 text='Move o sim (juntas) + envia SetCurrentGrip ao real (ECI).',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED, anchor='w'
+                 ).pack(fill='x', pady=(6, 0))
+
+    def _build_manual_lc_panel(self, col_hand: tk.Frame) -> None:
+        """Coluna direita do Controle Manual no modo `touch_tool`: leitura ao
+        vivo da célula de carga (espelha _refresh_lc_panel). É read-only — a
+        conexão UDP, a zeragem (tare) e a calibração ficam na aba dedicada
+        "Célula de Carga" para manter este painel enxuto."""
+        card = self._card(col_hand, 'Célula de Carga — leitura ao vivo')
+
+        row_f = tk.Frame(card, bg=PANEL); row_f.pack(fill='x', pady=(6, 2))
+        tk.Label(row_f, text='Força Total (calibração)', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
+        self._mlc_force_lbl = tk.Label(
+            row_f, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_force_lbl.pack(anchor='w', pady=(2, 0))
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=6)
+
+        row_n = tk.Frame(card, bg=PANEL); row_n.pack(fill='x', pady=(2, 2))
+        tk.Label(row_n, text='Força Normal ⊥ mesa  (+compressão / −tração)',
+                 font=FONT_LBL, bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
+        self._mlc_normal_lbl = tk.Label(
+            row_n, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_normal_lbl.pack(anchor='w', pady=(2, 0))
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=6)
+
+        row_v = tk.Frame(card, bg=PANEL); row_v.pack(fill='x', pady=(2, 2))
+        tk.Label(row_v, text='Tensão do Sensor', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self._mlc_voltage_lbl = tk.Label(
+            row_v, text='—  V', font=FONT_MONO, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_voltage_lbl.pack(side='right')
+
+        row_s = tk.Frame(card, bg=PANEL); row_s.pack(fill='x', pady=(2, 2))
+        tk.Label(row_s, text='ESP32', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self._mlc_status_lbl = tk.Label(
+            row_s, text='OFFLINE', font=FONT_LBL, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_status_lbl.pack(side='right')
+
+        tk.Label(card,
+                 text='Conexão UDP, zeragem (tare) e calibração na aba '
+                      '“Célula de Carga”.',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED, anchor='w',
+                 justify='left', wraplength=300
+                 ).pack(fill='x', pady=(8, 0))
+
+    def _apply_covvi_grip(self):
+        """Aplica o grip-pattern COVVI selecionado no combobox.
+
+        Move a mão simulada para a pose equivalente e, se o ECI estiver
+        ativo, envia SetCurrentGrip (id de fábrica) para a mão real.
+        """
+        if getattr(self, '_covvi_grip_var', None) is None:
+            return   # modo touch_tool — sem painel da mão
+        name = self._covvi_grip_var.get()
+        spec = COVVI_GRIPS.get(name)
+        if spec is None:
+            return
+        eci_id, deg = spec
+        self._apply_hand_preset(deg, eci_grip_id=eci_id)
+        self._set_status(f'Grip COVVI > {name} (id={eci_id})', OK)
 
     def _joint_row(self, parent, *, label, unit, var,
                     vmin, vmax, step, on_change):
@@ -1119,6 +1353,7 @@ class PalpationGUI(Node):
                     continue
                 try:
                     q_urdf = drv.read_joints_urdf_latest()
+                    now = time.monotonic()
                     # Guard 1: firmware zero-blip right after DragTeachSwitch(1).
                     # A real robot is never at all-zeros (that is arm fully extended
                     # upright — it cannot reach there from operating positions).
@@ -1126,17 +1361,34 @@ class PalpationGUI(Node):
                         continue
                     # Guard 2: reject physically-impossible jumps (>60° in 30 ms).
                     _last = self._drag_last_valid_q
+                    _last_t = self._drag_last_t
                     if (_last is not None
                             and np.max(np.abs(q_urdf - _last)) > math.radians(60)):
                         continue
+                    # Velocidade por diferença finita. SEM isto o controlador de
+                    # trajetória recebia velocities=[0]*6 e freava até zero a cada
+                    # ponto (33 Hz) — o que causava trepidação e atraso do braço
+                    # do Gazebo em relação ao drag físico. Com a velocidade
+                    # estimada o controlador interpola suavemente entre amostras
+                    # e o sim acompanha o movimento real de forma sincronizada.
+                    if _last is not None and _last_t is not None:
+                        dt = min(max(now - _last_t, 0.005), 0.2)
+                        vel = (q_urdf - _last) / dt
+                        vel = np.clip(vel, -2.5, 2.5)   # rad/s — limite são
+                    else:
+                        vel = np.zeros(6)
                     self._drag_last_valid_q = q_urdf
+                    self._drag_last_t = now
                     msg = JointTrajectory()
                     msg.joint_names = ARM_JOINTS
                     pt = JointTrajectoryPoint()
                     pt.positions = [float(v) for v in q_urdf]
-                    pt.velocities = [0.0] * 6
-                    # time_from_start = período do loop → Gazebo acompanha sem lag
-                    pt.time_from_start = Duration(sec=0, nanosec=30_000_000)
+                    pt.velocities = [float(v) for v in vel]
+                    # Horizonte ~2× o período do loop (60 ms): dá folga para o
+                    # controlador interpolar COM a velocidade estimada antes do
+                    # próximo ponto chegar. Com 30 ms + vel=0 ele tentava parar
+                    # exatamente no ponto e estagnava entre amostras.
+                    pt.time_from_start = Duration(sec=0, nanosec=60_000_000)
                     msg.points.append(pt)
                     self._arm_pub.publish(msg)
                 except CR10RealDriverError as exc:
@@ -1268,6 +1520,9 @@ class PalpationGUI(Node):
     def _publish_hand_from_sliders(self):
         if self._suppressing:
             return
+        # No modo touch_tool a coluna da mão não é construída (sem sliders).
+        if not getattr(self, 'hand_sliders', None):
+            return
         self._suppressing = True
         try:
             primary_deg: dict[str, float] = {}
@@ -1282,6 +1537,22 @@ class PalpationGUI(Node):
             duration_s = self._move_duration_seconds()
         finally:
             self._suppressing = False
+        # Versão B (mirror real→sim): quando a telemetria DigitPosnAll está
+        # chegando, a mão simulada segue a POSIÇÃO MEDIDA da mão real (em
+        # _on_real_hand_posn) — assim o sim acompanha a velocidade física.
+        # Nesse caso o slider só comanda o ECI; o sim é atualizado pela
+        # telemetria. Sem telemetria viva, publicamos direto (modo sim-only).
+        if not self._hand_mirror_live():
+            self._publish_sim_hand(primary_rad, duration_s)
+        # Envia para a mão real via ECI (SetDigitPosn) se ativo
+        if self._eci_enabled:
+            self._schedule_eci_posn(primary_deg)
+
+    def _publish_sim_hand(self, primary_rad: dict[str, float],
+                           duration_s: float) -> None:
+        """Publica a trajetória da mão no Gazebo a partir das 6 juntas
+        primárias (rad), expandindo as juntas mimic do URDF. Usado tanto pelo
+        comando do slider (sim-only) quanto pelo mirror real→sim (Versão B)."""
         names = list(HAND_JOINTS)
         positions = [primary_rad[j] for j in HAND_JOINTS]
         # Expande as 26 juntas mimic com as razões do URDF.
@@ -1296,9 +1567,88 @@ class PalpationGUI(Node):
         pt.time_from_start = self._duration_msg(duration_s)
         msg.points.append(pt)
         self._hand_pub.publish(msg)
-        # Envia para a mão real via ECI (SetDigitPosn) se ativo
-        if self._eci_enabled:
-            self._schedule_eci_posn(primary_deg)
+
+    # ── Versão B: mirror real→sim da mão (telemetria DigitPosnAll) ──────
+    def _hand_mirror_live(self) -> bool:
+        """True se o mirror real→sim está ativo E recebeu telemetria
+        DigitPosnAll há menos de 0.5 s. Caso contrário o slider volta a
+        comandar o sim diretamente (fallback robusto se a telemetria parar)."""
+        if not self._hand_mirror_active:
+            return False
+        last = self._hand_mirror_last_rx
+        return last is not None and (time.monotonic() - last) < 0.5
+
+    def _on_real_hand_posn(self, msg) -> None:
+        """Callback do tópico DigitPosnAll: converte a posição MEDIDA dos
+        dedos (escala ECI 0–200) para rad e dirige a mão simulada. O sim
+        passa a seguir a velocidade real da mão física (Versão B)."""
+        now = time.monotonic()
+        self._hand_mirror_last_rx = now
+
+        def _deg(joint: str, pos: int) -> float:
+            max_deg = 60.0 if joint == 'Rotate' else 90.0
+            return max(0.0, min(max_deg, float(pos) / 200.0 * max_deg))
+
+        primary_rad = {
+            'Thumb':  _math.radians(_deg('Thumb',  msg.thumb_pos)),
+            'Index':  _math.radians(_deg('Index',  msg.index_pos)),
+            'Middle': _math.radians(_deg('Middle', msg.middle_pos)),
+            'Ring':   _math.radians(_deg('Ring',   msg.ring_pos)),
+            'Little': _math.radians(_deg('Little', msg.little_pos)),
+            'Rotate': _math.radians(_deg('Rotate', msg.rotate_pos)),
+        }
+        # Horizonte de interpolação ~ período de chegada das mensagens:
+        # mantém o sim "colado" à posição real sem solavanco entre amostras.
+        last = self._hand_mirror_last_pub
+        self._hand_mirror_last_pub = now
+        dt = (now - last) if last is not None else 0.05
+        duration_s = min(0.15, max(0.03, dt))
+        self._publish_sim_hand(primary_rad, duration_s)
+
+    def _enable_hand_mirror(self) -> None:
+        """Habilita o streaming digit_posn no driver e assina o tópico
+        DigitPosnAll para espelhar a mão real → sim (Versão B)."""
+        if self._hand_mirror_active or not self._eci_enabled or self._eci_msg is None:
+            return
+        # 1) Pede ao driver para emitir digit_posn em realtime (preservando os
+        #    streams que o driver já liga no startup: digit_touch/env/orient).
+        cli = self._cli_eci_realtime
+        if cli is not None and cli.service_is_ready():
+            try:
+                req = self._eci_srv.SetRealtimeCfg.Request()
+                req.digit_posn    = True
+                req.digit_touch   = True
+                req.environmental = True
+                req.orientation   = True
+                cli.call_async(req)
+            except Exception as exc:
+                self.get_logger().warning(
+                    f'SetRealtimeCfg(digit_posn) falhou: {exc}')
+        else:
+            self.get_logger().warning(
+                'SetRealtimeCfg indisponível — mirror da mão sem stream '
+                'digit_posn (sim não seguirá a mão real).')
+        # 2) Assina o tópico de posição medida da mão.
+        if self._sub_real_hand_posn is None:
+            self._sub_real_hand_posn = self.create_subscription(
+                self._eci_msg.DigitPosnAllMsg,
+                f'{self._eci_prefix}/DigitPosnAllMsg',
+                self._on_real_hand_posn, 10)
+        self._hand_mirror_active = True
+        self._hand_mirror_last_rx = None
+        self.get_logger().info('[HAND-MIRROR] real→sim ativo (DigitPosnAll).')
+
+    def _disable_hand_mirror(self) -> None:
+        """Desliga o mirror real→sim e devolve o comando do sim ao slider."""
+        self._hand_mirror_active = False
+        self._hand_mirror_last_rx = None
+        sub = self._sub_real_hand_posn
+        self._sub_real_hand_posn = None
+        if sub is not None:
+            try:
+                self.destroy_subscription(sub)
+            except Exception:
+                pass
 
     def _schedule_eci_posn(self, deg_dict: dict) -> None:
         """Debounce de 60 ms para SetDigitPosn — evita flood de serviço."""
@@ -1516,6 +1866,8 @@ class PalpationGUI(Node):
         Se `eci_grip_id` for fornecido e ECI estiver ativo, também chama
         SetCurrentGrip para mover a mão real.
         """
+        if not getattr(self, 'hand_sliders', None):
+            return   # modo touch_tool — sem painel da mão
         self._suppressing = True
         try:
             for j in HAND_JOINTS:
@@ -2250,6 +2602,23 @@ class PalpationGUI(Node):
             self.lc_curr_calib_lbl.config(
                 text='Nenhuma calibração salva', fg=WARN)
 
+        # Espelha a leitura no mini-painel da aba Controle Manual (modo
+        # touch_tool). Lê o texto/cor já calculados dos labels canônicos da
+        # aba "Célula de Carga" — fonte única de verdade, sem duplicar lógica.
+        if self._mlc_force_lbl is not None:
+            self._mlc_force_lbl.config(
+                text=self.lc_force_lbl.cget('text'),
+                fg=self.lc_force_lbl.cget('fg'))
+            self._mlc_normal_lbl.config(
+                text=self.lc_normal_force_lbl.cget('text'),
+                fg=self.lc_normal_force_lbl.cget('fg'))
+            self._mlc_voltage_lbl.config(
+                text=self.lc_voltage_lbl.cget('text'),
+                fg=self.lc_voltage_lbl.cget('fg'))
+            self._mlc_status_lbl.config(
+                text=self._esp32_status_lbl.cget('text'),
+                fg=self._esp32_status_lbl.cget('fg'))
+
         self.root.after(100, self._refresh_lc_panel)
 
     # ──────────────────────────────────────────────────────────────────
@@ -2721,6 +3090,7 @@ class PalpationGUI(Node):
         # valid REAL-ROBOT read, not from Gazebo.  If seeded from Gazebo and
         # the real robot is >60° away, Guard 2 would block all reads forever.
         self._drag_last_valid_q = None
+        self._drag_last_t = None
         self._drag_enabled = new_state
         self._publish_drag_state(new_state)
         btn = self._drag_btn
@@ -3095,6 +3465,7 @@ class PalpationGUI(Node):
         eci_was_enabled = self._eci_enabled
         self._eci_enabled = False
         self._hand_powered = False
+        self._disable_hand_mirror()
         self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
         self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
         self._hand_connect_btn.set_state('⏳', 'Desconectando…', BTN_NEUTRAL, TEXT)
@@ -3109,10 +3480,11 @@ class PalpationGUI(Node):
         if eci_was_enabled:
             self._send_hand_poweroff_blocking(timeout_s=3.0)
         self._terminate_hand_subprocess()
-        # A caixa ECI precisa de ~15 s para liberar o estado TCP (TIME_WAIT)
-        # após a conexão ser quebrada — conectar antes causa
-        # ExistingConnectionError. Exibimos contagem regressiva na status bar.
-        ECI_RESET_S = 15
+        # Com o driver agora chamando eci.stop() em `finally` no shutdown
+        # (covvi_server_node.main), a caixa ECI libera a sessão de imediato —
+        # não é mais preciso esperar o TIME_WAIT longo. Mantemos uma folga
+        # curta só para o socket fechar e os serviços saírem do grafo ROS2.
+        ECI_RESET_S = 2
         for remaining in range(ECI_RESET_S, 0, -1):
             self.root.after(0, lambda r=remaining: self._set_status(
                 f'Aguardando reset da caixa ECI — ainda {r} s…', TEXT_DIM))
@@ -3170,6 +3542,7 @@ class PalpationGUI(Node):
         self._hand_proc = None
         self._eci_enabled = False
         self._hand_powered = False
+        self._disable_hand_mirror()
         self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
         self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
         self._hand_connect_btn.set_state('⏳', 'Reconectando…', WARN, 'white')
@@ -3270,6 +3643,7 @@ class PalpationGUI(Node):
             self._hand_powered = False
             self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
             self._eci_enabled = False
+            self._disable_hand_mirror()
             self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
             self._set_status('Canal ECI desativado — alimentação cortada.', TEXT_DIM)
             return
@@ -3300,6 +3674,11 @@ class PalpationGUI(Node):
             self._cli_hand_pwr_off = self.create_client(
                 _eci_srv.SetHandPowerOff,
                 f'{self._eci_prefix}/SetHandPowerOff')
+        if self._cli_eci_realtime is None:
+            # Versão B: usado para habilitar o stream digit_posn (mirror mão).
+            self._cli_eci_realtime = self.create_client(
+                _eci_srv.SetRealtimeCfg,
+                f'{self._eci_prefix}/SetRealtimeCfg')
         self._eci_enabled = True
         self._eci_btn.set_state('◉', 'ECI ON', OK, 'white')
         self._set_status('Canal ECI ativo — aguardando power da mão…', OK)
@@ -3319,6 +3698,9 @@ class PalpationGUI(Node):
         self._hand_powered = True
         self._pwr_btn.set_state('⏻', 'PWR ON', OK, 'white')
         self._set_status('Canal ECI ativo — alimentação ligada (LED azul aceso).', OK)
+        # Versão B: liga o mirror real→sim da mão ~600 ms depois (tempo para
+        # o serviço SetRealtimeCfg e o tópico DigitPosnAll subirem no grafo).
+        self.root.after(600, self._enable_hand_mirror)
 
     def _toggle_hand_power(self) -> None:
         """Liga/desliga a alimentação da mão COVVI via SetHandPowerOn/Off."""
@@ -3886,6 +4268,13 @@ class PalpationGUI(Node):
         self._set_status('Palpação interrompida pelo operador.', WARN)
 
     def _on_start(self):
+        # Gate (defesa em profundidade — ver também o bloqueio da aba em
+        # _build_body): sem o touch_tool a palpação fica indisponível.
+        if getattr(self, '_palpation_blocked', False):
+            self._set_status(
+                'Modo Palpação indisponível: abra o launch com '
+                'end_effector:=touch_tool.', WARN)
+            return
         # Satura cada parâmetro ao seu intervalo válido antes de enviar,
         # tanto para a publicação quanto para o que o usuário vê nos
         # spinboxes/sliders.

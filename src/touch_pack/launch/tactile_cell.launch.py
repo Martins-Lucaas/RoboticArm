@@ -36,6 +36,38 @@ from launch_ros.actions import Node
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Materiais Gazebo (override de cor por link) — aplicados na conversão
+# URDF→SDF do spawn_entity. Em Gazebo Classic a cor do <material><color>
+# do URDF nem sempre renderiza; o override <gazebo reference><visual>
+# <material><ambient/diffuse/specular> é o que efetivamente colore o link.
+#   touch_tool   → branco
+#   acopladores  → cinza
+#   célula carga → prateado (specular alto = brilho metálico)
+# ──────────────────────────────────────────────────────────────────────
+_GZ_MAT_WHITE = (
+    '<visual><material>'
+    '<ambient>0.85 0.85 0.85 1</ambient>'
+    '<diffuse>0.95 0.95 0.95 1</diffuse>'
+    '<specular>0.30 0.30 0.30 1</specular>'
+    '</material></visual>'
+)
+_GZ_MAT_GRAY = (
+    '<visual><material>'
+    '<ambient>0.25 0.25 0.25 1</ambient>'
+    '<diffuse>0.45 0.45 0.45 1</diffuse>'
+    '<specular>0.20 0.20 0.20 1</specular>'
+    '</material></visual>'
+)
+_GZ_MAT_SILVER = (
+    '<visual><material>'
+    '<ambient>0.55 0.55 0.58 1</ambient>'
+    '<diffuse>0.82 0.82 0.88 1</diffuse>'
+    '<specular>0.95 0.95 1.00 1</specular>'
+    '</material></visual>'
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Helpers de saneamento do URDF combinado
 # ──────────────────────────────────────────────────────────────────────
 def _fix_virtual_link_inertia(urdf_body: str) -> str:
@@ -220,7 +252,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
           <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="coupling_gray">
-          <color rgba="0.35 0.35 0.40 1.0"/>
+          <color rgba="0.45 0.45 0.45 1.0"/>
         </material>
       </visual>
       <collision name="col_lower_coupling">
@@ -242,7 +274,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
           <mesh filename="file://{sensor_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="silver">
-          <color rgba="0.80 0.80 0.85 1.0"/>
+          <color rgba="0.82 0.82 0.88 1.0"/>
         </material>
       </visual>
       <collision name="col_sensor">
@@ -264,7 +296,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
           <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="coupling_gray">
-          <color rgba="0.35 0.35 0.40 1.0"/>
+          <color rgba="0.45 0.45 0.45 1.0"/>
         </material>
       </visual>
       <collision name="col_upper_coupling">
@@ -285,8 +317,8 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         <geometry>
           <mesh filename="file://{tool_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
-        <material name="light_red">
-          <color rgba="1.0 0.50 0.50 1.0"/>
+        <material name="tool_white">
+          <color rgba="0.95 0.95 0.95 1.0"/>
         </material>
       </visual>
       <collision name="col_body">
@@ -338,6 +370,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_GRAY +
         '</gazebo>'
         '\n  <gazebo reference="force_sensor_link">'
         '<self_collide>false</self_collide>'
@@ -347,6 +380,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_SILVER +
         '</gazebo>'
         '\n  <gazebo reference="upper_coupling_link">'
         '<self_collide>false</self_collide>'
@@ -356,6 +390,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_GRAY +
         '</gazebo>'
         '\n  <gazebo reference="touch_tool_link">'
         '<self_collide>false</self_collide>'
@@ -365,6 +400,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_WHITE +
         '</gazebo>'
     )
 
@@ -451,8 +487,10 @@ def launch_setup(context, *args, **kwargs):
     gui_node = Node(
         package='touch_pack', executable='palpation_gui',
         parameters=[{'use_sim_time': True,
-                     'robot_ip':   robot_ip,
-                     'robot_mode': robot_mode}],
+                     'robot_ip':     robot_ip,
+                     'robot_mode':   robot_mode,
+                     # Gate do modo Palpação: só liberado com end_effector=touch_tool.
+                     'end_effector': end_effector}],
         condition=UnlessCondition(LaunchConfiguration('no_gui')))
 
     logger_node = Node(
