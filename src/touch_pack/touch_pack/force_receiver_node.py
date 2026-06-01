@@ -70,11 +70,14 @@ class ForceReceiverNode(Node):
             sl = float(data['slope'])
             ic = float(data['intercept'])
             with self._lock:
+                changed = (sl != self._slope or ic != self._intercept
+                           or not self._calibrated)
                 self._slope      = sl
                 self._intercept  = ic
                 self._calibrated = True
-            self.get_logger().info(
-                f'Calibração carregada: slope={sl:.4f} intercept={ic:.6f}')
+            if changed:
+                self.get_logger().info(
+                    f'Calibração carregada: slope={sl:.4f} intercept={ic:.6f}')
         except FileNotFoundError:
             pass
         except Exception as exc:

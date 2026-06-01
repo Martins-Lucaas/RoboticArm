@@ -66,43 +66,49 @@ sudo apt update && sudo apt install -y \
 # numpy<2 é obrigatório — cv_bridge do Humble é compilado contra NumPy 1.x
 pip install "numpy<2" opencv-python
 
+# Driver da mão COVVI — biblioteca ECI proprietária da COVVI Robotics
+pip install covvi-eci==1.1.6
+
 # Opcional — detector YOLOv8 (apenas grasp_ml_pack com use_yolo:=true)
 pip install ultralytics
 ```
 
-### Repositórios externos obrigatórios
+### Dependências externas — já resolvidas pelo repositório
 
-| Repo | Onde clonar | Função |
+| Pacote | Origem | Como entra |
 |---|---|---|
-| `DOBOT_6Axis_ROS2_V4` (só `cra_description`) | `src/` | URDF/Xacro do CR10 |
-| `eci_ros` (COVVI oficial) | `src/eci_ros-main/` | `covvi_interfaces` (msg/srv) + `covvi_hand_driver` (servidor TCP/ECI) |
+| `cra_description` | extraído de [`Dobot-Arm/DOBOT_6Axis_ROS2_V4`](https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4) | **já versionado** em `src/cra_description` — não precisa clonar nada |
+| `covvi_interfaces` + `covvi_hand_driver` (`src/eci_ros`) | **submódulo git** | clonado automaticamente com `git clone --recursive` (ver Instalação) |
 
-> **Nota:** mesmo em modo só-simulação, `covvi_interfaces` precisa estar compilado — o nó de controle manual faz import lazy desses tipos para enviar comandos à mão real quando habilitado.
+> **Créditos — driver da mão COVVI:** `src/eci_ros` é de autoria da **COVVI Robotics** ([`COVVI-Robotics/eci_ros`](https://github.com/COVVI-Robotics/eci_ros)). Ele entra como submódulo apontando para um fork ([`Martins-Lucaas/eci_ros`](https://github.com/Martins-Lucaas/eci_ros)) que **preserva integralmente a autoria original** e adiciona apenas um ajuste downstream de shutdown/reconexão da sessão ECI.
+
+> **Nota:** mesmo em modo só-simulação, `covvi_interfaces` precisa estar compilado — vários nós fazem import lazy desses tipos para comandar a mão real quando habilitada.
 
 ---
 
 ## Instalação
 
 ```bash
-# 1. Clonar este repositório
-git clone https://github.com/Martins-Lucaas/RoboticArm.git ~/RoboticArm
-cd ~/RoboticArm/src
-
-# 2. Interface ECI da mão COVVI
-git clone https://github.com/COVVI-Robotics/eci_ros.git eci_ros-main
-
-# 3. URDF do CR10 (só o pacote cra_description)
-git clone https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4.git
-cd DOBOT_6Axis_ROS2_V4
-find . -mindepth 1 -maxdepth 1 ! -name 'cra_description' -exec rm -rf {} +
+# 1. Clonar o repositório COM o submódulo eci_ros (driver da mão COVVI)
+git clone --recursive https://github.com/Martins-Lucaas/RoboticArm.git ~/RoboticArm
 cd ~/RoboticArm
 
-# 4. Compilar
+#    Já clonou sem --recursive? Puxe o submódulo:
+#    git submodule update --init --recursive
+
+# 2. Instalar dependências (apt + Python — ver seção "Dependências completas")
+
+# 3. Compilar o workspace inteiro e dar source
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-> Se aparecer `symbolic link ... Is a directory` na compilação: `rm -rf build install && colcon build --symlink-install`
+`cra_description` (URDF do CR10) já vem versionado no repositório; `eci_ros`
+chega pelo submódulo. Não é preciso clonar nada além do passo 1.
+
+> **Atualizar o submódulo depois:** `git submodule update --remote src/eci_ros`
+> **Erro `symbolic link ... Is a directory` na compilação:** `rm -rf build install && colcon build --symlink-install`
+> **Sempre dê `source install/setup.bash`** em cada terminal novo antes de qualquer `ros2 launch`/`ros2 run`.
 
 ---
 
@@ -115,20 +121,60 @@ source install/setup.bash
 | **`touch_pack`** | Célula de palpação tátil: protocolo Gupta 2021, GUI, logging, célula de carga ESP32 | [→ touch_pack/README.md](src/touch_pack/README.md) |
 | **`cra_description`** | URDF/Xacro do braço Dobot CR10 (extraído do repositório oficial Dobot) | [→ cra_description/README.md](src/cra_description/README.md) |
 
-### Iniciar rapidamente
+### Como rodar (cada pacote principal)
+
+> Em **todo** terminal novo: `cd ~/RoboticArm && source install/setup.bash`
+
+#### 1. Célula de manufatura — `grasp_ml_pack`
+Esteira + detecção de objetos + pick-and-place com a mão COVVI.
 
 ```bash
-source install/setup.bash
-
-# Célula de manufatura (pick & place)
 ros2 launch grasp_ml_pack conveyor_cell.launch.py
-
-# Célula de palpação tátil
-ros2 launch touch_pack tactile_cell.launch.py
-
-# Só a mão COVVI no Gazebo
-ros2 launch hand_pack cr10_covvi_gazebo.launch.py
 ```
+| Argumento | Valores | Padrão | Efeito |
+|---|---|---|---|
+| `use_yolo` | `true` / `false` | `false` | usa detector YOLOv8 (requer `pip install ultralytics`) |
+| `sim_only` | `true` / `false` | `true` | `false` habilita canal para o CR10/COVVI reais |
+| `autonomous` | `true` / `false` | `false` | roda o pipeline pick-and-place sem intervenção |
+| `no_gui` | `true` / `false` | `false` | sobe sem a GUI de controle |
+
+```bash
+# Exemplo: autônomo com YOLO
+ros2 launch grasp_ml_pack conveyor_cell.launch.py use_yolo:=true autonomous:=true
+```
+
+#### 2. Célula de palpação tátil — `touch_pack`
+Protocolo Gupta 2021: controle de força/deslizamento + GUI + logging + célula de carga.
+
+```bash
+ros2 launch touch_pack tactile_cell.launch.py
+```
+| Argumento | Valores | Padrão | Efeito |
+|---|---|---|---|
+| `end_effector` | `hand` / `touch_tool` | `hand` | `hand` → controle da mão COVVI; `touch_tool` → ponta de palpação + célula de carga |
+| `control_mode` | `sim_only` / `mirror` / `real_from_sim` | `sim_only` | espelhamento/comando do CR10 real |
+| `robot_ip` | IP | `192.168.5.2` | IP do controlador CR10 real |
+| `robot_dry_run` | `true` / `false` | `true` | `true` não abre sockets do robô real |
+| `no_gui` | `true` / `false` | `false` | sobe sem a GUI de palpação |
+
+```bash
+# Palpação com a ponta tátil (modo Palpação liberado + leitura da célula de carga na GUI):
+ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool
+
+# Mão COVVI (modo Palpação bloqueado; GUI mostra o controle da mão):
+ros2 launch touch_pack tactile_cell.launch.py end_effector:=hand
+```
+
+#### 3. Mão COVVI no braço CR10 (só visualização) — `hand_pack`
+```bash
+ros2 launch hand_pack cr10_covvi_gazebo.launch.py     # CR10 + COVVI no Gazebo
+ros2 launch hand_pack cr10_covvi_rviz.launch.py        # idem no RViz
+```
+
+#### Conectar o hardware real (opcional)
+- **Mão COVVI:** pela GUI (`touch_pack`/`grasp_ml_pack`), informe o IP e clique **Conectar** → **ECI ON** → **PWR ON**. Internamente sobe `ros2 run covvi_hand_driver server <IP>`.
+- **CR10:** ajuste `robot_ip` e use `control_mode:=mirror` (espelha o real no sim) ou `real_from_sim`. Para o *drag teach*, coloque o controlador em **modo REMOTE** no teach pendant.
+- **Célula de carga (ESP32):** firmware em `sensors/ForceDriver/`; transmite por UDP broadcast na porta 8080.
 
 ---
 
@@ -140,8 +186,8 @@ RoboticArm/
 │   ├── grasp_ml_pack/       célula de manufatura — detecção, grasp, GUI
 │   ├── hand_pack/           URDF COVVI + launches + GUIs auxiliares
 │   ├── touch_pack/          palpação tátil — FSM, GUI, força, logging
-│   ├── cra_description/     URDF do CR10 (fonte: DOBOT_6Axis_ROS2_V4)
-│   └── eci_ros-main/        interface oficial COVVI (covvi_interfaces + covvi_hand_driver)
+│   ├── cra_description/     URDF do CR10 (fonte: DOBOT_6Axis_ROS2_V4 — já incluso)
+│   └── eci_ros/             submódulo → COVVI eci_ros (covvi_interfaces + covvi_hand_driver)
 ├── images/                  screenshots e mídia
 ├── sensors/ForceDriver/     firmware ESP32 da célula de carga
 └── build/, install/, log/   artefatos do colcon (gerados)

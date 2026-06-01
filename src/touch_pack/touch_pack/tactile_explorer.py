@@ -43,10 +43,18 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import threading
 import time
 
 import numpy as np
+if tuple(int(x) for x in np.__version__.split(".")[:2]) >= (2, 0):
+    sys.exit(
+        f"[ERRO] NumPy {np.__version__} detectado — ABI incompatível com "
+        "ROS 2 Humble.\n"
+        "Corrija: pip install 'numpy<2'\n"
+        "Confirme com: python3 -c \"import numpy; print(numpy.__version__)\""
+    )
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -99,33 +107,26 @@ _HAND_POINTING_RAD = {
 _HAND_PRIMARY = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
 
 # ── Célula de carga calibrada (/load_cell/force_net) ─────────────────────────
+# Convenção de sinal: compressão = POSITIVO, tração = NEGATIVO.
 # O force_receiver_node publica força calibrada (N). A GUI aplica tara
-# (voltage0 - v_now) / slope → compressão é POSITIVA, repouso ≈ 0 N.
-# fz_corrected() retorna diretamente o valor tare-compensado positivo.
-_CONTACT_DETECT_N   = 0.2    # N: limiar de detecção de contato (positivo)
-_APPROACH_SAFETY_M  = 0.60   # m: descida máxima de segurança no CONTACT
+# (v_now - tare_v) / slope → compressão positiva, tração negativa.
+_CONTACT_DETECT_N          = 0.2    # N: limiar — usado no SLIDING para detecção de perda de contato
+_FORCE_COMPRESSION_LIMIT_N = 10.0   # N: limite de segurança — compressão máxima permitida
 _SLIDING_SAFETY_M   = 0.30   # m: distância máxima de segurança no SLIDING
 
 # ── CALIBRATING — PID de força ────────────────────────────────────────────────
-_CALIB_STABLE_TOL_N  = 0.3   # N: tolerância de estabilidade
-_CALIB_STABLE_TICKS  = 20    # ticks consecutivos estáveis → transita (600 ms)
-_CALIB_TIMEOUT_S     = 30.0  # s: timeout do CALIBRATING
 _FORCE_LOST_TICKS    = int(2.0 / 0.030)  # ticks sem contato antes de parar SLIDING
 
-# Saturações de segurança do PID de força.
-_PID_V_MAX_MS = 0.005   # 5 mm/s
-_PID_I_MAX_Ns = 5.0
 
 # ── Parâmetros do loop de streaming ──────────────────────────────────────────
 _CTRL_DT    = 0.030   # período de cada passo (33 Hz)
 _CTRL_LOOK  = 0.10    # time_from_start do _settle (s)
 _CTRL_WIN   = 10      # waypoints por batch de streaming (10 × 30 ms = 300 ms)
 _SLIDE_WIN  = 3       # janela do SLIDING com PID (3 × 30 ms = 90 ms lookahead)
-_PID_DT_S   = _CTRL_DT
 _JAC_LAM    = 0.01    # regularização DLS
 _ORI_GAIN   = 0.5     # ganho de correção de orientação
 _Z_CORR_GAIN = 0.5   # ganho de correção perpendicular durante sliding
-_HOME_MAX_RAD_S = 0.30  # velocidade máxima do HOME (≈ 17°/s por junta)
+_HOME_MAX_RAD_S = 0.10  # velocidade máxima do HOME (≈ 6°/s por junta)
 _SETTLE_TICKS   = 6     # ticks de espera entre fases (6 × 30 ms = 180 ms)
 
 # Velocidade máxima de referência (rad/s) por junta — equivale ao limite
@@ -143,21 +144,17 @@ class TactileExplorer(Node):
         self.declare_parameter('arm_base_z',          0.78)
         self.declare_parameter('approach_v_max_mms',  50.0)
         self.declare_parameter('approach_v_min_mms',   5.0)
-        self.declare_parameter('kp', 0.003)
-        self.declare_parameter('ki', 0.0002)
-        self.declare_parameter('kd', 0.0)
+        self.declare_parameter('descent_speed_mms', 5.0)
 
         self._phase: str = 'IDLE'
         self._busy = threading.Event()
         self._params_lock = threading.Lock()
-        self._target_force_n: float = 1.0
+        self._target_depth_mm: float = 5.0
+        self._target_slide_mm: float = 50.0
         self._slide_speed_mms: float = 10.0
         self._slide_dir_vec: np.ndarray = np.array([0.0, 1.0])
         self._approach_dir: np.ndarray | None = None
         self._user_home_q: np.ndarray | None = None
-        self._kp: float = float(self.get_parameter('kp').value)
-        self._ki: float = float(self.get_parameter('ki').value)
-        self._kd: float = float(self.get_parameter('kd').value)
         self._speed_factor_pct: float = 10.0   # % do slider da GUI (padrão 10 %)
         self._lc_lock = threading.Lock()
         self._lc_force_net: float = 0.0   # compressão positiva, tare-compensada
@@ -229,8 +226,10 @@ class TactileExplorer(Node):
             self.get_logger().error(f'JSON inválido em /palpation/start: {exc}')
             return
         with self._params_lock:
-            self._target_force_n = float(
-                payload.get('force_n', self._target_force_n))
+            self._target_depth_mm = float(
+                payload.get('depth_mm', self._target_depth_mm))
+            self._target_slide_mm = float(
+                payload.get('slide_dist_mm', self._target_slide_mm))
             self._slide_speed_mms = float(
                 payload.get('speed_mms', self._slide_speed_mms))
             approach = payload.get('approach_speed_mms')
@@ -248,9 +247,6 @@ class TactileExplorer(Node):
                     ])
                 except (TypeError, ValueError) as exc:
                     self.get_logger().warn(f'approach_speed_mms inválido: {exc}')
-            self._kp = float(payload.get('kp', self._kp))
-            self._ki = float(payload.get('ki', self._ki))
-            self._kd = float(payload.get('kd', self._kd))
             sf = payload.get('speed_factor_pct')
             if sf is not None:
                 try:
@@ -290,16 +286,15 @@ class TactileExplorer(Node):
         with self._lc_lock:
             force_net = self._lc_force_net
         with self._params_lock:
-            tgt       = float(self._target_force_n)
+            depth_mm  = float(self._target_depth_mm)
             speed_mms = self._slide_speed_mms
         msg = String()
         msg.data = json.dumps({
             'phase': self._phase,
-            'target_force_n': tgt,
+            'target_depth_mm': depth_mm,
             'force_net_n': float(force_net),
-            'measured_force_normal_n': float(abs(force_net)),
+            'measured_force_normal_n': float(force_net),   # + compressão, − tração
             'speed_mms': speed_mms,
-            'kp': self._kp, 'ki': self._ki, 'kd': self._kd,
         })
         self._status_pub.publish(msg)
 
@@ -822,131 +817,102 @@ class TactileExplorer(Node):
         # real e poderia causar salto no primeiro passo do CONTACT.
         return True
 
-    def _phase_contact(self) -> bool:
-        """CONTACT — desce em −Z até detectar força ou distância de segurança."""
-        self._set_phase('CONTACT')
+    def _phase_descending(self) -> bool:
+        """DESCENDING — desce o TCP perpendicular à superfície pela profundidade definida.
+
+        Controle puramente posicional: sem PID de força. O usuário observa a
+        força de compressão aumentando conforme o TCP desce. Aborta se a força
+        ultrapassar _FORCE_COMPRESSION_LIMIT_N (segurança de 10 N).
+        """
+        self._set_phase('DESCENDING')
         self._settle()
 
-        v_approach = max(0.001,
-                         float(self.get_parameter('approach_v_max_mms').value) * 1e-3)
-
+        # Calcula approach_dir a partir da pose atual do TCP (coluna Z do frame).
         T_pre = forward_kinematics(self._q_now(), T_end=T_TOUCH_TOOL_ATTACH)
         approach_dir = T_pre[:3, 2].copy()
         if float(np.linalg.norm(approach_dir)) < 0.1:
             approach_dir = np.array([0.0, 0.0, -1.0])
         self._approach_dir = approach_dir.copy()
 
-        self.get_logger().info(
-            f'CONTACT: descida até {_APPROACH_SAFETY_M*100:.0f} cm (segurança), '
-            f'velocidade {v_approach*1000:.0f} mm/s, '
-            f'limiar contato {_CONTACT_DETECT_N:.2f} N (LC tare-compensada), '
-            f'direção={approach_dir.round(3)}')
-
-        # Usa _cartesian_stream com limiar da LC tare-compensada (positivo).
-        outcome = self._cartesian_stream(
-            approach_dir, _APPROACH_SAFETY_M,
-            v_const_ms=v_approach,
-            lock_ori=True,
-            force_threshold_n=_CONTACT_DETECT_N)
-
-        self._settle()
-
-        if outcome == 'force':
-            self.get_logger().info(
-                f'CONTACT: detectado! fz_corr={self._fz_corrected():.3f} N')
-            return True
-        if outcome == 'done':
-            self.get_logger().warn(
-                'CONTACT: distância de segurança atingida sem força — abortando.')
-            return False
-        return False
-
-    def _phase_calibrating(self) -> bool:
-        """CALIBRATING — PID de força até estabilizar no setpoint do usuário.
-
-        Move ao longo do eixo de approach (normal à superfície) para regular
-        a força medida pela célula calibrada. Transita para SLIDING quando
-        |erro| < _CALIB_STABLE_TOL_N por _CALIB_STABLE_TICKS ticks seguidos.
-        """
-        self._set_phase('CALIBRATING')
         with self._params_lock:
-            target_f = float(self._target_force_n)
-            kp, ki, kd = self._kp, self._ki, self._kd
+            depth_m      = float(self._target_depth_mm) / 1000.0
+            approach_mms = float(self.get_parameter('approach_v_max_mms').value)
+            # Velocidade de descida = approach_v_max × speed_factor (igual ao robô em 10 %)
+            speed_ms = max(0.001,
+                           approach_mms * (self._speed_factor_pct / 100.0) / 1000.0)
 
-        approach_dir = (self._approach_dir if self._approach_dir is not None
-                        else np.array([0., 0., -1.]))
-        I6 = np.eye(6)
+        if depth_m <= 0.0:
+            self.get_logger().warn('DESCENDING: profundidade = 0 mm — pulando fase.')
+            return True
+        I6    = np.eye(6)
+        dt    = _CTRL_DT
         v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
-        dt = _CTRL_DT
 
-        integral = 0.0
-        prev_err = 0.0
-        stable_ticks = 0
-        t_start = time.time()
-
+        descended_m = 0.0
         self.get_logger().info(
-            f'CALIBRATING: alvo={target_f:.2f} N  '
-            f'Kp={kp:.4g} Ki={ki:.4g} Kd={kd:.4g}  '
-            f'timeout={_CALIB_TIMEOUT_S:.0f} s')
+            f'DESCENDING: alvo={depth_m * 1000:.1f} mm  '
+            f'vel={speed_ms * 1000:.1f} mm/s  '
+            f'(approach={approach_mms:.0f} mm/s × {self._speed_factor_pct:.0f}%)')
 
-        while True:
+        while descended_m < depth_m:
             if self._stop_requested.is_set():
                 self._stop_requested.clear()
-                self.get_logger().warn('[STOP] CALIBRATING interrompido.')
-                return False
-
-            if time.time() - t_start > _CALIB_TIMEOUT_S:
-                self.get_logger().error(
-                    f'CALIBRATING: timeout {_CALIB_TIMEOUT_S:.0f} s '
-                    f'(estável {stable_ticks}/{_CALIB_STABLE_TICKS} ticks).')
+                self.get_logger().warn('[STOP] DESCENDING interrompido pelo usuário.')
                 return False
 
             t0 = time.time()
 
-            fz_corr = self._fz_corrected()
-            f_mag = abs(fz_corr)
-            err = target_f - f_mag
+            fz = self._fz_corrected()  # + compressão, − tração
+            if fz > _FORCE_COMPRESSION_LIMIT_N:
+                self.get_logger().error(
+                    f'SEGURANÇA: compressão {fz:.1f} N > '
+                    f'{_FORCE_COMPRESSION_LIMIT_N:.0f} N — abortando DESCENDING.')
+                return False
 
-            integral = float(np.clip(
-                integral + err * dt, -_PID_I_MAX_Ns, _PID_I_MAX_Ns))
-            deriv = (err - prev_err) / dt
-            prev_err = err
-
-            v_cmd = float(np.clip(
-                kp * err + ki * integral + kd * deriv,
-                -_PID_V_MAX_MS, _PID_V_MAX_MS))
-
-            # Desloca ao longo do eixo de approach (normal à superfície).
+            step_m = min(speed_ms * dt, depth_m - descended_m)
             tw = np.zeros(6)
-            tw[:3] = approach_dir * v_cmd * dt
+            tw[:3] = approach_dir * step_m
 
             q = self._q_now()
             J = jacobian(q, T_end=T_TOUCH_TOOL_ATTACH)
             try:
-                dq = J.T @ np.linalg.solve(
-                    J @ J.T + _JAC_LAM**2 * I6, tw)
+                dq = J.T @ np.linalg.solve(J @ J.T + _JAC_LAM**2 * I6, tw)
             except np.linalg.LinAlgError:
                 time.sleep(dt)
                 continue
 
             q_new = np.clip(q + dq, JOINT_MIN, JOINT_MAX)
-            vel = np.clip((q_new - q) / dt, -v_lim, v_lim)
+            vel   = np.clip((q_new - q) / dt, -v_lim, v_lim)
             self._stream_q(q_new, dt, velocities=vel)
-
-            # Critério de estabilidade
-            if abs(err) < _CALIB_STABLE_TOL_N:
-                stable_ticks += 1
-                if stable_ticks >= _CALIB_STABLE_TICKS:
-                    self.get_logger().info(
-                        f'CALIBRATING: estável! '
-                        f'fz_corr={fz_corr:.3f} N, err={err:.3f} N')
-                    return True
-            else:
-                stable_ticks = 0
+            descended_m += step_m
 
             elapsed = time.time() - t0
             if elapsed < dt:
                 time.sleep(dt - elapsed)
+
+        self.get_logger().info(
+            f'DESCENDING: {descended_m * 1000:.1f} mm concluídos — '
+            f'fz={self._fz_corrected():.2f} N')
+        return True
+
+    def _phase_hold(self, hold_s: float = 3.0) -> bool:
+        """HOLD — mantém posição por `hold_s` segundos antes do SLIDING.
+
+        Permite verificar visualmente se a profundidade está correta.
+        Interrompível pelo botão Parar.
+        """
+        self._set_phase('HOLD')
+        q = self._q_now()
+        zero_vel = np.zeros(6)
+        t_start = time.time()
+        while time.time() - t_start < hold_s:
+            if self._stop_requested.is_set():
+                self._stop_requested.clear()
+                self.get_logger().warn('[STOP] HOLD interrompido pelo usuário.')
+                return False
+            self._stream_q(q, _CTRL_LOOK + _CTRL_DT, velocities=zero_vel)
+            time.sleep(_CTRL_DT)
+        return True
 
     def _phase_sliding(self) -> bool:
         """SLIDING — movimento lateral com PID de força simultâneo.
@@ -961,10 +927,10 @@ class TactileExplorer(Node):
         self._settle()
 
         with self._params_lock:
-            speed_ms = max(0.001, self._slide_speed_mms * 1e-3)
-            dir_xy   = self._slide_dir_vec.copy()
-            target_f = float(self._target_force_n)
-            kp, ki, kd = self._kp, self._ki, self._kd
+            speed_ms   = max(0.001, self._slide_speed_mms * 1e-3)
+            dir_xy     = self._slide_dir_vec.copy()
+            slide_lim_m = min(float(self._target_slide_mm) / 1000.0,
+                              _SLIDING_SAFETY_M)
 
         approach_dir = (self._approach_dir if self._approach_dir is not None
                         else np.array([0., 0., -1.]))
@@ -985,18 +951,31 @@ class TactileExplorer(Node):
         perp_dir = perp / pnorm if pnorm > 1e-9 else None
         p0_perp  = float(p_start @ perp_dir) if perp_dir is not None else None
 
+        # Componente de approach_dir perpendicular a dir_world.
+        # Quando approach_dir tem componente paralela ao deslizamento
+        # (ex.: ferramenta levemente inclinada na direção Y), o depth_err
+        # acumula erro do movimento lateral e a correção disputa com o
+        # deslizamento, variando a altura. Removendo essa componente, a
+        # correção de profundidade age apenas no subespaço ortogonal ao
+        # movimento lateral — sem acoplamento e sem variação de altura.
+        _lat_comp = float(np.dot(approach_dir, dir_world))
+        _adp = approach_dir - _lat_comp * dir_world
+        _adp_norm = float(np.linalg.norm(_adp))
+        approach_dir_eff = (_adp / _adp_norm) if _adp_norm > 1e-6 else approach_dir
+
         I6 = np.eye(6)
         v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
         dt = _CTRL_DT
 
-        integral = 0.0
-        prev_err  = 0.0
-        force_lost_count = 0
+        dist_planned_m   = 0.0   # distância planejada acumulada (não depende de FK)
+        step_m = speed_ms * dt   # deslocamento por tick no plano
 
         self.get_logger().info(
             f'SLIDING: speed={speed_ms*1e3:.1f} mm/s  '
             f'dir=({dir_world[0]:+.0f},{dir_world[1]:+.0f},0)  '
-            f'alvo={target_f:.2f} N  segurança={_SLIDING_SAFETY_M*1e3:.0f} mm')
+            f'alvo={slide_lim_m*1e3:.0f} mm  '
+            f'approach_eff=({approach_dir_eff[0]:+.3f},'
+            f'{approach_dir_eff[1]:+.3f},{approach_dir_eff[2]:+.3f})')
 
         while True:
             if self._stop_requested.is_set():
@@ -1005,38 +984,34 @@ class TactileExplorer(Node):
 
             t0 = time.time()
 
-            # Verifica distância de segurança
+            # Verificação 1: distância planejada acumulada (determinístico).
+            # Não depende de atraso do /joint_states — para assim que os
+            # waypoints suficientes foram enviados ao JTC.
+            if dist_planned_m >= slide_lim_m:
+                self.get_logger().info(
+                    f'SLIDING: {slide_lim_m*1e3:.0f} mm planejados — parando.')
+                break
+
+            # Verificação 2: posição real via FK (segurança extra).
             q = self._q_now()
             T_cur = forward_kinematics(q, T_end=T_TOUCH_TOOL_ATTACH)
             progress = float(np.dot(T_cur[:3, 3] - p_start, dir_world))
-            if progress >= _SLIDING_SAFETY_M:
+            if progress >= slide_lim_m:
                 self.get_logger().info(
-                    f'SLIDING: distância de segurança '
-                    f'{_SLIDING_SAFETY_M*1e3:.0f} mm atingida.')
+                    f'SLIDING: {slide_lim_m*1e3:.0f} mm (FK) atingidos.')
                 break
 
-            # PID de força
+            # PID de força (+ compressão, − tração)
             fz_corr = self._fz_corrected()
-            f_mag   = abs(fz_corr)
 
-            if f_mag < _CONTACT_DETECT_N:
-                force_lost_count += 1
-                if force_lost_count > _FORCE_LOST_TICKS:
-                    self.get_logger().warn(
-                        'SLIDING: força perdida por > 2 s — parando.')
-                    break
-            else:
-                force_lost_count = 0
+            if fz_corr > _FORCE_COMPRESSION_LIMIT_N:
+                self.get_logger().error(
+                    f'SEGURANÇA: compressão {fz_corr:.1f} N > '
+                    f'{_FORCE_COMPRESSION_LIMIT_N:.0f} N — abortando SLIDING.')
+                break
 
-            err = target_f - f_mag
-            integral = float(np.clip(
-                integral + err * dt, -_PID_I_MAX_Ns, _PID_I_MAX_Ns))
-            deriv = (err - prev_err) / dt
-            prev_err = err
-
-            v_force = float(np.clip(
-                kp * err + ki * integral + kd * deriv,
-                -_PID_V_MAX_MS, _PID_V_MAX_MS))
+            # Detecção de força perdida desativada temporariamente.
+            # force_lost_count não é usado.
 
             # ── Rolling-window de _SLIDE_WIN waypoints ──────────────────
             msg = JointTrajectory()
@@ -1047,8 +1022,10 @@ class TactileExplorer(Node):
 
             for k in range(1, _SLIDE_WIN + 1):
                 tw = np.zeros(6)
-                # Passo lateral constante + correção de força normal
-                tw[:3] = dir_world * speed_ms * dt + approach_dir * v_force * dt
+                # Passo lateral — limita o último passo para não ultrapassar alvo
+                remaining = max(0.0, slide_lim_m - dist_planned_m - (k - 1) * step_m)
+                lateral   = min(step_m, remaining)
+                tw[:3] = dir_world * lateral
                 # Lock de orientação
                 R_err = R0 @ T_iter[:3, :3].T
                 tw[3:] = _ORI_GAIN * 0.5 * np.array([
@@ -1056,7 +1033,10 @@ class TactileExplorer(Node):
                     R_err[0, 2] - R_err[2, 0],
                     R_err[1, 0] - R_err[0, 1],
                 ])
-                # Lock perpendicular
+                # Lock de profundidade — corrige apenas no subespaço ⊥ ao deslizamento.
+                depth_err = float(np.dot(p_start - T_iter[:3, 3], approach_dir_eff))
+                tw[:3] += _Z_CORR_GAIN * depth_err * approach_dir_eff
+                # Lock perpendicular — sem ganho na direção transversal ao sliding
                 if perp_dir is not None and p0_perp is not None:
                     perp_err = p0_perp - float(T_iter[:3, 3] @ perp_dir)
                     tw[:3] += _Z_CORR_GAIN * perp_err * perp_dir
@@ -1089,6 +1069,7 @@ class TactileExplorer(Node):
                 self.get_logger().warn('SLIDING: Jacobiano singular — passo descartado.')
             elif msg.points:
                 self._arm_traj_pub.publish(msg)
+                dist_planned_m += len(msg.points) * step_m
 
             elapsed = time.time() - t0
             if elapsed < dt:
@@ -1134,15 +1115,12 @@ class TactileExplorer(Node):
         try:
             if not self._phase_goto_home():
                 self._set_phase('ABORTED'); return
-            if not self._phase_contact():
+            if not self._phase_descending():
                 self._set_phase('ABORTED'); return
-            if not self._phase_calibrating():
+            if not self._phase_hold():
                 self._set_phase('ABORTED'); return
             if not self._phase_sliding():
                 self._set_phase('ABORTED'); return
-            if not self._phase_retract():
-                self._set_phase('ABORTED'); return
-            # Retorna à posição home após concluir
             self._phase_goto_home()
             self._set_phase('DONE')
             time.sleep(0.5)

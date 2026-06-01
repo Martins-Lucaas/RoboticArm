@@ -79,7 +79,7 @@
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="coupling_gray">
-        <color rgba="0.35 0.35 0.40 1.0"/>
+        <color rgba="0.45 0.45 0.45 1.0"/>
       </material>
     </visual>
     <collision name="col_lower_coupling">
@@ -113,7 +113,7 @@
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="silver">
-        <color rgba="0.80 0.80 0.85 1.0"/>
+        <color rgba="0.82 0.82 0.88 1.0"/>
       </material>
     </visual>
     <collision name="col_sensor">
@@ -143,7 +143,7 @@
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="coupling_gray">
-        <color rgba="0.35 0.35 0.40 1.0"/>
+        <color rgba="0.45 0.45 0.45 1.0"/>
       </material>
     </visual>
     <collision name="col_upper_coupling">
@@ -182,8 +182,8 @@
         <mesh filename="package://touch_pack/meshes/touch_tool_square_20x20.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
-      <material name="light_red">
-        <color rgba="1.0 0.50 0.50 1.0"/>
+      <material name="tool_white">
+        <color rgba="0.95 0.95 0.95 1.0"/>
       </material>
     </visual>
 
@@ -275,6 +275,14 @@
     <maxContacts>4</maxContacts>
     <minDepth>0.0002</minDepth>
     <maxVel>0.05</maxVel>
+    <!-- touch_tool → branco -->
+    <visual>
+      <material>
+        <ambient>0.85 0.85 0.85 1</ambient>
+        <diffuse>0.95 0.95 0.95 1</diffuse>
+        <specular>0.30 0.30 0.30 1</specular>
+      </material>
+    </visual>
   </gazebo>
 
   <gazebo reference="Link6">
@@ -291,6 +299,14 @@
     <maxContacts>4</maxContacts>
     <minDepth>0.0002</minDepth>
     <maxVel>0.05</maxVel>
+    <!-- célula de carga → prateado (specular alto = brilho metálico) -->
+    <visual>
+      <material>
+        <ambient>0.55 0.55 0.58 1</ambient>
+        <diffuse>0.82 0.82 0.88 1</diffuse>
+        <specular>0.95 0.95 1.00 1</specular>
+      </material>
+    </visual>
   </gazebo>
 
   <gazebo reference="lower_coupling_link">
@@ -303,6 +319,14 @@
     <maxContacts>4</maxContacts>
     <minDepth>0.0002</minDepth>
     <maxVel>0.05</maxVel>
+    <!-- acoplador inferior → cinza -->
+    <visual>
+      <material>
+        <ambient>0.25 0.25 0.25 1</ambient>
+        <diffuse>0.45 0.45 0.45 1</diffuse>
+        <specular>0.20 0.20 0.20 1</specular>
+      </material>
+    </visual>
   </gazebo>
 
   <gazebo reference="upper_coupling_link">
@@ -315,6 +339,14 @@
     <maxContacts>4</maxContacts>
     <minDepth>0.0002</minDepth>
     <maxVel>0.05</maxVel>
+    <!-- acoplador superior → cinza -->
+    <visual>
+      <material>
+        <ambient>0.25 0.25 0.25 1</ambient>
+        <diffuse>0.45 0.45 0.45 1</diffuse>
+        <specular>0.20 0.20 0.20 1</specular>
+      </material>
+    </visual>
   </gazebo>
 
 </robot>

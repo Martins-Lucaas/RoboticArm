@@ -36,6 +36,38 @@ from launch_ros.actions import Node
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Materiais Gazebo (override de cor por link) — aplicados na conversão
+# URDF→SDF do spawn_entity. Em Gazebo Classic a cor do <material><color>
+# do URDF nem sempre renderiza; o override <gazebo reference><visual>
+# <material><ambient/diffuse/specular> é o que efetivamente colore o link.
+#   touch_tool   → branco
+#   acopladores  → cinza
+#   célula carga → prateado (specular alto = brilho metálico)
+# ──────────────────────────────────────────────────────────────────────
+_GZ_MAT_WHITE = (
+    '<visual><material>'
+    '<ambient>0.85 0.85 0.85 1</ambient>'
+    '<diffuse>0.95 0.95 0.95 1</diffuse>'
+    '<specular>0.30 0.30 0.30 1</specular>'
+    '</material></visual>'
+)
+_GZ_MAT_GRAY = (
+    '<visual><material>'
+    '<ambient>0.25 0.25 0.25 1</ambient>'
+    '<diffuse>0.45 0.45 0.45 1</diffuse>'
+    '<specular>0.20 0.20 0.20 1</specular>'
+    '</material></visual>'
+)
+_GZ_MAT_SILVER = (
+    '<visual><material>'
+    '<ambient>0.55 0.55 0.58 1</ambient>'
+    '<diffuse>0.82 0.82 0.88 1</diffuse>'
+    '<specular>0.95 0.95 1.00 1</specular>'
+    '</material></visual>'
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Helpers de saneamento do URDF combinado
 # ──────────────────────────────────────────────────────────────────────
 def _fix_virtual_link_inertia(urdf_body: str) -> str:
@@ -98,10 +130,16 @@ def _build_robot_urdf(end_effector: str):
         cr10_urdf)
 
     # ── Fim do URDF: links/juntas do efector + Gazebo refs ────────────
+    # Unifica selfCollide no xacro: substitui true→false antes de adicionar
+    # arm_gz, evitando "multiple inconsistent <self_collide>" do parser_urdf.
+    cr10_urdf = cr10_urdf.replace('<selfCollide>true</selfCollide>',
+                                   '<selfCollide>false</selfCollide>')
     arm_links = re.findall(r'<link\s+name="([^"]+)"', cr10_urdf)
+    # Só adiciona self_collide para links sem <gazebo reference="..."> no xacro.
+    existing_arm_gz = set(re.findall(r'<gazebo\s+reference="([^"]+)"', cr10_urdf))
     arm_gz = ''.join(
         f'\n  <gazebo reference="{n}"><self_collide>false</self_collide></gazebo>'
-        for n in arm_links)
+        for n in arm_links if n not in existing_arm_gz)
 
     if end_effector == 'hand':
         full_urdf = _build_hand_suffix(cr10_urdf, hand_pack_share, arm_gz)
@@ -151,6 +189,12 @@ def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str) -> str
     hand_body = _fix_virtual_link_inertia(hand_body)
     hand_body = clamp_hand_joint_limits(hand_body)
     hand_body = _stabilize_hand_joints(hand_body)
+    # Remove <gazebo reference="..."> estáticos com propriedades de física (mu1,
+    # kd, etc.) para evitar "multiple inconsistent" do parser_urdf ao reduzir
+    # fixed joints: o loop abaixo adiciona valores canônicos para todos os links.
+    hand_body = re.sub(
+        r'<gazebo\s+reference="[^"]+">(?:(?!</gazebo>).)*?<mu1>(?:(?!</gazebo>).)*?</gazebo>\s*',
+        '', hand_body, flags=re.DOTALL)
     hand_body = inject_visual_skin_layer(hand_body)
 
     hand_link_names = re.findall(r'<link\s+name="([^"]+)"', hand_body)
@@ -220,7 +264,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
           <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="coupling_gray">
-          <color rgba="0.35 0.35 0.40 1.0"/>
+          <color rgba="0.45 0.45 0.45 1.0"/>
         </material>
       </visual>
       <collision name="col_lower_coupling">
@@ -242,7 +286,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
           <mesh filename="file://{sensor_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="silver">
-          <color rgba="0.80 0.80 0.85 1.0"/>
+          <color rgba="0.82 0.82 0.88 1.0"/>
         </material>
       </visual>
       <collision name="col_sensor">
@@ -264,7 +308,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
           <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="coupling_gray">
-          <color rgba="0.35 0.35 0.40 1.0"/>
+          <color rgba="0.45 0.45 0.45 1.0"/>
         </material>
       </visual>
       <collision name="col_upper_coupling">
@@ -285,8 +329,8 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         <geometry>
           <mesh filename="file://{tool_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
-        <material name="light_red">
-          <color rgba="1.0 0.50 0.50 1.0"/>
+        <material name="tool_white">
+          <color rgba="0.95 0.95 0.95 1.0"/>
         </material>
       </visual>
       <collision name="col_body">
@@ -338,6 +382,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_GRAY +
         '</gazebo>'
         '\n  <gazebo reference="force_sensor_link">'
         '<self_collide>false</self_collide>'
@@ -347,6 +392,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_SILVER +
         '</gazebo>'
         '\n  <gazebo reference="upper_coupling_link">'
         '<self_collide>false</self_collide>'
@@ -356,6 +402,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_GRAY +
         '</gazebo>'
         '\n  <gazebo reference="touch_tool_link">'
         '<self_collide>false</self_collide>'
@@ -365,6 +412,7 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<maxContacts>4</maxContacts>'
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
+        + _GZ_MAT_WHITE +
         '</gazebo>'
     )
 
@@ -427,7 +475,8 @@ def launch_setup(context, *args, **kwargs):
     # ── Home setter ───────────────────────────────────────────────────
     home_setter = Node(
         package='touch_pack', executable='gazebo_home_setter',
-        parameters=[{'use_sim_time': True, 'robot_ip': robot_ip}])
+        parameters=[{'use_sim_time': True, 'robot_ip': robot_ip,
+                     'end_effector': end_effector}])
 
     # ── Controllers ───────────────────────────────────────────────────
     load_jsb = Node(
@@ -451,8 +500,10 @@ def launch_setup(context, *args, **kwargs):
     gui_node = Node(
         package='touch_pack', executable='palpation_gui',
         parameters=[{'use_sim_time': True,
-                     'robot_ip':   robot_ip,
-                     'robot_mode': robot_mode}],
+                     'robot_ip':     robot_ip,
+                     'robot_mode':   robot_mode,
+                     # Gate do modo Palpação: só liberado com end_effector=touch_tool.
+                     'end_effector': end_effector}],
         condition=UnlessCondition(LaunchConfiguration('no_gui')))
 
     logger_node = Node(
@@ -461,13 +512,17 @@ def launch_setup(context, *args, **kwargs):
     force_rx_node = Node(
         package='touch_pack', executable='force_receiver')
 
-    app_nodes = [explorer_node, gui_node, logger_node, force_rx_node]
+    # Nós que não dependem de controllers — sobem logo após home_setter.
+    early_nodes = [gui_node, logger_node, force_rx_node]
+    # Explorer precisa da action do cr10_group_controller — sobe por último.
+    late_nodes  = [explorer_node]
 
     # ── Cadeia de dependências: varia com end_effector ────────────────
     after_spawn = RegisterEventHandler(
         OnProcessExit(target_action=spawn_robot, on_exit=[home_setter]))
+    # GUI, logger e force_rx sobem em paralelo com load_jsb — sem esperar controllers.
     after_home = RegisterEventHandler(
-        OnProcessExit(target_action=home_setter, on_exit=[load_jsb]))
+        OnProcessExit(target_action=home_setter, on_exit=[load_jsb] + early_nodes))
     after_jsb = RegisterEventHandler(
         OnProcessExit(target_action=load_jsb, on_exit=[load_arm]))
 
@@ -479,11 +534,11 @@ def launch_setup(context, *args, **kwargs):
         after_arm = RegisterEventHandler(
             OnProcessExit(target_action=load_arm, on_exit=[load_hand]))
         after_last = RegisterEventHandler(
-            OnProcessExit(target_action=load_hand, on_exit=app_nodes))
+            OnProcessExit(target_action=load_hand, on_exit=late_nodes))
         chain = [after_spawn, after_home, after_jsb, after_arm, after_last]
     else:  # touch_tool — sem hand controller
         after_arm = RegisterEventHandler(
-            OnProcessExit(target_action=load_arm, on_exit=app_nodes))
+            OnProcessExit(target_action=load_arm, on_exit=late_nodes))
         chain = [after_spawn, after_home, after_jsb, after_arm]
 
     return [gazebo, rsp, spawn_robot] + chain

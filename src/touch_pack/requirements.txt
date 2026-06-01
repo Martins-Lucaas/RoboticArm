@@ -1,0 +1,3 @@
+# ROS 2 Humble e cv_bridge são compilados contra a ABI do NumPy 1.x.
+# NumPy 2.x quebra compatibilidade em tempo de execução → segfault.
+numpy<2

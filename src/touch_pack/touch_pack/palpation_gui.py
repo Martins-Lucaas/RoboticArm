@@ -14,7 +14,7 @@ Funcionalidades:
   • Botão ⏹ E-STOP — chama StopRobot+DisableRobot e abre a mão.
 
 Comunicação ROS:
-  pub  /palpation/start    std_msgs/String   JSON {force_n, speed_mms, kp, ki, kd, slide_dir}
+  pub  /palpation/start    std_msgs/String   JSON {depth_mm, speed_mms, slide_dir}
   sub  /palpation/status   std_msgs/String   JSON {phase, measured_force_normal_n,...}
   sub  /ft_sensor/wrench   geometry_msgs/WrenchStamped
   cli  covvi_interfaces/SetCurrentGrip   (lazy)
@@ -31,12 +31,20 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
 from tkinter import ttk
 
 import numpy as np
+if tuple(int(x) for x in np.__version__.split(".")[:2]) >= (2, 0):
+    sys.exit(
+        f"[ERRO] NumPy {np.__version__} detectado — ABI incompatível com "
+        "ROS 2 Humble / cv_bridge.\n"
+        "Corrija: pip install 'numpy<2'\n"
+        "Confirme com: python3 -c \"import numpy; print(numpy.__version__)\""
+    )
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
@@ -109,9 +117,33 @@ FONT_BIG    = ('Segoe UI', 26, 'bold')
 FONT_MONO   = ('JetBrains Mono', 11)
 FONT_MONO_S = ('JetBrains Mono', 10)
 
+
+def _resolve_fonts(_root) -> None:
+    """Mapeia FONT_* para os named fonts internos do Tk.
+
+    Raiz do crash: qualquer font= com tamanho/peso diferente dos built-ins
+    força o Tk a criar um novo XftFont via fontconfig. No Tk 8.6 / Ubuntu
+    22.04 com a configuração de display desta máquina, cada chamada ao
+    fontconfig corrompe o heap; após ~50 widgets o crash acontece.
+
+    Solução definitiva: usar APENAS os 9 named fonts embutidos do Tk, que
+    são pré-alocados durante tk.Tk() sem nenhuma chamada ao fontconfig.
+    Widget criados com esses nomes encontram o XftFont já no cache → zero
+    chamadas ao fontconfig durante _build_ui().
+    """
+    global FONT_TITLE, FONT_HEAD, FONT_LBL, FONT_SMALL, FONT_BIG
+    global FONT_MONO, FONT_MONO_S
+    FONT_TITLE  = 'TkCaptionFont'       # 12 pt bold
+    FONT_HEAD   = 'TkCaptionFont'       # 12 pt bold
+    FONT_LBL    = 'TkDefaultFont'       # 10 pt
+    FONT_SMALL  = 'TkSmallCaptionFont'  #  9 pt
+    FONT_BIG    = 'TkCaptionFont'       # 12 pt bold (display de força)
+    FONT_MONO   = 'TkFixedFont'         # 10 pt mono
+    FONT_MONO_S = 'TkFixedFont'         # 10 pt mono
+
 # Faixas dos parâmetros — adequadas ao protocolo Gupta et al. 2021.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 1.0,  30.0,  10.0    # mm/s
-FORCE_MIN, FORCE_MAX, FORCE_DEFAULT = 0.2,   5.0,   1.0    # N
+FORCE_MIN, FORCE_MAX, FORCE_DEFAULT = 0.2,   5.0,   1.0    # N (apenas display)
 # Velocidade de aproximação (CONTACT/RETRACT) — perfil fast→slow no
 # explorer usa este valor como max; min é derivado como 20 % do max.
 APPROACH_MIN, APPROACH_MAX, APPROACH_DEFAULT = 5.0, 100.0, 50.0  # mm/s
@@ -121,12 +153,10 @@ SPEED_FACTOR_MIN, SPEED_FACTOR_MAX, SPEED_FACTOR_DEFAULT = 1, 100, 10  # %
 # Scales inversely: 100 % → 0.3 s, 1 % → 30 s.
 _VEL_BASE_S = 3.0   # duration at 10 %
 
-# Ganhos PID padrão do controle de força (CALIBRATING/SLIDING). v_cmd (m/s) sai
-# do PID a partir do erro em N; sintonize na própria GUI durante a
-# calibração — defaults conservadores por segurança.
-KP_DEFAULT, KP_MIN, KP_MAX, KP_STEP = 0.0030, 0.0, 0.020,  0.0005   # (m/s)/N
-KI_DEFAULT, KI_MIN, KI_MAX, KI_STEP = 0.0002, 0.0, 0.010,  0.0002   # (m/s)/(N·s)
-KD_DEFAULT, KD_MIN, KD_MAX, KD_STEP = 0.0000, 0.0, 0.005,  0.0001   # m/N
+# Profundidade de descida perpendicular — controle por posição (sem PID de força).
+DEPTH_MIN,  DEPTH_MAX,  DEPTH_DEFAULT  = 0.0, 120.0,  5.0   # mm
+SLIDE_DIST_MIN, SLIDE_DIST_MAX, SLIDE_DIST_DEFAULT = 1.0, 300.0, 50.0  # mm
+_FORCE_COMPRESSION_LIMIT_N = 10.0  # N: limite de segurança (espelhado do explorer)
 
 # Período de publicação do bridge de força (real CR10 → /ft_sensor/wrench).
 FORCE_BRIDGE_PERIOD_S = 0.020   # 50 Hz
@@ -172,6 +202,36 @@ HAND_CLOSE_DEG = {'Thumb': 70, 'Index': 80, 'Middle': 80,
 HAND_POINT_DEG = {'Thumb': 30, 'Index': 0, 'Middle': 80,
                   'Ring':  80, 'Little': 80, 'Rotate': 0}
 
+# ── Grip-patterns embutidos da mão COVVI (CurrentGripID 1–14) ─────────
+# Para cada padrão de pega:
+#   • eci_id → SetCurrentGrip move a MÃO REAL via ECI (id de fábrica COVVI)
+#   • graus  → pose equivalente para visualizar no sim Gazebo (juntas primárias)
+# Os ângulos foram derivados das presets de fábrica (escala ECI 0–200 → graus:
+# dedos /200×90°, Rotate /200×60°) e respeitam HAND_LIMITS_DEG.
+COVVI_GRIPS: dict[str, tuple[int | None, dict[str, float]]] = {
+    'Tripod':       (1,    {'Thumb': 56, 'Index': 52, 'Middle': 52, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
+    'Power':        (2,    {'Thumb': 70, 'Index': 74, 'Middle': 74, 'Ring': 72, 'Little': 70, 'Rotate': 12}),
+    'Trigger':      (3,    {'Thumb': 45, 'Index':  0, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 21}),
+    'Prec. Open':   (4,    {'Thumb': 23, 'Index': 23, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
+    'Prec. Closed': (5,    {'Thumb': 47, 'Index': 45, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate': 47}),
+    'Key':          (6,    {'Thumb': 52, 'Index': 59, 'Middle': 59, 'Ring': 56, 'Little': 52, 'Rotate':  3}),
+    'Finger':       (7,    {'Thumb': 27, 'Index':  0, 'Middle': 45, 'Ring': 45, 'Little': 45, 'Rotate': 18}),
+    'Cylinder':     (8,    {'Thumb': 59, 'Index': 68, 'Middle': 70, 'Ring': 68, 'Little': 63, 'Rotate': 11}),
+    'Column':       (9,    {'Thumb': 45, 'Index': 63, 'Middle': 63, 'Ring': 63, 'Little': 63, 'Rotate': 24}),
+    'Relaxed':      (10,   {'Thumb':  9, 'Index':  9, 'Middle':  9, 'Ring':  9, 'Little':  9, 'Rotate':  2}),
+    'Glove':        (11,   {'Thumb':  0, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate':  0}),
+    'Tap':          (12,   {'Thumb':  0, 'Index':  0, 'Middle': 72, 'Ring': 72, 'Little': 72, 'Rotate': 15}),
+    'Grab':         (13,   {'Thumb': 74, 'Index': 79, 'Middle': 79, 'Ring': 79, 'Little': 77, 'Rotate': 14}),
+    'Tripod Open':  (14,   {'Thumb': 27, 'Index': 23, 'Middle': 23, 'Ring':  0, 'Little':  0, 'Rotate': 44}),
+    # ── Poses gestuais personalizadas (sem preset ECI de fábrica) ────────
+    # eci_id=None → só move o sim; não envia SetCurrentGrip ao real.
+    'Rock':         (None, {'Thumb': 25, 'Index':  0, 'Middle': 78, 'Ring': 78, 'Little':  0, 'Rotate':  8}),
+    'Phone':        (None, {'Thumb':  0, 'Index': 75, 'Middle': 75, 'Ring': 75, 'Little':  0, 'Rotate':  5}),
+    'Peace':        (None, {'Thumb': 45, 'Index':  0, 'Middle':  0, 'Ring': 78, 'Little': 78, 'Rotate': 12}),
+    'Count 3':      (None, {'Thumb': 55, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little': 78, 'Rotate':  8}),
+    'Count 4':      (None, {'Thumb': 55, 'Index':  0, 'Middle':  0, 'Ring':  0, 'Little':  0, 'Rotate':  5}),
+}
+
 # MIMIC_LIST centralizada em kinematics.py (importada acima junto com
 # urdf_to_dobot). Se o import falhar, definimos lista vazia — a expansão
 # de juntas mimic vira no-op em vez de derrubar a GUI inteira.
@@ -192,9 +252,14 @@ def _shade(hex_color: str, factor: float) -> str:
 
 
 def _hdr_btn(parent, icon: str, label: str, command, *,
-              bg=BTN_NEUTRAL, fg=TEXT, font=FONT_LBL, padx=12, pady=5):
+              bg=BTN_NEUTRAL, fg=TEXT, font=None, padx=12, pady=5):
     """Botão estilizado da barra superior — ícone Unicode + label,
     com troca dinâmica de estado via `btn.set_state(icon, label, bg, fg)`."""
+    # font=None (não FONT_LBL) no default: defaults são avaliados no import,
+    # antes de _resolve_fonts() remapear as famílias. Resolver aqui em runtime
+    # garante a família já corrigida.
+    if font is None:
+        font = FONT_LBL
     state = {'bg': bg, 'fg': fg}
     text = f' {icon}  {label} ' if icon else f' {label} '
     btn = tk.Button(parent, text=text, command=command,
@@ -290,14 +355,31 @@ class PalpationGUI(Node):
             'eci_prefix', '/covvi/hand').value
         self._param_robot_ip   = self.declare_parameter('robot_ip',   '').value
         self._param_robot_mode = self.declare_parameter('robot_mode', '').value
+        # ─── Efetuador final vindo do launch (hand | touch_tool) ─────────
+        # REGRA (até o usuário pedir o contrário): o modo Palpação só fica
+        # disponível quando a célula é aberta COM o touch_tool. Aberta sem o
+        # touch_tool (ex.: end_effector:=hand) a aba Palpação é bloqueada —
+        # ver gate em _build_body. Default 'touch_tool' para não capar a GUI
+        # rodada de forma standalone (sem o launch passar o parâmetro).
+        self._end_effector = str(self.declare_parameter(
+            'end_effector', 'touch_tool').value).strip().lower()
         self._eci_srv = None
         self._eci_msg = None
         self._cli_eci_grip = None
         self._cli_eci_posn = None
         self._cli_hand_pwr_on = None
         self._cli_hand_pwr_off = None
+        self._cli_eci_realtime = None
         self._hand_powered = False
         self._eci_posn_after: str | None = None
+        # ─── Versão B: mirror real→sim da mão (telemetria DigitPosnAll) ──
+        # A mão simulada segue a POSIÇÃO MEDIDA da mão física (escala ECI
+        # 0–200), de modo que o sim acompanhe a velocidade real, em vez de
+        # repetir o comando aberto do slider. Veja _on_real_hand_posn.
+        self._sub_real_hand_posn = None
+        self._hand_mirror_active: bool = False
+        self._hand_mirror_last_rx: float | None = None
+        self._hand_mirror_last_pub: float | None = None
 
         # ─── CR10 real (lazy) ────────────────────────────────────────
         self._real_driver = None    # CR10RealDriver | None
@@ -367,12 +449,14 @@ class PalpationGUI(Node):
         self._lc_voltage: float          = 0.0
         self._lc_voltage_buf: collections.deque = collections.deque(maxlen=50)
         self._lc_last_ts: float          = 0.0
-        self._lc_calibrated: bool        = False
-        self._lc_calib_slope: float      = 0.4490
-        self._lc_calib_intercept: float  = 0.0017
-        self._lc_calib_n_pts: int        = 0
-        self._lc_calib_points: list      = []   # (mass_kg, v_sensor) — wizard
-        self._lc_zero_voltage: float | None = None  # V capturado sem força (âncora do zero)
+        # Calibração padrão (embutida — válida para qualquer computador).
+        # Sobrescrita por ~/.config/touch_pack/load_cell_calib.json se existir.
+        self._lc_calibrated: bool        = True
+        self._lc_calib_slope: float      = -0.05168849978673397
+        self._lc_calib_intercept: float  = 2.755812025215324
+        self._lc_calib_n_pts: int        = 5
+        self._lc_calib_points: list      = []
+        self._lc_zero_voltage: float | None = 2.769853086471558
         self._load_lc_calib()
         # Tare: tensão capturada com o sensor descarregado; subtrai o offset
         # residual que faz o zero não bater após a calibração.
@@ -385,6 +469,13 @@ class PalpationGUI(Node):
         # Subprocesso do force_receiver_node (gerenciado pelo botão Conectar)
         self._force_rx_proc: subprocess.Popen | None = None
         self._force_rx_should_be_alive: bool = False
+        # Mini-painel de leitura da célula na aba Controle Manual (modo
+        # touch_tool). None no modo hand — o espelhamento em _refresh_lc_panel
+        # é ignorado quando não construído.
+        self._mlc_force_lbl = None
+        self._mlc_normal_lbl = None
+        self._mlc_voltage_lbl = None
+        self._mlc_status_lbl = None
 
         # ─── Poses & Movimentos ──────────────────────────────────────
         self._poses: list[dict] = []        # [{id, name, q_deg:[6]}]
@@ -392,7 +483,12 @@ class PalpationGUI(Node):
         self._next_pose_id: int = 1
         self._next_movement_id: int = 1
         self._drag_enabled: bool = False
-        self._drag_last_valid_q: np.ndarray | None = None  # guards against firmware zero-blip
+        self._drag_last_valid_q: np.ndarray | None = None
+        self._drag_last_t: float | None = None
+        # Timestamp do último comando de movimento enviado ao robô real.
+        # Usado para distinguir "robô se movendo por comando do PC" de
+        # "robô se movendo por drag físico do usuário".
+        self._last_robot_cmd_t: float = 0.0
         self._exec_stop = threading.Event()
         self._exec_thread: threading.Thread | None = None
         self._exec_movement_id: int | None = None
@@ -407,6 +503,10 @@ class PalpationGUI(Node):
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
         self.root.withdraw()
+        # Remapeia fontes ausentes (Segoe UI/JetBrains Mono) → fontes
+        # instaladas ANTES de construir a UI: evita o segfault do Tk 8.6 ao
+        # resolver famílias inexistentes via fontconfig. Ver _resolve_fonts.
+        _resolve_fonts(self.root)
         self._build_ui()
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
         self.root.deiconify()
@@ -462,7 +562,7 @@ class PalpationGUI(Node):
 
         estop = _hdr_btn(top, '⏹', 'E-STOP', self._estop,
                           bg=DANGER, fg='white',
-                          font=('Segoe UI', 11, 'bold'),
+                          font=FONT_HEAD,
                           padx=20, pady=10)
         estop.bind('<Enter>',
                     lambda e, b=estop: b.config(bg=DANGER_HV), add='+')
@@ -475,8 +575,12 @@ class PalpationGUI(Node):
         mid.pack(fill='x', padx=18, pady=(8, 10))
 
         # ── COVVI HAND ────────────────────────────────────────────────
+        # Só aparece no modo `hand` (a mão não existe com o touch_tool).
+        # Os widgets são sempre criados (callbacks os referenciam), mas o
+        # frame só é empacotado quando há mão.
         conn = tk.Frame(mid, bg=HEADER)
-        conn.pack(side='left')
+        if self._end_effector == 'hand':
+            conn.pack(side='left')
 
         tk.Label(conn, text='MÃO COVVI', font=FONT_SMALL,
                  bg=HEADER, fg='#cbd5e1'
@@ -545,8 +649,10 @@ class PalpationGUI(Node):
         mode_menu.grid(row=1, column=3, sticky='w')
 
         # ── ESP32 / LOAD CELL ─────────────────────────────────────────────
+        # Só aparece no modo `touch_tool` (célula de carga faz parte do TCP).
         conn_esp = tk.Frame(mid, bg=HEADER)
-        conn_esp.pack(side='left', padx=(28, 0))
+        if self._end_effector == 'touch_tool':
+            conn_esp.pack(side='left', padx=(28, 0))
         tk.Label(conn_esp, text='LOAD CELL (ESP32)', font=FONT_SMALL,
                  bg=HEADER, fg='#cbd5e1'
                  ).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
@@ -587,6 +693,30 @@ class PalpationGUI(Node):
         self._build_manual_tab(self._scrollable(tab_man))
         self._build_loadcell_tab(tab_lc)   # sub-abas são scrolláveis internamente
         self._build_poses_tab(tab_poses)   # layout próprio — sem _scrollable externo
+
+        # ── Gate do modo Palpação por end_effector ────────────────────────
+        # REGRA (até o usuário pedir o contrário): a aba/modo Palpação só fica
+        # disponível quando a célula é aberta COM o touch_tool. Aberta sem o
+        # touch_tool (ex.: end_effector:=hand), bloqueamos a aba Palpação
+        # (índice 0) e focamos em "Controle Manual". O guard em _on_start
+        # garante o bloqueio mesmo se a aba for reativada por outro caminho.
+        self._nb = nb
+        self._palpation_blocked = (self._end_effector != 'touch_tool')
+        if self._palpation_blocked:
+            nb.tab(0, text='Palpação 🔒', state='disabled')
+        # Modo hand: sem célula de carga → esconde a aba dedicada (a coluna
+        # da mão já ocupa o Controle Manual). Modo touch_tool: aba mantida e
+        # o Controle Manual mostra o mini-painel de leitura da célula.
+        if self._end_effector == 'hand':
+            try:
+                nb.hide(tab_lc)
+            except Exception:
+                pass
+        if self._palpation_blocked:
+            try:
+                nb.select(1)   # foca em Controle Manual
+            except Exception:
+                pass
 
     def _scrollable(self, parent: tk.Frame) -> tk.Frame:
         """Envolve `parent` num Canvas com scrollbar vertical e retorna o
@@ -639,56 +769,28 @@ class PalpationGUI(Node):
 
         params_card = self._card(col_left, 'Parâmetros da Palpação')
 
-        self.speed_var       = tk.DoubleVar(value=SPEED_DEFAULT)
-        self.force_var       = tk.DoubleVar(value=FORCE_DEFAULT)
-        # approach speed exposta via parâmetro ROS (não via slider Tk) —
-        # adicionar mais um Spinbox+Scale na lista estava sendo associado
-        # ao segfault do Tk.
-        self.approach_var    = tk.DoubleVar(value=APPROACH_DEFAULT)
-        # Ganhos PID enviados a cada /palpation/start; o explorer aplica
-        # no CALIBRATING/SLIDING para manter a força normal alvo. Padrão conservador.
-        self.pid_kp_var      = tk.DoubleVar(value=KP_DEFAULT)
-        self.pid_ki_var      = tk.DoubleVar(value=KI_DEFAULT)
-        self.pid_kd_var      = tk.DoubleVar(value=KD_DEFAULT)
-        # Direção XY (mundo) do sliding. O explorer escolhe o sinal de
-        # Δθ_joint1 que melhor alinha o arco com esse vetor.
-        self.slide_dir_var   = tk.StringVar(value='+Y')
+        self.speed_var      = tk.DoubleVar(value=SPEED_DEFAULT)
+        self.depth_var      = tk.DoubleVar(value=DEPTH_DEFAULT)
+        self.slide_dist_var = tk.DoubleVar(value=SLIDE_DIST_DEFAULT)
+        self.approach_var   = tk.DoubleVar(value=APPROACH_DEFAULT)
+        self.slide_dir_var  = tk.StringVar(value='+Y')
 
         self._param_row(params_card, label='Velocidade de Deslizamento',
                          unit='mm/s', var=self.speed_var,
                          vmin=SPEED_MIN, vmax=SPEED_MAX, step=1.0,
                          hint='Referências do artigo: 5, 10, 15 mm/s')
-        self._param_row(params_card, label='Força Normal Alvo',
-                         unit='N', var=self.force_var,
-                         vmin=FORCE_MIN, vmax=FORCE_MAX, step=0.1,
-                         hint='Referência do artigo: 1.0 N')
-        # approach speed: slider removido (era novo _param_row que
-        # parecia disparar o segfault do Tk). Continua sendo enviado no
-        # payload com o valor default; para alterar use:
-        #   ros2 param set /tactile_explorer approach_v_max_mms 30.0
+        self._param_row(params_card, label='Distância de Deslizamento',
+                         unit='mm', var=self.slide_dist_var,
+                         vmin=SLIDE_DIST_MIN, vmax=SLIDE_DIST_MAX, step=5.0,
+                         hint='Comprimento do trajeto lateral. '
+                              'Máximo de segurança: 300 mm.')
+        self._param_row(params_card, label='Profundidade de Descida',
+                         unit='mm', var=self.depth_var,
+                         vmin=DEPTH_MIN, vmax=DEPTH_MAX, step=0.5,
+                         hint='Distância perpendicular à superfície. '
+                              'Limite de segurança: 10 N → retração automática.')
 
-        # Seletor de direção do deslizamento (XY mundo). joint1 só pode
-        # produzir um arco; aqui o usuário escolhe a ORIENTAÇÃO desejada
-        # e o explorer pega o sinal de Δθ que melhor se alinha a ela.
         self._build_slide_dir_selector(params_card)
-
-        # ── Calibração PID (Kp / Ki / Kd) ─────────────────────────────
-        pid_card = self._card(col_left, 'Calibração PID — Controle de Força')
-        self._param_row(pid_card, label='Kp',
-                         unit='(m/s)/N', var=self.pid_kp_var,
-                         vmin=KP_MIN, vmax=KP_MAX, step=KP_STEP,
-                         hint='Proporcional — quanto reage à diferença '
-                              'instantânea entre força medida e alvo.')
-        self._param_row(pid_card, label='Ki',
-                         unit='(m/s)/(N·s)', var=self.pid_ki_var,
-                         vmin=KI_MIN, vmax=KI_MAX, step=KI_STEP,
-                         hint='Integral — elimina offset estacionário '
-                              '(ative aos poucos: causa overshoot).')
-        self._param_row(pid_card, label='Kd',
-                         unit='m/N', var=self.pid_kd_var,
-                         vmin=KD_MIN, vmax=KD_MAX, step=KD_STEP,
-                         hint='Derivativo — amortece oscilação. '
-                              'Aplicado sobre o erro filtrado pelo loop.')
 
         # ── Coluna direita: botão de início (fixado no fundo) + feedback FT ──
         # O botão é empacotado primeiro com side='bottom' para ficar visível
@@ -728,10 +830,10 @@ class PalpationGUI(Node):
         tk.Frame(fb_card, bg=BORDER, height=1).pack(fill='x', pady=8)
         errrow = tk.Frame(fb_card, bg=PANEL)
         errrow.pack(fill='x', pady=(2, 6))
-        tk.Label(errrow, text='Erro vs. Alvo', font=FONT_LBL,
+        tk.Label(errrow, text='Profundidade alvo', font=FONT_LBL,
                  bg=PANEL, fg=TEXT_MUTED).pack(side='left')
         self.err_value_lbl = tk.Label(
-            errrow, text='—  N', font=FONT_HEAD, bg=PANEL, fg=TEXT)
+            errrow, text='—  mm', font=FONT_HEAD, bg=PANEL, fg=TEXT)
         self.err_value_lbl.pack(side='right')
 
         compbox = tk.Frame(fb_card, bg=PANEL)
@@ -845,6 +947,19 @@ class PalpationGUI(Node):
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True)
 
+        # ── Coluna direita: adapta ao efetuador final ─────────────────
+        #   hand       → controle da mão COVVI (sliders + presets + grips)
+        #   touch_tool → leitura ao vivo da célula de carga
+        # Mantém a aba "Controle Manual" limpa: mostra só o que faz sentido
+        # para o efetuador com que a célula foi aberta.
+        if self._end_effector == 'hand':
+            self._build_manual_hand_controls(col_hand)
+        else:
+            self._build_manual_lc_panel(col_hand)
+
+    def _build_manual_hand_controls(self, col_hand: tk.Frame) -> None:
+        """Coluna direita do Controle Manual no modo `hand`: sliders da mão
+        COVVI + presets (Abrir/Apontar/Fechar) + grips de fábrica."""
         # ── MÃO COVVI ─────────────────────────────────────────────────
         card_hand = self._card(col_hand, 'Mão COVVI — juntas primárias (graus)')
         self.hand_sliders: dict[str, tk.DoubleVar] = {}
@@ -884,6 +999,95 @@ class PalpationGUI(Node):
                    font=FONT_LBL, relief='flat', bd=0, padx=12, pady=8,
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True, padx=(3, 0))
+
+        # ── Grip-patterns COVVI (padrões de pega de fábrica) ──────────
+        grips_card = self._card(col_hand, 'Grips COVVI — padrões de pega')
+        grow = tk.Frame(grips_card, bg=PANEL); grow.pack(fill='x')
+        self._covvi_grip_var = tk.StringVar(value=next(iter(COVVI_GRIPS)))
+        # tk.OptionMenu (Tk puro) em vez de ttk.Combobox: o ttk.Combobox
+        # embutido neste Canvas scrollable corrompia o estado interno do Tk
+        # e provocava segfault na criação de widgets (mesmo problema que levou
+        # à remoção da ttk.Progressbar — ver _build_body). O OptionMenu segue
+        # o padrão seguro já usado no seletor de modo do robô no header.
+        grip_menu = tk.OptionMenu(grow, self._covvi_grip_var, *COVVI_GRIPS.keys())
+        grip_menu.config(bg=BTN_NEUTRAL, fg=TEXT, font=FONT_MONO,
+                         relief='flat', highlightthickness=1,
+                         highlightbackground=BORDER,
+                         activebackground=PRIMARY, activeforeground='white')
+        grip_menu['menu'].config(bg=PANEL, fg=TEXT, font=FONT_MONO,
+                                 activebackground=PRIMARY, activeforeground='white')
+        grip_menu.pack(side='left', fill='x', expand=True, ipady=2)
+        tk.Button(grow, text='✓  Aplicar', command=self._apply_covvi_grip,
+                   bg=PRIMARY, fg='white', activebackground=PRIMARY_HV,
+                   activeforeground='white', font=FONT_LBL, relief='flat',
+                   bd=0, padx=12, pady=6, cursor='hand2'
+                   ).pack(side='left', padx=(6, 0))
+        tk.Label(grips_card,
+                 text='Move o sim (juntas) + envia SetCurrentGrip ao real (ECI).',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED, anchor='w'
+                 ).pack(fill='x', pady=(6, 0))
+
+    def _build_manual_lc_panel(self, col_hand: tk.Frame) -> None:
+        """Coluna direita do Controle Manual no modo `touch_tool`: leitura ao
+        vivo da célula de carga (espelha _refresh_lc_panel). É read-only — a
+        conexão UDP, a zeragem (tare) e a calibração ficam na aba dedicada
+        "Célula de Carga" para manter este painel enxuto."""
+        card = self._card(col_hand, 'Célula de Carga — leitura ao vivo')
+
+        row_f = tk.Frame(card, bg=PANEL); row_f.pack(fill='x', pady=(6, 2))
+        tk.Label(row_f, text='Força Total (calibração)', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
+        self._mlc_force_lbl = tk.Label(
+            row_f, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_force_lbl.pack(anchor='w', pady=(2, 0))
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=6)
+
+        row_n = tk.Frame(card, bg=PANEL); row_n.pack(fill='x', pady=(2, 2))
+        tk.Label(row_n, text='Força Normal ⊥ mesa  (+compressão / −tração)',
+                 font=FONT_LBL, bg=PANEL, fg=TEXT_MUTED).pack(anchor='w')
+        self._mlc_normal_lbl = tk.Label(
+            row_n, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_normal_lbl.pack(anchor='w', pady=(2, 0))
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=6)
+
+        row_v = tk.Frame(card, bg=PANEL); row_v.pack(fill='x', pady=(2, 2))
+        tk.Label(row_v, text='Tensão do Sensor', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self._mlc_voltage_lbl = tk.Label(
+            row_v, text='—  V', font=FONT_MONO, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_voltage_lbl.pack(side='right')
+
+        row_s = tk.Frame(card, bg=PANEL); row_s.pack(fill='x', pady=(2, 2))
+        tk.Label(row_s, text='ESP32', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self._mlc_status_lbl = tk.Label(
+            row_s, text='OFFLINE', font=FONT_LBL, bg=PANEL, fg=TEXT_DIM)
+        self._mlc_status_lbl.pack(side='right')
+
+        tk.Label(card,
+                 text='Conexão UDP, zeragem (tare) e calibração na aba '
+                      '“Célula de Carga”.',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED, anchor='w',
+                 justify='left', wraplength=300
+                 ).pack(fill='x', pady=(8, 0))
+
+    def _apply_covvi_grip(self):
+        """Aplica o grip-pattern COVVI selecionado no combobox.
+
+        Move a mão simulada para a pose equivalente e, se o ECI estiver
+        ativo, envia SetCurrentGrip (id de fábrica) para a mão real.
+        """
+        if getattr(self, '_covvi_grip_var', None) is None:
+            return   # modo touch_tool — sem painel da mão
+        name = self._covvi_grip_var.get()
+        spec = COVVI_GRIPS.get(name)
+        if spec is None:
+            return
+        eci_id, deg = spec
+        self._apply_hand_preset(deg, eci_grip_id=eci_id)
+        self._set_status(f'Grip COVVI > {name} (id={eci_id})', OK)
 
     def _joint_row(self, parent, *, label, unit, var,
                     vmin, vmax, step, on_change):
@@ -1042,6 +1246,10 @@ class PalpationGUI(Node):
                         return
                 drv._send_dash(f'SpeedFactor({speed_pct})')
                 drv.mov_j_joint_deg(q_dobot_deg)
+                self._last_robot_cmd_t = time.monotonic()
+                if self._drag_enabled:
+                    self._drag_enabled = False
+                    self.root.after(0, self._update_drag_btn_auto, False)
             self._mirror_last_target = np.asarray(
                 positions_rad, dtype=np.float64)
         except CR10RealDriverError as exc:
@@ -1094,6 +1302,7 @@ class PalpationGUI(Node):
         """
         _servoj_ready = False
         _diag_count = 0
+        _drag_read_failures = 0
         _PERIOD = 0.030   # 33 Hz
         _t_next = time.monotonic() + _PERIOD
         while not self._stop_event.is_set():
@@ -1119,34 +1328,54 @@ class PalpationGUI(Node):
                     continue
                 try:
                     q_urdf = drv.read_joints_urdf_latest()
-                    # Guard 1: firmware zero-blip right after DragTeachSwitch(1).
-                    # A real robot is never at all-zeros (that is arm fully extended
-                    # upright — it cannot reach there from operating positions).
+                    _drag_read_failures = 0  # leitura válida — reset contador
+                    now = time.monotonic()
+                    # Guard: firmware zero-blip — ignorar mas não desativar drag.
                     if np.linalg.norm(q_urdf) < 0.05:
                         continue
-                    # Guard 2: reject physically-impossible jumps (>60° in 30 ms).
+                    # Guard: salto fisicamente impossível (>60° em 30 ms).
                     _last = self._drag_last_valid_q
+                    _last_t = self._drag_last_t
                     if (_last is not None
                             and np.max(np.abs(q_urdf - _last)) > math.radians(60)):
                         continue
+                    # Velocidade por diferença finita para interpolação suave no JTC.
+                    if _last is not None and _last_t is not None:
+                        dt = min(max(now - _last_t, 0.005), 0.2)
+                        vel = (q_urdf - _last) / dt
+                        vel = np.clip(vel, -2.5, 2.5)
+                    else:
+                        vel = np.zeros(6)
                     self._drag_last_valid_q = q_urdf
+                    self._drag_last_t = now
                     msg = JointTrajectory()
                     msg.joint_names = ARM_JOINTS
                     pt = JointTrajectoryPoint()
                     pt.positions = [float(v) for v in q_urdf]
-                    pt.velocities = [0.0] * 6
-                    # time_from_start = período do loop → Gazebo acompanha sem lag
-                    pt.time_from_start = Duration(sec=0, nanosec=30_000_000)
+                    pt.velocities = [float(v) for v in vel]
+                    pt.time_from_start = Duration(sec=0, nanosec=60_000_000)
                     msg.points.append(pt)
                     self._arm_pub.publish(msg)
+                    # Espelha posição real → sliders da GUI (Tk-safe via after).
+                    self.root.after(0, self._update_sliders_from_q,
+                                    q_urdf.copy())
                 except CR10RealDriverError as exc:
-                    # Erro de conexão: parar de bater no socket morto.
-                    self.get_logger().warning(
-                        '[DRAG] Leitura de juntas falhou — drag tracking desativado: %s', exc)
-                    self._drag_enabled = False
-                    self.root.after(0, self._update_drag_btn_auto, False)
+                    # Leitura inválida (buffer desalinhado no início, transitório) —
+                    # pular este tick. Só desativar drag após 5 falhas consecutivas.
+                    _drag_read_failures += 1
+                    if _drag_read_failures >= 5:
+                        self.get_logger().warning(
+                            f'[DRAG] {_drag_read_failures} falhas consecutivas — '
+                            f'drag desativado: {exc}')
+                        self._drag_enabled = False
+                        _drag_read_failures = 0
+                        self.root.after(0, self._update_drag_btn_auto, False)
+                    else:
+                        self.get_logger().debug(
+                            f'[DRAG] leitura inválida (tentativa {_drag_read_failures}/5), '
+                            f'aguardando alinhamento do buffer: {exc}')
                 except Exception as exc:
-                    self.get_logger().debug('[DRAG] Erro inesperado no tracking: %s', exc)
+                    self.get_logger().debug(f'[DRAG] Erro inesperado no tracking: {exc}')
                 continue
             # Execução de movimento em andamento → worker controla o braço real.
             if self._exec_movement_id is not None:
@@ -1175,11 +1404,13 @@ class PalpationGUI(Node):
                     drv.servo_j_urdf(positions)
                     _servoj_ready = True
                 except CR10RealDriverError:
-                    # -50001: subsistema ServoJ não pronto (pós-PTP).
-                    # prepare_servoj envia ClearError+Continue e aguarda 50 ms.
                     drv.prepare_servoj()
                     drv.servo_j_urdf(positions)
                     _servoj_ready = True
+                self._last_robot_cmd_t = time.monotonic()
+                if self._drag_enabled:
+                    self._drag_enabled = False
+                    self.root.after(0, self._update_drag_btn_auto, False)
             except CR10RealDriverError as exc:
                 self.get_logger().warning(f'ServoJ falhou: {exc}')
                 _servoj_ready = False
@@ -1268,6 +1499,9 @@ class PalpationGUI(Node):
     def _publish_hand_from_sliders(self):
         if self._suppressing:
             return
+        # No modo touch_tool a coluna da mão não é construída (sem sliders).
+        if not getattr(self, 'hand_sliders', None):
+            return
         self._suppressing = True
         try:
             primary_deg: dict[str, float] = {}
@@ -1282,6 +1516,22 @@ class PalpationGUI(Node):
             duration_s = self._move_duration_seconds()
         finally:
             self._suppressing = False
+        # Versão B (mirror real→sim): quando a telemetria DigitPosnAll está
+        # chegando, a mão simulada segue a POSIÇÃO MEDIDA da mão real (em
+        # _on_real_hand_posn) — assim o sim acompanha a velocidade física.
+        # Nesse caso o slider só comanda o ECI; o sim é atualizado pela
+        # telemetria. Sem telemetria viva, publicamos direto (modo sim-only).
+        if not self._hand_mirror_live():
+            self._publish_sim_hand(primary_rad, duration_s)
+        # Envia para a mão real via ECI (SetDigitPosn) se ativo
+        if self._eci_enabled:
+            self._schedule_eci_posn(primary_deg)
+
+    def _publish_sim_hand(self, primary_rad: dict[str, float],
+                           duration_s: float) -> None:
+        """Publica a trajetória da mão no Gazebo a partir das 6 juntas
+        primárias (rad), expandindo as juntas mimic do URDF. Usado tanto pelo
+        comando do slider (sim-only) quanto pelo mirror real→sim (Versão B)."""
         names = list(HAND_JOINTS)
         positions = [primary_rad[j] for j in HAND_JOINTS]
         # Expande as 26 juntas mimic com as razões do URDF.
@@ -1296,9 +1546,88 @@ class PalpationGUI(Node):
         pt.time_from_start = self._duration_msg(duration_s)
         msg.points.append(pt)
         self._hand_pub.publish(msg)
-        # Envia para a mão real via ECI (SetDigitPosn) se ativo
-        if self._eci_enabled:
-            self._schedule_eci_posn(primary_deg)
+
+    # ── Versão B: mirror real→sim da mão (telemetria DigitPosnAll) ──────
+    def _hand_mirror_live(self) -> bool:
+        """True se o mirror real→sim está ativo E recebeu telemetria
+        DigitPosnAll há menos de 0.5 s. Caso contrário o slider volta a
+        comandar o sim diretamente (fallback robusto se a telemetria parar)."""
+        if not self._hand_mirror_active:
+            return False
+        last = self._hand_mirror_last_rx
+        return last is not None and (time.monotonic() - last) < 0.5
+
+    def _on_real_hand_posn(self, msg) -> None:
+        """Callback do tópico DigitPosnAll: converte a posição MEDIDA dos
+        dedos (escala ECI 0–200) para rad e dirige a mão simulada. O sim
+        passa a seguir a velocidade real da mão física (Versão B)."""
+        now = time.monotonic()
+        self._hand_mirror_last_rx = now
+
+        def _deg(joint: str, pos: int) -> float:
+            max_deg = 60.0 if joint == 'Rotate' else 90.0
+            return max(0.0, min(max_deg, float(pos) / 200.0 * max_deg))
+
+        primary_rad = {
+            'Thumb':  _math.radians(_deg('Thumb',  msg.thumb_pos)),
+            'Index':  _math.radians(_deg('Index',  msg.index_pos)),
+            'Middle': _math.radians(_deg('Middle', msg.middle_pos)),
+            'Ring':   _math.radians(_deg('Ring',   msg.ring_pos)),
+            'Little': _math.radians(_deg('Little', msg.little_pos)),
+            'Rotate': _math.radians(_deg('Rotate', msg.rotate_pos)),
+        }
+        # Horizonte de interpolação ~ período de chegada das mensagens:
+        # mantém o sim "colado" à posição real sem solavanco entre amostras.
+        last = self._hand_mirror_last_pub
+        self._hand_mirror_last_pub = now
+        dt = (now - last) if last is not None else 0.05
+        duration_s = min(0.15, max(0.03, dt))
+        self._publish_sim_hand(primary_rad, duration_s)
+
+    def _enable_hand_mirror(self) -> None:
+        """Habilita o streaming digit_posn no driver e assina o tópico
+        DigitPosnAll para espelhar a mão real → sim (Versão B)."""
+        if self._hand_mirror_active or not self._eci_enabled or self._eci_msg is None:
+            return
+        # 1) Pede ao driver para emitir digit_posn em realtime (preservando os
+        #    streams que o driver já liga no startup: digit_touch/env/orient).
+        cli = self._cli_eci_realtime
+        if cli is not None and cli.service_is_ready():
+            try:
+                req = self._eci_srv.SetRealtimeCfg.Request()
+                req.digit_posn    = True
+                req.digit_touch   = True
+                req.environmental = True
+                req.orientation   = True
+                cli.call_async(req)
+            except Exception as exc:
+                self.get_logger().warning(
+                    f'SetRealtimeCfg(digit_posn) falhou: {exc}')
+        else:
+            self.get_logger().warning(
+                'SetRealtimeCfg indisponível — mirror da mão sem stream '
+                'digit_posn (sim não seguirá a mão real).')
+        # 2) Assina o tópico de posição medida da mão.
+        if self._sub_real_hand_posn is None:
+            self._sub_real_hand_posn = self.create_subscription(
+                self._eci_msg.DigitPosnAllMsg,
+                f'{self._eci_prefix}/DigitPosnAllMsg',
+                self._on_real_hand_posn, 10)
+        self._hand_mirror_active = True
+        self._hand_mirror_last_rx = None
+        self.get_logger().info('[HAND-MIRROR] real→sim ativo (DigitPosnAll).')
+
+    def _disable_hand_mirror(self) -> None:
+        """Desliga o mirror real→sim e devolve o comando do sim ao slider."""
+        self._hand_mirror_active = False
+        self._hand_mirror_last_rx = None
+        sub = self._sub_real_hand_posn
+        self._sub_real_hand_posn = None
+        if sub is not None:
+            try:
+                self.destroy_subscription(sub)
+            except Exception:
+                pass
 
     def _schedule_eci_posn(self, deg_dict: dict) -> None:
         """Debounce de 60 ms para SetDigitPosn — evita flood de serviço."""
@@ -1401,21 +1730,20 @@ class PalpationGUI(Node):
             self._set_status(
                 'Conecte o robô CR10 antes de capturar a posição.', WARN)
             return
-        if not _REAL_DRIVER_OK or _urdf_to_dobot is None:
+        if not _REAL_DRIVER_OK:
             self._set_status('Driver real não disponível.', DANGER)
             return
-        try:
-            from .kinematics import dobot_to_urdf as _dobot_to_urdf
-        except Exception:
-            self._set_status('kinematics não disponível.', DANGER)
+        q_urdf_rad = None
+        last_exc: Exception | None = None
+        for _attempt in range(3):
+            try:
+                q_urdf_rad = self._real_driver.read_joints_urdf_latest()
+                break
+            except CR10RealDriverError as exc:
+                last_exc = exc
+        if q_urdf_rad is None:
+            self._set_status(f'Falha ao ler juntas: {last_exc}', DANGER)
             return
-        try:
-            # read_joints_rad usa porta 30004 (_feed_lock interno) — _real_lock não necessário.
-            q_dobot_rad = self._real_driver.read_joints_rad()
-        except CR10RealDriverError as exc:
-            self._set_status(f'Falha ao ler juntas: {exc}', DANGER)
-            return
-        q_urdf_rad = _dobot_to_urdf(q_dobot_rad)
         new_home = {
             j: float(_math.degrees(q_urdf_rad[i]))
             for i, j in enumerate(ARM_JOINTS)
@@ -1438,10 +1766,10 @@ class PalpationGUI(Node):
             self._set_status(f'Falha ao salvar home capturada: {exc}', DANGER)
             return
         self._arm_home_deg = new_home
+        self._publish_arm_from_sliders()
         summary = ' / '.join(f'{j[-1]}={new_home[j]:+.0f}°' for j in ARM_JOINTS)
         self._set_status(
-            f'Home capturada do robô real e salva ({summary}). '
-            'Reinicie o Gazebo para aplicar.', OK)
+            f'Home capturada do robô real e salva ({summary}).', OK)
 
     # ── Persistência de IPs e modo (~/.config/touch_pack/robot.json) ──
     def _load_robot_config(self) -> None:
@@ -1516,6 +1844,8 @@ class PalpationGUI(Node):
         Se `eci_grip_id` for fornecido e ECI estiver ativo, também chama
         SetCurrentGrip para mover a mão real.
         """
+        if not getattr(self, 'hand_sliders', None):
+            return   # modo touch_tool — sem painel da mão
         self._suppressing = True
         try:
             for j in HAND_JOINTS:
@@ -1615,7 +1945,7 @@ class PalpationGUI(Node):
         tk.Label(
             tare_btn_row,
             text='Pressione com o sensor descarregado\n(robô sem tocar a superfície)',
-            font=('Segoe UI', 9), bg=PANEL, fg=TEXT_DIM, justify='left',
+            font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM, justify='left',
         ).pack(side='left', padx=(10, 0))
 
         tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=6)
@@ -1681,7 +2011,7 @@ class PalpationGUI(Node):
         tk.Label(
             wiz_card,
             text='Compressão é derivada automaticamente por simetria da célula de carga',
-            font=('Segoe UI', 9), bg=PANEL, fg=TEXT_DIM,
+            font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM,
         ).pack(anchor='w', pady=(0, 8))
 
         # Massa
@@ -2250,6 +2580,23 @@ class PalpationGUI(Node):
             self.lc_curr_calib_lbl.config(
                 text='Nenhuma calibração salva', fg=WARN)
 
+        # Espelha a leitura no mini-painel da aba Controle Manual (modo
+        # touch_tool). Lê o texto/cor já calculados dos labels canônicos da
+        # aba "Célula de Carga" — fonte única de verdade, sem duplicar lógica.
+        if self._mlc_force_lbl is not None:
+            self._mlc_force_lbl.config(
+                text=self.lc_force_lbl.cget('text'),
+                fg=self.lc_force_lbl.cget('fg'))
+            self._mlc_normal_lbl.config(
+                text=self.lc_normal_force_lbl.cget('text'),
+                fg=self.lc_normal_force_lbl.cget('fg'))
+            self._mlc_voltage_lbl.config(
+                text=self.lc_voltage_lbl.cget('text'),
+                fg=self.lc_voltage_lbl.cget('fg'))
+            self._mlc_status_lbl.config(
+                text=self._esp32_status_lbl.cget('text'),
+                fg=self._esp32_status_lbl.cget('fg'))
+
         self.root.after(100, self._refresh_lc_panel)
 
     # ──────────────────────────────────────────────────────────────────
@@ -2694,50 +3041,78 @@ class PalpationGUI(Node):
             msg.data = active
             self._drag_pub.publish(msg)
         except Exception as exc:
-            self.get_logger().debug('[DRAG] publish drag_mode falhou: %s', exc)
+            self.get_logger().debug(f'[DRAG] publish drag_mode falhou: {exc}')
 
     def _toggle_drag(self) -> None:
-        drv = self._real_driver
-        if drv is None or not self._robot_connected:
+        """Ativa/desativa manualmente o modo drag.
+
+        Sem chamadas TCP (DragTeachSwitch não é confiável quando o
+        controlador está em modo LOCAL). O usuário ativa o drag físico
+        no botão do antebraço; este botão apenas liga/desliga o tracking
+        real→sim no Gazebo.
+        """
+        if not self._robot_connected or self._real_driver is None:
             self._set_status('Drag teach requer robô real conectado.', WARN)
             return
         new_state = not self._drag_enabled
-        sw_ok = False  # DragTeachSwitch via TCP conseguiu
-        try:
-            drv.drag_teach(new_state)
-            sw_ok = True
-        except Exception as exc:
-            if new_state:
-                # TCP falhou (tipicamente: controlador em modo LOCAL / sem token).
-                # Ativa apenas o tracking real→sim: o utilizador aciona o drag
-                # fisicamente no botão do antebraço e a simulação acompanha.
-                self.get_logger().warning(
-                    f'DragTeachSwitch TCP falhou ({exc}). '
-                    'Tracking real→sim ativo — active o drag físico no robô.')
-            else:
-                self._set_status(f'DragTeachSwitch falhou: {exc}', DANGER)
-                return
-        # Always reset to None: Guard 2 in the poll loop seeds from the first
-        # valid REAL-ROBOT read, not from Gazebo.  If seeded from Gazebo and
-        # the real robot is >60° away, Guard 2 would block all reads forever.
+        if not new_state:
+            # Desativando: congela sliders na posição final ANTES de zerar estado.
+            self._sync_sliders_from_drag()
         self._drag_last_valid_q = None
+        self._drag_last_t = None
         self._drag_enabled = new_state
         self._publish_drag_state(new_state)
         btn = self._drag_btn
         if btn is not None:
             if new_state:
-                label = '🖐 Drag ON' if sw_ok else '🖐 Drag (físico)'
-                btn.config(text=label, bg=WARN, fg='white',
+                btn.config(text='🖐 Drag ON', bg=WARN, fg='white',
                            activebackground='#b45309')
             else:
                 btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
                            activebackground=_shade(BTN_NEUTRAL, -0.08))
-        if new_state:
-            msg = 'Drag Teach ATIVO.' if sw_ok else \
-                'Drag físico: ative o botão no robô — simulação a seguir o braço real.'
-            self._set_status(msg, WARN)
-        else:
-            self._set_status('Drag Teach desativado.', OK)
+        self._set_status(
+            'Drag ativo — ative o botão físico no robô para mover.' if new_state
+            else 'Drag desativado.', WARN if new_state else OK)
+
+    def _update_sliders_from_q(self, q_rad) -> None:
+        """Atualiza os sliders do braço com posições em rad durante o drag.
+
+        Chamado via root.after a cada tick do poll loop (33 Hz). Suprime
+        os trace-callbacks para não disparar publish redundante — o loop
+        já publica para o JTC/Gazebo diretamente.
+        """
+        if not self._drag_enabled:
+            return
+        self._suppressing = True
+        try:
+            for i, j in enumerate(ARM_JOINTS):
+                lo, hi = ARM_LIMITS_DEG[j]
+                deg = _math.degrees(float(q_rad[i]))
+                self.arm_sliders[j].set(max(lo, min(hi, deg)))
+        finally:
+            self._suppressing = False
+
+    def _sync_sliders_from_drag(self) -> None:
+        """Congela os sliders na posição final do drag e publica para o Gazebo.
+
+        Deve ser chamado ao desativar o drag, antes de zerar
+        _drag_last_valid_q, para que o próximo comando de slider não
+        cause salto brusco ao braço real.
+        """
+        q_rad = self._drag_last_valid_q
+        if q_rad is None:
+            q_rad = self._latest_joint_rad
+        if q_rad is None:
+            return
+        self._suppressing = True
+        try:
+            for i, j in enumerate(ARM_JOINTS):
+                lo, hi = ARM_LIMITS_DEG[j]
+                deg = _math.degrees(float(q_rad[i]))
+                self.arm_sliders[j].set(max(lo, min(hi, deg)))
+        finally:
+            self._suppressing = False
+        self._publish_arm_from_sliders()
 
     # ── Ações nos movimentos ──────────────────────────────────────────
     def _new_movement(self) -> None:
@@ -2983,7 +3358,7 @@ class PalpationGUI(Node):
         tk.Label(row,
                  text='Arrasto Cartesiano retilíneo em XY (mundo); as '
                       'juntas se coordenam para preservar Z e orientação.',
-                 font=('Segoe UI', 9), bg=PANEL, fg=TEXT_DIM,
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM,
                  anchor='w').pack(fill='x', pady=(2, 0))
         self._on_slide_dir(self.slide_dir_var.get())
 
@@ -3016,7 +3391,7 @@ class PalpationGUI(Node):
                    style='Tactile.Horizontal.TScale'
                    ).pack(fill='x', pady=(2, 0))
         if hint:
-            tk.Label(row, text=hint, font=('Segoe UI', 9),
+            tk.Label(row, text=hint, font=FONT_SMALL,
                      bg=PANEL, fg=TEXT_DIM, anchor='w'
                      ).pack(fill='x', pady=(0, 4))
 
@@ -3095,6 +3470,7 @@ class PalpationGUI(Node):
         eci_was_enabled = self._eci_enabled
         self._eci_enabled = False
         self._hand_powered = False
+        self._disable_hand_mirror()
         self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
         self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
         self._hand_connect_btn.set_state('⏳', 'Desconectando…', BTN_NEUTRAL, TEXT)
@@ -3109,10 +3485,11 @@ class PalpationGUI(Node):
         if eci_was_enabled:
             self._send_hand_poweroff_blocking(timeout_s=3.0)
         self._terminate_hand_subprocess()
-        # A caixa ECI precisa de ~15 s para liberar o estado TCP (TIME_WAIT)
-        # após a conexão ser quebrada — conectar antes causa
-        # ExistingConnectionError. Exibimos contagem regressiva na status bar.
-        ECI_RESET_S = 15
+        # Com o driver agora chamando eci.stop() em `finally` no shutdown
+        # (covvi_server_node.main), a caixa ECI libera a sessão de imediato —
+        # não é mais preciso esperar o TIME_WAIT longo. Mantemos uma folga
+        # curta só para o socket fechar e os serviços saírem do grafo ROS2.
+        ECI_RESET_S = 2
         for remaining in range(ECI_RESET_S, 0, -1):
             self.root.after(0, lambda r=remaining: self._set_status(
                 f'Aguardando reset da caixa ECI — ainda {r} s…', TEXT_DIM))
@@ -3170,6 +3547,7 @@ class PalpationGUI(Node):
         self._hand_proc = None
         self._eci_enabled = False
         self._hand_powered = False
+        self._disable_hand_mirror()
         self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
         self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
         self._hand_connect_btn.set_state('⏳', 'Reconectando…', WARN, 'white')
@@ -3270,6 +3648,7 @@ class PalpationGUI(Node):
             self._hand_powered = False
             self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
             self._eci_enabled = False
+            self._disable_hand_mirror()
             self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
             self._set_status('Canal ECI desativado — alimentação cortada.', TEXT_DIM)
             return
@@ -3300,6 +3679,11 @@ class PalpationGUI(Node):
             self._cli_hand_pwr_off = self.create_client(
                 _eci_srv.SetHandPowerOff,
                 f'{self._eci_prefix}/SetHandPowerOff')
+        if self._cli_eci_realtime is None:
+            # Versão B: usado para habilitar o stream digit_posn (mirror mão).
+            self._cli_eci_realtime = self.create_client(
+                _eci_srv.SetRealtimeCfg,
+                f'{self._eci_prefix}/SetRealtimeCfg')
         self._eci_enabled = True
         self._eci_btn.set_state('◉', 'ECI ON', OK, 'white')
         self._set_status('Canal ECI ativo — aguardando power da mão…', OK)
@@ -3319,6 +3703,9 @@ class PalpationGUI(Node):
         self._hand_powered = True
         self._pwr_btn.set_state('⏻', 'PWR ON', OK, 'white')
         self._set_status('Canal ECI ativo — alimentação ligada (LED azul aceso).', OK)
+        # Versão B: liga o mirror real→sim da mão ~600 ms depois (tempo para
+        # o serviço SetRealtimeCfg e o tópico DigitPosnAll subirem no grafo).
+        self.root.after(600, self._enable_hand_mirror)
 
     def _toggle_hand_power(self) -> None:
         """Liga/desliga a alimentação da mão COVVI via SetHandPowerOn/Off."""
@@ -3468,6 +3855,54 @@ class PalpationGUI(Node):
                 f'CR10 conectado em {ip} — modo MIRROR ativo '
                 f'(SpeedFactor={sf}%): mova os sliders ou inicie palpação.', OK)
 
+        # Sincronizar Gazebo com posição real do robô via JTC.
+        # Mais robusto que set_model_configuration: usa o controller já ativo.
+        threading.Thread(target=self._sync_gazebo_to_real, args=(drv,),
+                         daemon=True, name='gazebo-sync').start()
+
+    def _sync_gazebo_to_real(self, drv) -> None:
+        """Lê as juntas do robô real, move o Gazebo via JTC e atualiza os sliders.
+
+        Chamado em thread daemon após conexão bem-sucedida. Não bloqueia a GUI.
+        Aguarda 2 s para garantir que o JTC já está ativo antes de publicar.
+        """
+        time.sleep(2.0)
+        try:
+            q_urdf = drv.read_joints_urdf()   # 6 valores em RADIANOS (URDF)
+        except Exception as exc:
+            self.get_logger().warning(f'[SYNC] Leitura de juntas falhou: {exc}')
+            return
+
+        # 1. Move o Gazebo via JTC (radianos — formato exigido pelo controller).
+        try:
+            msg = JointTrajectory()
+            msg.joint_names = list(ARM_JOINTS)
+            pt = JointTrajectoryPoint()
+            pt.positions  = [float(v) for v in q_urdf]
+            pt.velocities = [0.0] * 6
+            pt.time_from_start = Duration(sec=3, nanosec=0)
+            msg.points.append(pt)
+            self._arm_pub.publish(msg)
+        except Exception as exc:
+            self.get_logger().warning(f'[SYNC] Publicação JTC falhou: {exc}')
+
+        # 2. Converte para graus e atualiza os sliders da GUI no thread Tk.
+        q_deg = {j: math.degrees(float(q_urdf[i])) for i, j in enumerate(ARM_JOINTS)}
+        deg_str = '  '.join(f'{j[-1]}={v:+.1f}°' for j, v in q_deg.items())
+        self.get_logger().info(f'[SYNC] Gazebo → posição real: {deg_str}')
+
+        def _update_sliders():
+            self._suppressing = True
+            try:
+                for j in ARM_JOINTS:
+                    lo, hi = ARM_LIMITS_DEG[j]
+                    clamped = max(lo, min(hi, q_deg[j]))
+                    self.arm_sliders[j].set(clamped)
+            finally:
+                self._suppressing = False
+
+        self.root.after(0, _update_sliders)
+
     def _fail_robot_connect(self, error: str) -> None:
         """Callback no thread Tkinter após falha na conexão."""
         self._robot_connecting = False
@@ -3527,71 +3962,98 @@ class PalpationGUI(Node):
         self._robot_heartbeat_thread = None
 
     def _robot_heartbeat_loop(self) -> None:
-        HEARTBEAT_PERIOD_S = 1.0   # 1 s — permite detecção de drag em ~1 s
-        MAX_FAILURES = 8           # 8 s antes de reconectar (era 3 × 5 s = 15 s)
-        from touch_pack.real_driver import ROBOT_MODE_DRAG  # hoist: evita import a cada tick
-        failures = 0
-        _prev_mode: int | None = None
+        """Heartbeat a 1 Hz: verifica conexão e detecta drag por movimento.
+
+        Detecção de drag por análise de juntas:
+          - Lê posição das juntas via feedback (porta 30004) a cada 1 s.
+          - Se as juntas se moverem > DRAG_THRESH_DEG E não houver comando
+            do PC nos últimos DRAG_SILENCE_S segundos → drag detectado.
+          - Quando drag é detectado, o _mirror_poll_loop replica em 33 Hz.
+          - Drag é desativado automaticamente quando o PC envia um comando.
+        """
+        HEARTBEAT_PERIOD_S = 0.2   # 5 Hz — detecção de drag em ~200 ms
+        MAX_FAILURES = 40          # 8 s antes de reconectar (40 × 200 ms)
+        DRAG_THRESH_RAD  = math.radians(0.8)  # 0.8° por junta — ignora ruído estático
+        DRAG_SILENCE_S   = 2.0                # segundos sem comando do PC
+        failures  = 0
+        q_prev: np.ndarray | None = None
+
         while not self._robot_heartbeat_stop.is_set():
             if self._robot_heartbeat_stop.wait(HEARTBEAT_PERIOD_S):
                 return
             if not self._robot_connected or self._real_driver is None:
                 return
+            drv = self._real_driver
+            if drv is None:
+                return
+
+            # ── Heartbeat: RobotMode() serve como keep-alive do dashboard ──
             ok = False
-            mode_int: int | None = None
             try:
-                drv = self._real_driver
-                if drv is None:
-                    return
                 resp = drv.robot_mode()
                 ok = bool(resp) and '{' in resp
-                if ok:
-                    m = re.search(r'\{(\d+)\}', resp)
-                    if m:
-                        mode_int = int(m.group(1))
             except (CR10RealDriverError, OSError):
                 ok = False
-            if ok:
-                failures = 0
-                if mode_int is not None and mode_int != _prev_mode:
-                    self.get_logger().info(
-                        '[DRAG-WATCH] RobotMode mudou: %d → %d',
-                        _prev_mode if _prev_mode is not None else -1, mode_int)
-                    _prev_mode = mode_int
-                # Auto-detecção de drag: modo ≠ 5 (idle) e ≠ 6 (running) indica
-                # que o controlador mudou de estado — tipicamente modo 9 = DragTeach.
-                # Ajustar ROBOT_MODE_DRAG em real_driver.py se necessário.
-                # Guard: regex sem match (resposta malformada) não dispara auto-disable.
-                if mode_int is not None:
-                    with self._lock:
-                        phase = self._latest_phase
-                    if phase in ('IDLE', 'DONE', 'ABORTED'):
-                        is_drag = (mode_int == ROBOT_MODE_DRAG)
-                        if is_drag and not self._drag_enabled:
-                            self.get_logger().warning(
-                                '[DRAG-WATCH] Drag físico detectado (modo=%d) — '
-                                'tracking real→sim activado automaticamente.', mode_int)
-                            self._drag_last_valid_q = None
-                            self._drag_enabled = True
-                            self.root.after(0, self._update_drag_btn_auto, True)
-                        elif not is_drag and self._drag_enabled:
-                            self.get_logger().info(
-                                '[DRAG-WATCH] Drag desactivado (modo=%d) — '
-                                'tracking real→sim desligado.', mode_int)
-                            self._drag_enabled = False
-                            self._drag_last_valid_q = None
-                            self.root.after(0, self._update_drag_btn_auto, False)
-            else:
+
+            if not ok:
                 failures += 1
                 self.get_logger().warn(
                     f'Heartbeat CR10 falhou ({failures}/{MAX_FAILURES}).')
                 if failures >= MAX_FAILURES:
                     self.root.after(0, self._on_robot_connection_lost)
                     return
+                continue
+            failures = 0
+
+            # ── Detecção de drag por movimento de juntas ──────────────────
+            try:
+                q_now = drv.read_joints_urdf_latest()
+            except Exception:
+                q_prev = None
+                continue
+
+            # Guard: firmware retorna zeros durante transições — ignorar.
+            if np.linalg.norm(q_now) < 0.05:
+                continue
+
+            if q_prev is not None:
+                movement = float(np.max(np.abs(q_now - q_prev)))
+
+                # Enquanto o robô se aproxima do alvo comandado pelo slider
+                # (dist diminuindo), mantém o silence clock zerado para evitar
+                # falso drag durante execução de MovJ (que pode levar >2 s).
+                # Só para de resetar quando o robô para de se aproximar —
+                # indicando que chegou ao alvo OU foi arrastado em outra direção.
+                target = self._mirror_last_target
+                if target is not None:
+                    dist_now  = float(np.max(np.abs(q_now  - target)))
+                    dist_prev = float(np.max(np.abs(q_prev - target)))
+                    if dist_now < dist_prev and dist_now > math.radians(1.5):
+                        self._last_robot_cmd_t = time.monotonic()
+
+                silence = time.monotonic() - self._last_robot_cmd_t
+                with self._lock:
+                    phase = self._latest_phase
+
+                if movement > DRAG_THRESH_RAD and silence > DRAG_SILENCE_S:
+                    # Juntas em movimento sem comando do PC → drag físico detectado.
+                    if not self._drag_enabled and phase in ('IDLE', 'DONE', 'ABORTED'):
+                        self.get_logger().warning(
+                            f'[DRAG] Movimento sem comando detectado '
+                            f'(max_dq={math.degrees(movement):.2f}°, '
+                            f'silêncio={silence:.1f}s) — drag ativado.')
+                        self._drag_last_valid_q = None
+                        self._drag_last_t = None
+                        self._drag_enabled = True
+                        self.root.after(0, self._update_drag_btn_auto, True)
+
+            q_prev = q_now
 
     def _update_drag_btn_auto(self, active: bool) -> None:
         """Actualiza o botão de drag a partir do watcher (thread Tk-safe)."""
         self._publish_drag_state(active)
+        if not active:
+            self._sync_sliders_from_drag()
         btn = self._drag_btn
         if btn is None:
             return
@@ -3801,9 +4263,9 @@ class PalpationGUI(Node):
     # ──────────────────────────────────────────────────────────────────
     def _refresh_status_panel(self):
         try:
-            tgt = float(self.force_var.get())
+            tgt_depth = float(self.depth_var.get())
         except (ValueError, tk.TclError):
-            tgt = FORCE_DEFAULT
+            tgt_depth = DEPTH_DEFAULT
         with self._lock:
             phase     = self._latest_phase
             f_net     = self._lc_force_net        # positivo = compressão
@@ -3822,24 +4284,22 @@ class PalpationGUI(Node):
             self.force_status_lbl.config(
                 text='aguardando /load_cell/force_net (inicie o receptor UDP)',
                 fg=TEXT_DIM)
-            self.err_value_lbl.config(text='—  N', fg=TEXT_DIM)
+            self.err_value_lbl.config(text='—  mm', fg=TEXT_DIM)
             self.fz_lbl.config(text='—  N')
             self.fx_lbl.config(text='—  V')
             self.fy_lbl.config(text='—  N')
         else:
-            err = abs(f_net - tgt)
-            if not lc_tared or f_net < 0.05:
-                color, status = WARN, 'sem contato / tare não realizado'
-            elif err <= 0.10:
-                color, status = OK, 'estável (±0.10 N)'
-            elif err <= 0.25:
-                color, status = WARN, 'oscilando (±0.25 N)'
+            if not lc_tared:
+                color, status = WARN, 'tare não realizado'
+            elif f_net > _FORCE_COMPRESSION_LIMIT_N * 0.9:
+                color, status = DANGER, f'próximo do limite ({_FORCE_COMPRESSION_LIMIT_N:.0f} N)'
+            elif f_net >= 0.2:
+                color, status = OK, 'em contato'
             else:
-                color, status = DANGER, 'fora da tolerância'
-            self.force_value_lbl.config(
-                text=f'{f_net:+6.2f}  N', fg=color)
+                color, status = TEXT_MUTED, 'sem contato'
+            self.force_value_lbl.config(text=f'{f_net:+6.2f}  N', fg=color)
             self.force_status_lbl.config(text=status, fg=color)
-            self.err_value_lbl.config(text=f'{err:5.2f}  N', fg=color)
+            self.err_value_lbl.config(text=f'{tgt_depth:.1f}  mm', fg=TEXT)
             self.fz_lbl.config(text=f'{f_net:+6.2f} N')
             tare_txt = f'{lc_tare_v:.4f} V' if lc_tared else 'não realizado'
             self.fx_lbl.config(text=tare_txt)
@@ -3847,8 +4307,8 @@ class PalpationGUI(Node):
             self.fy_lbl.config(text=f'{lc_bruto:+6.2f} N')
 
         phase_color = {
-            'IDLE': TEXT_MUTED, 'CONTACT': PRIMARY, 'CALIBRATING': WARN,
-            'SLIDING': PRIMARY, 'RETRACT': TEXT_MUTED,
+            'IDLE': TEXT_MUTED, 'DESCENDING': WARN,
+            'HOLD': OK, 'SLIDING': PRIMARY, 'RETRACT': TEXT_MUTED,
             'DONE': OK, 'ABORTED': DANGER,
         }.get(phase, TEXT)
         self.phase_lbl.config(text=phase, fg=phase_color)
@@ -3886,46 +4346,39 @@ class PalpationGUI(Node):
         self._set_status('Palpação interrompida pelo operador.', WARN)
 
     def _on_start(self):
+        # Gate (defesa em profundidade — ver também o bloqueio da aba em
+        # _build_body): sem o touch_tool a palpação fica indisponível.
+        if getattr(self, '_palpation_blocked', False):
+            self._set_status(
+                'Modo Palpação indisponível: abra o launch com '
+                'end_effector:=touch_tool.', WARN)
+            return
         # Satura cada parâmetro ao seu intervalo válido antes de enviar,
         # tanto para a publicação quanto para o que o usuário vê nos
         # spinboxes/sliders.
         self._suppressing = True
         try:
-            speed = self._clamp_var(self.speed_var, SPEED_MIN, SPEED_MAX)
-            force = self._clamp_var(self.force_var, FORCE_MIN, FORCE_MAX)
-            approach = self._clamp_var(self.approach_var,
-                                        APPROACH_MIN, APPROACH_MAX,
-                                        default=APPROACH_DEFAULT)
+            speed      = self._clamp_var(self.speed_var, SPEED_MIN, SPEED_MAX)
+            depth      = self._clamp_var(self.depth_var, DEPTH_MIN, DEPTH_MAX)
+            slide_dist = self._clamp_var(self.slide_dist_var,
+                                          SLIDE_DIST_MIN, SLIDE_DIST_MAX)
+            approach   = self._clamp_var(self.approach_var,
+                                          APPROACH_MIN, APPROACH_MAX,
+                                          default=APPROACH_DEFAULT)
         finally:
             self._suppressing = False
-        if None in (speed, force, approach):
+        if None in (speed, depth, slide_dist, approach):
             self._set_status('Parâmetros inválidos.', DANGER)
             return
-        kp = self._clamp_var(self.pid_kp_var, KP_MIN, KP_MAX,
-                              default=KP_DEFAULT)
-        ki = self._clamp_var(self.pid_ki_var, KI_MIN, KI_MAX,
-                              default=KI_DEFAULT)
-        kd = self._clamp_var(self.pid_kd_var, KD_MIN, KD_MAX,
-                              default=KD_DEFAULT)
         sf_pct = self._clamp_var(self.speed_factor_var,
                                   SPEED_FACTOR_MIN, SPEED_FACTOR_MAX,
                                   default=SPEED_FACTOR_DEFAULT)
         payload = {
             'speed_mms':          float(speed),
-            'force_n':            float(force),
-            # Velocidade da descida CONTACT / subida RETRACT (mm/s).
-            # Explorer aplica como approach_v_max_mms; min = 20 % do max.
+            'depth_mm':           float(depth),
+            'slide_dist_mm':      float(slide_dist),
             'approach_speed_mms': float(approach),
-            # Direção XY (mundo) do sliding — string '+X' / '-X' / '+Y' / '-Y'.
             'slide_dir':          self.slide_dir_var.get(),
-            # Ganhos do PID de força aplicados no CALIBRATING/SLIDING pelo explorer.
-            'kp': float(kp if kp is not None else KP_DEFAULT),
-            'ki': float(ki if ki is not None else KI_DEFAULT),
-            'kd': float(kd if kd is not None else KD_DEFAULT),
-            # Speed factor (1-100 %): limita a velocidade máxima de junta
-            # enviada como pt.velocities no JointTrajectoryPoint. O JTC usa
-            # esses hints para splines cúbicos contínuos em velocidade,
-            # eliminando descontinuidades que causam estalos no hardware.
             'speed_factor_pct':   float(sf_pct if sf_pct is not None
                                          else SPEED_FACTOR_DEFAULT),
             # Home customizada: explorer leva o braço PARA CÁ antes
