@@ -127,6 +127,7 @@ chega pelo submódulo. Não é preciso clonar nada além do passo 1.
 
 #### 1. Célula de manufatura — `grasp_ml_pack`
 Esteira + detecção de objetos + pick-and-place com a mão COVVI.
+O grasp usa poses determinísticas calibradas por `hand_fk` (sem ML por padrão). O módulo ML (`grasp_quality_net.py` / RandomForest) existe e pode ser treinado, mas não é o caminho principal de operação.
 
 ```bash
 ros2 launch grasp_ml_pack conveyor_cell.launch.py
@@ -170,6 +171,28 @@ ros2 launch touch_pack tactile_cell.launch.py end_effector:=hand
 ros2 launch hand_pack cr10_covvi_gazebo.launch.py     # CR10 + COVVI no Gazebo
 ros2 launch hand_pack cr10_covvi_rviz.launch.py        # idem no RViz
 ```
+
+#### Runs isolados — `grasp_ml_pack`
+
+```bash
+ros2 run grasp_ml_pack manual_control     # GUI principal (CRStudio-style, 3 abas)
+ros2 run grasp_ml_pack gui_control        # GUI simples de operação da célula
+ros2 run grasp_ml_pack object_detector    # só o detector de objetos
+ros2 run grasp_ml_pack grasp_executor     # só o executor de ciclo pick-place
+ros2 run grasp_ml_pack conveyor_controller # só o controlador da esteira
+ros2 run grasp_ml_pack pipeline           # só o orquestrador / aggregator de status
+```
+
+Scripts de tuning e teste (rodar com `python` dentro do workspace compilado):
+
+```bash
+python src/grasp_ml_pack/scripts/test_kinematics.py   # valida FK/IK para os 3 objetos
+python src/grasp_ml_pack/scripts/test_9cycles.py       # stress test: 9 ciclos consecutivos
+python src/grasp_ml_pack/scripts/tune_descent.py       # ajuste interativo da fase de descida
+python src/grasp_ml_pack/scripts/tune_rotate.py        # ajuste de orientação do pulso (joint6)
+```
+
+---
 
 #### Conectar o hardware real (opcional)
 - **Mão COVVI:** pela GUI (`touch_pack`/`grasp_ml_pack`), informe o IP e clique **Conectar** → **ECI ON** → **PWR ON**. Internamente sobe `ros2 run covvi_hand_driver server <IP>`.

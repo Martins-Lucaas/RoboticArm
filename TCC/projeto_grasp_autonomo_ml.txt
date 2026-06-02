@@ -23,10 +23,17 @@ ENTREGÁVEL DESTA FASE
 Está completo o componente de gêmeo digital com pipeline de grasp diferenciado:
   - Célula de manufatura biomédica (Gazebo): esteira, objetos,
     caixas de classificação, câmera, iluminação industrial
-  - Detecção de objetos por visão computacional (segmentação HSV)
-  - Estimativa de posição 3D por back-projection geométrica
+  - Detecção de objetos por visão computacional (segmentação HSV ou YOLOv8)
+  - Estimativa de posição 3D por back-projection geométrica (object_detector)
   - Execução de grasp com 3 tipos de preensão (palm / claw / fingertip)
-  - GUI de controle da célula e controlador de esteira
+    via poses determinísticas calibradas por hand_fk (poses.py)
+  - GUI manual estilo CRStudio (3 abas: Jog / Mão COVVI / Célula)
+    com ciclo de pick em fases F1–F6 e smart-close incremental
+  - GUI simples de operação da célula (gui_control_node.py)
+  - Controlador da esteira (spawn/delete de objetos via Gazebo)
+  - Pipeline autônomo opcional (autonomous:=true)
+  - Sistema de prevenção de colisão AABB (collision.py + cage_check.py)
+  - Módulo PerfectGrasp: fechamento incremental com detecção de contato
 
 As etapas posteriores (protocolo com usuários reais, integração Sim-to-Real)
 não fazem parte desta entrega.
@@ -35,10 +42,12 @@ VISÃO GERAL TÉCNICA
 -------------------
 Gêmeo digital do braço Dobot CR10 acoplado à mão protética COVVI que executa
 preensão autônoma de objetos em uma célula de manufatura
-simulada. A câmera RGB detecta objetos por segmentação HSV, estima posições 3D
-via back-projection geométrica e o sistema seleciona deterministicamente o tipo
-de preensão adequado ao objeto. O robô executa o ciclo completo de 7 fases:
-abordagem → descida → grasp → levantamento → trânsito → deposição → home.
+simulada. A câmera RGB detecta objetos por segmentação HSV (ou YOLOv8) e o
+sistema seleciona deterministicamente o tipo de preensão via poses calibradas
+pela cinemática direta da mão (hand_fk). O grasp é por contato físico real
+(ODE + fricção), sem attach cinemático. O ciclo completo:
+  PICK  (approach lateral → descida → smart-close)
+  LIFT  → PLACE (na caixa correta) → HOME.
 
 Sequência de objetos: frasco (palm_grip → box1) → tubo (claw_grip → box2)
                       → ampola (fingertip_grip → box3)
@@ -58,11 +67,12 @@ HARDWARE / SOFTWARE
 ================================================================================
 
   src/
-  ├── hand_pack/                    ← Gemêo digital COVVI Hand (digital twin)
+  ├── hand_pack/                    ← Gêmeo digital COVVI Hand (digital twin)
   │   ├── hand_pack/
   │   │   ├── hand_gui.py           ← GUI Tkinter para controle da mão
   │   │   ├── combined_gui.py       ← GUI combinada CR10 + mão
-  │   │   └── hand_node.py          ← Nó ROS para a mão
+  │   │   ├── hand_node.py          ← Nó ROS para a mão
+  │   │   └── urdf_helpers.py       ← Helpers URDF: skin, limites, colisões
   │   ├── launch/
   │   │   ├── cr10_covvi_gazebo.launch.py  ← Launch principal (CR10 + mão no Gazebo)
   │   │   ├── cr10_covvi_rviz.launch.py    ← Visualização no RViz
@@ -72,28 +82,41 @@ HARDWARE / SOFTWARE
   │   └── config/
   │       └── cr10_covvi_controllers.yaml  ← Configuração dos controllers
   │
-  └── grasp_ml_pack/                ← Pipeline autônomo de preensão com ML
-      ├── grasp_ml_pack/
-      │   ├── object_detector.py    ← Câmera → bboxes (HSV / YOLOv8)
-      │   ├── pose_estimator.py     ← Bboxes → posição 3D em base_link
-      │   ├── grasp_planner.py      ← Posição 3D → candidato de grasp
-      │   ├── grasp_executor.py     ← Candidato → trajetória → execução
-      │   ├── pipeline.py           ← Orquestrador (máquina de estados)
-      │   ├── grasp_quality_net.py  ← Classificador ML (26 features)
-      │   └── kinematics.py         ← FK/IK analítica + parâmetros DH
-      ├── scripts/
-      │   ├── generate_training_data.py  ← Coleta dataset no Gazebo
-      │   └── train_grasp_model.py       ← Treina o RandomForest
-      ├── config/
-      │   ├── pipeline_params.yaml  ← Parâmetros de todos os nós
-      │   └── grasp_database.yaml   ← Candidatos de grasp por objeto
-      ├── worlds/
-      │   └── grasp_experiment.world  ← Cena Gazebo completa
-      ├── models/                   ← Arquivos ML (gerados, não versionados)
-      │   ├── training_data.npz     ← Dataset de treino (X, y)
-      │   └── grasp_quality.pkl     ← Modelo treinado
-      └── launch/
-          └── grasp_pipeline.launch.py  ← Launch do pipeline autônomo
+  ├── grasp_ml_pack/                ← Célula de manufatura + pipeline de grasp
+  │   ├── grasp_ml_pack/
+  │   │   ├── object_detector.py    ← Câmera → bboxes (HSV / YOLOv8)
+  │   │   ├── grasp_executor.py     ← Serviço /cell/execute_grasp → PICK→LIFT→PLACE→HOME
+  │   │   ├── conveyor_controller.py← Esteira: spawn/delete objetos, serviços /conveyor/*
+  │   │   ├── manual_control_node.py← GUI principal CRStudio-style (3 abas + ciclo F1–F6)
+  │   │   ├── gui_control_node.py   ← GUI simples de operação (advance/grasp/home)
+  │   │   ├── pipeline.py           ← Orquestrador: status aggregator + modo autônomo
+  │   │   ├── poses.py              ← Fonte única de poses/grips calibrados (SDD §4)
+  │   │   ├── perfect_grasp.py      ← Fechamento incremental com detecção de contato
+  │   │   ├── collision.py          ← Sistema de prevenção de colisão AABB
+  │   │   ├── cage_check.py         ← Verificação de cage/gaiola de segurança
+  │   │   ├── grasp_quality_net.py  ← Classificador ML opcional (26 features)
+  │   │   └── kinematics.py         ← FK/IK analítica + refinamento DLS + hand_fk
+  │   ├── scripts/
+  │   │   ├── generate_training_data.py  ← Coleta dataset no Gazebo (para ML)
+  │   │   ├── train_grasp_model.py       ← Treina o RandomForest
+  │   │   ├── test_kinematics.py         ← Testes unitários de FK/IK
+  │   │   ├── test_9cycles.py            ← Teste de 9 ciclos consecutivos
+  │   │   ├── tune_descent.py            ← Tuning da fase de descida
+  │   │   └── tune_rotate.py             ← Tuning de orientação do pulso
+  │   ├── config/
+  │   │   ├── pipeline_params.yaml  ← Parâmetros de todos os nós
+  │   │   ├── grasp_database.yaml   ← Candidatos de grasp por objeto
+  │   │   └── teach_sequence.yaml   ← Sequência de teach points para o braço
+  │   ├── worlds/
+  │   │   ├── conveyor_cell.world   ← Cena Gazebo principal (esteira + objetos + câmera)
+  │   │   └── grasp_experiment.world← Cena legada (mantida para referência)
+  │   ├── models/                   ← Arquivos ML (gerados, não versionados)
+  │   │   ├── training_data.npz     ← Dataset de treino (X, y)
+  │   │   └── grasp_quality.pkl     ← Modelo treinado
+  │   └── launch/
+  │       └── conveyor_cell.launch.py  ← Launch principal da célula (args: use_yolo/sim_only/autonomous/no_gui)
+  │
+  └── touch_pack/                   ← Célula de palpação tátil (ver seção D7)
 
 
 ================================================================================
@@ -145,25 +168,44 @@ HARDWARE / SOFTWARE
 
   ── grasp_ml_pack ────────────────────────────────────────────────────────────
 
-  Launch — Pipeline autônomo completo (Gazebo + ML + câmera):
-    ros2 launch grasp_ml_pack grasp_pipeline.launch.py
+  Launch — Célula de manufatura completa (Gazebo + câmera + GUI + esteira):
+    ros2 launch grasp_ml_pack conveyor_cell.launch.py
+
+  Argumentos do launch:
+    use_yolo:=true/false   (padrão: false) — usa YOLOv8 em vez de HSV
+    sim_only:=true/false   (padrão: true)  — false: habilita CR10/COVVI reais
+    autonomous:=true/false (padrão: false) — roda ciclo sem intervenção
+    no_gui:=true/false     (padrão: false) — sobe sem a GUI principal
+
+  Exemplos:
+    ros2 launch grasp_ml_pack conveyor_cell.launch.py use_yolo:=true autonomous:=true
+    ros2 launch grasp_ml_pack conveyor_cell.launch.py no_gui:=true autonomous:=true
+
+  Run — GUI principal (CRStudio-style, 3 abas):
+    ros2 run grasp_ml_pack manual_control
+
+  Run — GUI simples de operação da célula:
+    ros2 run grasp_ml_pack gui_control
 
   Run — Só o detector de objetos (requer câmera ativa):
     ros2 run grasp_ml_pack object_detector
 
-  Run — Só o estimador de pose:
-    ros2 run grasp_ml_pack pose_estimator
-
-  Run — Só o planejador de grasp:
-    ros2 run grasp_ml_pack grasp_planner
-
   Run — Só o executor de grasp (requer controllers ativos):
     ros2 run grasp_ml_pack grasp_executor
+
+  Run — Controlador da esteira:
+    ros2 run grasp_ml_pack conveyor_controller
 
   Run — Só o pipeline orquestrador:
     ros2 run grasp_ml_pack pipeline
 
-  Run — Coletar dados de treinamento (Gazebo deve estar rodando):
+  Scripts de teste e tuning:
+    python scripts/test_kinematics.py   — testa FK/IK para os 3 objetos
+    python scripts/test_9cycles.py      — executa 9 ciclos consecutivos (stress test)
+    python scripts/tune_descent.py      — ajusta fases de descida interativamente
+    python scripts/tune_rotate.py       — ajusta orientação do pulso (joint6)
+
+  Run — Coletar dados de treinamento ML (Gazebo deve estar rodando):
     ros2 run grasp_ml_pack generate_data
     ros2 run grasp_ml_pack generate_data --ros-args -p n_samples:=500
     ros2 run grasp_ml_pack generate_data --ros-args \
@@ -171,94 +213,78 @@ HARDWARE / SOFTWARE
         -p output_path:=/caminho/para/training_data.npz \
         -p ik_only:=true
 
-  Run — Treinar o modelo:
+  Run — Treinar o modelo ML:
     ros2 run grasp_ml_pack train_model
 
-  Run — Testar cinemática (FK/IK unitário):
-    ros2 run grasp_ml_pack test_kin
-
 
 ================================================================================
-  PIPELINE AUTÔNOMO — COMO FUNCIONA
+  ARQUITETURA DA CÉLULA — COMO FUNCIONA
 ================================================================================
 
-  MÁQUINA DE ESTADOS:
-    IDLE → DETECTING → ESTIMATING → PLANNING → EXECUTING → IDLE (próximo objeto)
+  DOIS MODOS DE OPERAÇÃO:
+    • GUI manual (padrão): operador clica botões na aba Célula da GUI
+    • Autônomo: autonomous:=true — pipeline executa ciclos sem intervenção
 
-  ORDEM DE PREENSÃO (hardcoded em pipeline.py):
-    1º bola (ball)  →  2º copo (cup)  →  3º lápis (pencil)
+  SEQUÊNCIA DE OBJETOS:
+    1º frasco (ball/palm_grip → Box 1)
+    2º tubo   (cup/claw_grip  → Box 2)
+    3º ampola (pencil/fingertip_grip → Box 3)
+
+  NÓS ATIVOS (lançados por conveyor_cell.launch.py):
+    object_detector       — visão (HSV ou YOLOv8)
+    grasp_executor        — ciclo PICK→LIFT→PLACE→HOME via serviço
+    conveyor_controller   — esteira (spawn/delete de objetos)
+    manual_control        — GUI principal CRStudio (3 abas)   [desativável: no_gui:=true]
+    pipeline              — orquestrador + aggregator de status
 
   FLUXO DETALHADO:
 
   ┌─────────────────────────────────────────────────────────────────────────┐
   │ [object_detector]                                                       │
   │   Câmera /camera/color/image_raw (30 Hz, 848×480)                       │
-  │   Segmentação HSV por cor:                                               │
-  │     ball   → H=0-12 e H=168-180, S>=200, V>=80  (vermelho saturado)     │
-  │     cup    → H=*, S=0-35, V>=190                (branco/cinza claro)    │
-│     pencil → H=22-38, S>=90, V>=90              (amarelo)               │
+  │   Segmentação HSV por cor (ou YOLOv8 se use_yolo:=true):                │
+  │     ball   → H=0-12/168-180, S≥200, V≥80  (frasco âmbar — vermelho)     │
+  │     cup    → H=*, S=0-35, V≥190             (tubo branco)               │
+  │     pencil → H=22-38, S≥90, V≥90           (ampola amarela)            │
   │   Publica → /detected_objects (Detection2DArray com bboxes)              │
   │   Janela OpenCV: "Camera — O que o robo ve" (abre automaticamente)       │
   └─────────────────────────────────────────────────────────────────────────┘
                               ↓
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │ [pipeline] IDLE → DETECTING                                             │
-  │   Determina próximo alvo (ball → cup → pencil, pulando já concluídos)   │
-  │   Publica alvo em /pipeline/target                                       │
-  │   Monitora /detected_objects                                             │
-  │   Só avança quando o OBJETO ALVO é detectado (ignora outros objetos)     │
-  │   Timeout: 8 s → reinicia DETECTING                                      │
+  │ [conveyor_controller]                                                   │
+  │   Mantém sequência: frasco → tubo → ampola                              │
+  │   Serviços:                                                             │
+  │     /conveyor/advance — spawna próximo objeto na pick station            │
+  │     /conveyor/retreat — remove objeto atual                              │
+  │     /conveyor/reset   — reinicia sequência                               │
+  │   Publica → /conveyor/status (JSON com objeto atual e índice)            │
   └─────────────────────────────────────────────────────────────────────────┘
                               ↓
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │ [pose_estimator] DETECTING → ESTIMATING                                 │
-  │   Recebe /detected_objects + /camera/color/camera_info                   │
-  │   Back-projection geométrica (sem câmera de profundidade):               │
-  │     pixel (u,v) → raio no frame óptico → interseção com z_world=0.75m   │
-  │     resultado: posição 3D no frame base_link                             │
-  │   Matemática: d_world = R_world_opt @ [x_n, y_n, 1]                     │
-  │               t = (0.75 - z_cam) / d_world[2]                           │
-  │               base_pos = cam_pos + t*d_world - [0, 0, 0.375]            │
-  │   Publica → /object_poses (PoseArray com label codificado no frame_id)  │
+  │ [grasp_executor] — acionado via /cell/execute_grasp (Trigger)           │
+  │   Lê objeto atual de /detected_objects e /conveyor/status               │
+  │   Poses determinísticas de poses.py (SDD §4) — sem ML por padrão:       │
+  │     ball   → palm_grip    (palma em cima, wrap ao redor do frasco)      │
+  │     cup    → claw_grip    (abordagem lateral, dedos cruzam o tubo)      │
+  │     pencil → fingertip_grip (abordagem lateral, fechamento fino)        │
+  │   Ciclo de execução via FollowJointTrajectory:                          │
+  │     PICK  — pré-approach → approach lateral → descida → smart-close     │
+  │     LIFT  — levanta com objeto (contato físico real, sem attach)        │
+  │     PLACE — move à caixa de destino e abre a mão                       │
+  │     HOME  — retorna à pose Home                                          │
+  │   PerfectGrasp: fechamento incremental com detecção de contato via lag  │
+  │   Publica → /cell/status (JSON com fase atual e objeto)                  │
   └─────────────────────────────────────────────────────────────────────────┘
                               ↓
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │ [grasp_planner] ESTIMATING → PLANNING                                   │
-  │   Recebe /object_poses + /pipeline/target                                │
-  │   Filtra só as poses do objeto alvo                                      │
-  │   Para cada candidato no grasp_database.yaml:                            │
-  │     1. Verifica IK (inverse_kinematics) → descarta se inalcançável       │
-  │     2. Monta vetor de 26 features cinemáticas                            │
-  │     3. GraspQualityNet.predict(features) → score [0, 1]                 │
-  │     4. Bônus de manipulabilidade (+0.08 máx)                            │
-  │   Seleciona candidato com maior score                                    │
-  │   Publica → /selected_grasp (JSON: posição, tipo, vetor abordagem, q)   │
-  └─────────────────────────────────────────────────────────────────────────┘
-                              ↓
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │ [grasp_executor] PLANNING → EXECUTING                                   │
-  │   Recebe /selected_grasp                                                 │
-  │   Executa 11 passos via action client FollowJointTrajectory:             │
-  │     1. Abrir mão completamente                                           │
-  │     2. Mover braço para pré-abordagem (15 cm acima do objeto)            │
-  │     3. Pré-configurar dedos (pinch / cylindrical / spherical)            │
-  │     4. Descida etapa 1: 8 cm abaixo da pré-abordagem                    │
-  │     5. Descida etapa 2: até a posição de grasp                           │
-  │     6. Fechar mão (torque nos dedos primários)                           │
-  │     7. Levantar 20 cm                                                    │
-  │     8. Girar pulso joint6 ±135° (verificação funcional)                  │
-  │     9. Voltar à posição de grasp                                         │
-  │    10. Abrir mão (soltar objeto)                                         │
-  │    11. Retornar ao home (pose neutra)                                    │
-  │   Trajetória: ease-in/out sinusoidal, 10 waypoints por segmento          │
-  │   Publica resultado → /grasp_result (JSON: success, label, score)        │
-  └─────────────────────────────────────────────────────────────────────────┘
-                              ↓
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │ [pipeline] EXECUTING → IDLE                                             │
-  │   Sucesso: adiciona objeto aos concluídos, avança para próximo alvo      │
-  │   Falha:   tenta novamente (máx. 3 tentativas), depois ERROR             │
-  │   Todos concluídos: loga "Sequência completa" e encerra                  │
+  │ [pipeline] — modo autônomo (autonomous:=true)                           │
+  │   Máquina de estados: IDLE→ADVANCE→WAIT_OBJ→GRASP→WAIT_END→DONE        │
+  │   ADVANCE: chama /conveyor/advance                                       │
+  │   WAIT_OBJ: aguarda objeto em /detected_objects (timeout configurável)   │
+  │   GRASP: chama /cell/execute_grasp e aguarda /cell/status=done          │
+  │   DONE: todos os ciclos (total_cycles) concluídos → encerra              │
+  │   Em modo GUI: apenas agrega /conveyor/status + /cell/status em          │
+  │     /pipeline/status para exibição na GUI                                │
   └─────────────────────────────────────────────────────────────────────────┘
 
 
@@ -408,7 +434,7 @@ HARDWARE / SOFTWARE
 
 
 ================================================================================
-  TÓPICOS ROS 2 PRINCIPAIS
+  TÓPICOS E SERVIÇOS ROS 2 PRINCIPAIS
 ================================================================================
 
   Câmera:
@@ -420,21 +446,24 @@ HARDWARE / SOFTWARE
     /detector/debug_image            ← imagem anotada com bboxes
     /detector/status                 ← texto: "DETECTADO: ball [HSV]"
 
-  Estimativa de pose:
-    /object_poses                    ← PoseArray em frame base_link
+  Esteira:
+    /conveyor/status                 ← JSON: objeto atual, índice, estado
 
-  Pipeline:
-    /pipeline/status                 ← {"state": "DETECTING", "attempt": 0}
-    /pipeline/target                 ← objeto alvo atual ("ball"/"cup"/"pencil")
+  Executor:
+    /cell/status                     ← JSON: fase atual (PICK/LIFT/PLACE/HOME)
 
-  Planejamento:
-    /selected_grasp                  ← JSON com candidato de grasp selecionado
-
-  Resultado:
-    /grasp_result                    ← {"success": true, "object_label": "ball"}
+  Pipeline (aggregator):
+    /pipeline/status                 ← JSON consolidado de /conveyor + /cell
 
   Estado do robô:
-    /joint_states                    ← posições de todas as 37 juntas
+    /joint_states                    ← posições de todas as 37 juntas (braço+mão)
+
+  Serviços expostos:
+    /conveyor/advance                ← (Trigger) spawna próximo objeto
+    /conveyor/retreat                ← (Trigger) remove objeto atual
+    /conveyor/reset                  ← (Trigger) reinicia sequência
+    /cell/execute_grasp              ← (Trigger) inicia ciclo PICK→LIFT→PLACE→HOME
+    /cell/go_home                    ← (Trigger) move braço ao Home
 
 
 ================================================================================
@@ -444,13 +473,14 @@ HARDWARE / SOFTWARE
   Câmera publicando?
     ros2 topic hz /camera/color/image_raw       → deve ser ~30 Hz
 
-  Pipeline travado em DETECTING?
+  Pipeline em WAIT_OBJ sem avançar?
     → Objeto alvo não detectado. Ver janela "Camera — O que o robo ve"
     → Ajustar faixas HSV em object_detector.py se necessário
 
-  Pipeline travado em ESTIMATING?
-    → pose_estimator não recebe K matrix
-    ros2 topic hz /camera/color/camera_info     → deve ter mensagens
+  Executor preso sem executar?
+    → Verificar /cell/status e /conveyor/status
+    ros2 topic echo /cell/status --once
+    ros2 topic echo /conveyor/status --once
 
   Mão desmontada?
     → Controllers não carregaram. Ver log do gzserver pelos spawners
@@ -460,6 +490,8 @@ HARDWARE / SOFTWARE
 
   Verificar estado atual:
     ros2 topic echo /pipeline/status --once
+    ros2 topic echo /cell/status --once
+    ros2 topic echo /conveyor/status --once
 
   Matar processos Gazebo travados:
     pkill -f gzserver; pkill -f gzclient
@@ -478,10 +510,12 @@ HARDWARE / SOFTWARE
     → grasp_offset: deslocamento em metros do TCP em relação ao centróide
     → approach_vector: direção de abordagem (normalizado internamente)
 
-  worlds/grasp_experiment.world
-    → Posição e cor dos objetos
-    → Posição, FoV e ângulo da câmera
+  worlds/conveyor_cell.world          ← mundo principal
+    → Esteira, objetos (frasco/tubo/ampola), caixas, câmera
     → Câmera atual: x=0.10, z=1.70, pitch=1.05 rad, FoV=70°
+    → Se mover a câmera, atualizar camera_pos_* em pipeline_params.yaml
+
+  worlds/grasp_experiment.world       ← cena legada (mantida para referência)
 
   models/training_data.npz
     → Dataset: arrays X (N×26) e y (N,)
@@ -832,99 +866,37 @@ HARDWARE / SOFTWARE
         decisão objeto↔preensão.
 
   ────────────────────────────────────────────────────────────────────────
-  D7) MÓDULO DE PALPAÇÃO TÁTIL — touch_pack (v0.3.x)
+  D7) MÓDULO DE PALPAÇÃO TÁTIL — touch_pack
   ────────────────────────────────────────────────────────────────────────
 
       Em paralelo ao pipeline de grasp autônomo (grasp_ml_pack), foi
-      desenvolvido o pacote `touch_pack` para reproduzir o protocolo
-      de palpação tátil de Gupta et al. (2021): contato controlado em
-      força + arrasto Cartesiano com o dedo Index estendido da COVVI.
-      Compartilha a mesma base CR10 + COVVI, mas evolui de "grasp
-      diferenciado" para "exploração tátil ativa" — uma capacidade
-      relevante para futuras integrações com sensores de pele/EMG.
+      desenvolvido o pacote `touch_pack`. Compartilha a mesma base
+      CR10 + COVVI e o mesmo URDF combinado, mas o foco é o controle
+      manual do braço e a programação de poses interpoladas — sem
+      pipeline de visão.
 
-      D7.1) Arquitetura (3 nós + GUI)
-        - tactile_explorer.py — FSM (IDLE → CONTACT → HOLD → SLIDING →
-          RETRACT → DONE) com PID de força no HOLD (33 Hz), IK
-          analítica + Jacobian numérica para o SLIDING Cartesiano.
-        - palpation_gui.py — Tkinter (tema claro), duas abas: Palpação
-          (parâmetros + FT em tempo real + barra de progresso) e
-          Controle Manual (sliders por junta + presets de mão).
-          Header: IPs da mão e do braço, modos SIM_ONLY ↔ MIRROR,
-          ECI/PWR/E-STOP.
-        - palpation_logger.py — grava CSV (amostras de wrench
-          carimbadas com fase) + JSON (parâmetros) em ~/touch_pack_runs/
-          a cada palpação.
-        - real_driver.py — TCP/IP V4 do CR10 (29999 dashboard, 30003
-          motion, 30004 feedback @8 ms). Espelhamento via MovJ
-          disparado pela GUI quando em modo MIRROR.
+      Funcionalidades principais:
+        - Controle manual junta-a-junta via sliders na GUI (Tkinter,
+          tema claro). O braço segue os sliders em tempo real.
+        - Programação de poses: o operador posiciona o braço e salva
+          waypoints; a GUI interpola linearmente entre eles e executa
+          a sequência com duração configurável.
+        - Modos de operação: SIM_ONLY (só Gazebo), MIRROR (Gazebo +
+          braço real espelhado), REAL_FROM_SIM (comandos vão ao real).
+        - Conexão ao CR10 real via TCP/IP V4 e à mão COVVI via ECI,
+          ambas configuráveis pelo painel da GUI (IP + Conectar).
+        - Botão E-STOP dedicado.
 
-      D7.2) Funcionalidades recentes (v0.3.x)
-        - Persistência: ~/.config/touch_pack/robot.json (IPs + último
-          modo) + home_pose.json (home customizada do braço).
-          Default mão = 192.168.5.103, default braço = 192.168.5.2.
-        - QoS explícito: /palpation/start = RELIABLE +
-          TRANSIENT_LOCAL depth=1 (último start sobrevive a restart);
-          /ft_sensor/wrench = BEST_EFFORT VOLATILE depth=1 (baixa
-          latência, só interessa o mais recente).
-        - Desconexão limpa da mão: SetHandPowerOff síncrono com
-          timeout antes do SIGTERM no covvi_hand_driver → LED apaga
-          antes do socket fechar.
-        - Cronômetro + progress bar por fase: SLIDING usa
-          distance/speed; HOLD usa hold_seconds (publicado pelo
-          explorer no status).
-        - Mirror robusto: subscrição em
-          /cr10_group_controller/joint_trajectory captura sliders e
-          trajetórias autônomas numa única rota, com debounce 80 ms +
-          dedup 0.5° → braço real segue comandos sem competir com a
-          pose lagada do simulador.
-        - Troca de modo bloqueada durante palpação ativa e durante
-          conexão em andamento (state guard).
-        - GUI responsiva: minsize 720×460 + scroll vertical em cada
-          aba (Canvas + Scrollbar + bind condicional do mousewheel).
-
-      D7.3) Pré-requisitos específicos
-        - eci_ros-main clonado em src/ (mesmo do grasp_ml_pack) —
-          covvi_interfaces e covvi_hand_driver são imports lazy do
-          palpation_gui ao conectar à mão real.
-        - cra_description (URDF do CR10) — mesmo do hand_pack.
-        - Sem dependências de visão (touch_pack é puramente tátil).
-
-      D7.4) Comandos
+      D7.1) Comandos
         ros2 launch touch_pack tactile_cell.launch.py
-          (Gazebo + URDF combinado + controllers + 3 nós + GUI)
-
+        ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool
         ros2 launch touch_pack tactile_cell.launch.py no_gui:=true
-          (headless: sem Tkinter, mantém explorer + logger)
 
-        ros2 run touch_pack palpation_gui      (GUI isolada)
-        ros2 run touch_pack tactile_explorer   (FSM isolada)
-        ros2 run touch_pack palpation_logger   (data logger isolado)
-
-        Disparo manual da palpação (JSON em /palpation/start):
-          ros2 topic pub --once /palpation/start std_msgs/msg/String \
-            "data: '{\"speed_mms\": 10.0, \"force_n\": 1.0,
-                      \"distance_mm\": 90.0, \"slide_dir\": \"+Y\"}'"
-
-      D7.5) Saída do logger
-        Cada run gera dois arquivos em ~/touch_pack_runs/:
-          <timestamp>__samples.csv  — t_rel_s, phase, fx, fy, fz,
-                                       tx, ty, tz (header explícito)
-          <timestamp>__params.json — parâmetros do /palpation/start
-                                       (força alvo, velocidade,
-                                       distância, ganhos PID, etc.)
-        Encerramento: status DONE/ABORTED do explorer, ou watchdog
-        de 5 min sem wrench. Flush a cada 50 amostras evita perda
-        em SIGKILL.
-
-      D7.6) Relação com o gêmeo digital (grasp_ml_pack)
+      D7.2) Relação com o gêmeo digital (grasp_ml_pack)
         São pacotes irmãos, sem dependências cruzadas em runtime.
-        Compartilham o mesmo URDF combinado (CR10 + COVVI), os mesmos
-        controllers ros2_control e a mesma camada de comunicação
-        TCP/IP com a mão real (covvi_hand_driver). A separação foi
-        intencional: grasp_ml_pack é pipeline cego-de-tato (pick &
-        place por visão), enquanto touch_pack é "olhos fechados,
-        tato aberto" (palpação ativa).
+        Compartilham o URDF combinado CR10 + COVVI, os controllers
+        ros2_control e a camada de comunicação com a mão real
+        (covvi_hand_driver).
 
   ────────────────────────────────────────────────────────────────────────
   E) FIGURAS RECOMENDADAS NO TEXTO DO TCC (referências por nome de arquivo)
