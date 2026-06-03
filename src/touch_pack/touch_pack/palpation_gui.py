@@ -2755,7 +2755,8 @@ class PalpationGUI(Node):
     def _pose_label(self, p: dict) -> str:
         q = p['q_deg']
         parts = ' '.join(f'J{i + 1}={v:+.0f}°' for i, v in enumerate(q))
-        return f"{p['name']}  [{parts}]"
+        hand_marker = '  [Mão]' if p.get('hand_deg') else ''
+        return f"{p['name']}{hand_marker}  [{parts}]"
 
     # ── Refresh widgets ───────────────────────────────────────────────
     def _refresh_poses_list(self) -> None:
@@ -2847,7 +2848,11 @@ class PalpationGUI(Node):
             seq_lbx.delete(0, 'end')
             for pid in mov['pose_ids']:
                 p = self._pose_by_id(pid)
-                seq_lbx.insert('end', p['name'] if p else f'[deletada:{pid}]')
+                if p is None:
+                    seq_lbx.insert('end', f'[deletada:{pid}]')
+                else:
+                    hand_tag = ' [Mão]' if p.get('hand_deg') else ''
+                    seq_lbx.insert('end', f"{p['name']}{hand_tag}")
 
         _refresh_seq()
 
@@ -2969,6 +2974,13 @@ class PalpationGUI(Node):
                   padx=8, pady=4, cursor='hand2').pack(fill='x')
 
     # ── Captura de poses ──────────────────────────────────────────────
+    def _capture_hand_from_sliders(self) -> dict | None:
+        """Retorna {junta: graus} dos sliders da mão se disponíveis, else None."""
+        sliders = getattr(self, 'hand_sliders', None)
+        if not sliders:
+            return None
+        return {j: float(sliders[j].get()) for j in HAND_JOINTS}
+
     def _capture_pose_robot(self) -> None:
         drv = self._real_driver
         if drv is None or not self._robot_connected:
@@ -2977,7 +2989,8 @@ class PalpationGUI(Node):
         try:
             q_urdf = drv.read_joints_urdf()
             q_deg = [math.degrees(float(v)) for v in q_urdf]
-            self._add_pose(q_deg, prefix='Robot')
+            hand_deg = self._capture_hand_from_sliders()
+            self._add_pose(q_deg, prefix='Robot', hand_deg=hand_deg)
         except Exception as exc:
             self._set_status(f'Erro ao capturar pose real: {exc}', DANGER)
 
@@ -2987,18 +3000,26 @@ class PalpationGUI(Node):
             self._set_status('Sem leitura de /joint_states — inicie a simulação.', WARN)
             return
         q_deg = [math.degrees(float(v)) for v in positions]
-        self._add_pose(q_deg, prefix='Sim')
+        hand_deg = self._capture_hand_from_sliders()
+        self._add_pose(q_deg, prefix='Sim', hand_deg=hand_deg)
 
-    def _add_pose(self, q_deg: list, prefix: str = 'Pose') -> None:
+    def _add_pose(self, q_deg: list, prefix: str = 'Pose',
+                  hand_deg: dict | None = None,
+                  hand_eci_id: int | None = None) -> None:
         pid = self._next_pose_id
         self._next_pose_id += 1
         name = f'{prefix} {pid}'
-        pose = {'id': pid, 'name': name,
-                'q_deg': [round(float(v), 2) for v in q_deg[:6]]}
+        pose: dict = {'id': pid, 'name': name,
+                      'q_deg': [round(float(v), 2) for v in q_deg[:6]]}
+        if hand_deg is not None:
+            pose['hand_deg'] = {j: round(float(hand_deg.get(j, 0)), 2)
+                                for j in HAND_JOINTS}
+            pose['hand_eci_id'] = hand_eci_id
         self._poses.append(pose)
         self._save_poses_data()
         self._refresh_poses_list()
-        self._set_status(f'Pose "{name}" capturada.', OK)
+        hand_info = '  + Mão COVVI' if hand_deg else ''
+        self._set_status(f'Pose "{name}" capturada{hand_info}.', OK)
 
     # ── Ações nas poses ───────────────────────────────────────────────
     def _rename_selected_pose(self) -> None:
@@ -3204,6 +3225,8 @@ class PalpationGUI(Node):
         Gazebo e robô real executam em paralelo: a trajetória multi-ponto é
         publicada de uma vez no Gazebo; o robô real recebe MovJ por passo,
         ambos cadenciados por `dur_s` segundos por pose.
+        Se a pose contiver 'hand_deg', a mão COVVI é movida a cada passo
+        via _apply_hand_preset (sim + ECI real quando ativo).
         """
         dur_s = max(0.1, mov.get('dur_s', 2.0))
         speed_pct = max(1, min(100, mov.get('speed_pct', 10)))
@@ -3230,7 +3253,7 @@ class PalpationGUI(Node):
             self._arm_pub.publish(msg)
 
         if mode == 'MIRROR':
-            # Robô real: MovJ por pose, cadenciado por dur_s — paralelo ao Gazebo.
+            # Robô real: MovJ + mão por pose, cadenciado por dur_s — paralelo ao Gazebo.
             drv = self._real_driver
             if drv is not None and self._robot_connected:
                 try:
@@ -3252,6 +3275,8 @@ class PalpationGUI(Node):
                     except Exception as exc:
                         log.warning('MovJ falhou: %s', exc)
                         break
+                    # Aplica pose da mão COVVI se armazenada (Tk-safe via after).
+                    self._apply_hand_pose_from_movement(pose)
                     # Aguarda o restante de dur_s para este passo,
                     # verificando _exec_stop a cada 100 ms.
                     deadline = t_step_start + dur_s
@@ -3261,8 +3286,25 @@ class PalpationGUI(Node):
                             break
                         self._exec_stop.wait(min(0.1, remaining))
         elif mode == 'SIM_ONLY':
-            # Aguarda a trajetória completa ou sinalização de stop.
-            self._exec_stop.wait(len(poses) * dur_s)
+            # Itera por pose aplicando mão a cada passo; aguarda dur_s por pose.
+            for pose in poses:
+                if self._exec_stop.is_set():
+                    break
+                self._apply_hand_pose_from_movement(pose)
+                self._exec_stop.wait(dur_s)
+
+    def _apply_hand_pose_from_movement(self, pose: dict) -> None:
+        """Aplica a pose da mão COVVI armazenada na pose (thread-safe via after).
+
+        No-op se a pose não tiver 'hand_deg' ou se estiver no modo touch_tool.
+        """
+        hand_deg = pose.get('hand_deg')
+        if not hand_deg:
+            return
+        hand_eci_id = pose.get('hand_eci_id')
+        self.root.after(
+            0, lambda hd=dict(hand_deg), eid=hand_eci_id:
+            self._apply_hand_preset(hd, eci_grip_id=eid))
 
     # ── Diálogo de nome ───────────────────────────────────────────────
     def _ask_name_dialog(self, title: str, initial: str = '') -> str | None:
