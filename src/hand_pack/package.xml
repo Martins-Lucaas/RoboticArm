@@ -26,6 +26,9 @@
   <!-- cage_check do grasp_ml_pack (opcional via soft-import) -->
   <exec_depend>grasp_ml_pack</exec_depend>
 
+  <!-- mesh do acoplador da prótese (PecasProtese.stl) -->
+  <exec_depend>touch_pack</exec_depend>
+
   <export>
     <build_type>ament_python</build_type>
   </export>

@@ -45,8 +45,11 @@ _A3 = 0.5680   # joint3 → joint4 link length
 
 # Transformação fixa flange → ponto de preensão (TCP efetivo) na palma COVVI.
 #
-# Acoplamento URDF Link6 → hand_base_link: xyz="0 0 0" rpy="π/2 0 0" (flush).
-# A rotação Rx(π/2) deixa:
+# Acoplamento URDF (com acoplador da prótese, PecasProtese.stl):
+#   Link6 → hand_coupler_link: xyz="0 0 0"        rpy="0 0 0"
+#   hand_coupler_link → hand_base_link: xyz="0 0 0.05546" rpy="π/2 0 0"
+# O acoplador (disco ⌀75×55.46 mm) desloca a mão +55.46 mm ao longo de
+# +Link6_z. A rotação Rx(π/2) deixa:
 #   hand_x = +Link6_x   (largura da palma — polegar↔mínimo)
 #   hand_y = +Link6_z   (DIREÇÃO DOS DEDOS quando estendidos)
 #   hand_z = −Link6_y   (espessura da palma — frente↔trás)
@@ -60,13 +63,14 @@ _A3 = 0.5680   # joint3 → joint4 link length
 # +Link6_x. O resultado é uma identidade de rotação + translação ao longo
 # do eixo de approach até o ponto de convergência dos fingertips.
 #
-# Distância 115 mm = `_FINGER_TIP_ALONG_Y` (hand_y dos MCPs ≈ 0.091 m +
-# alcance médio dos dedos curvados ≈ 0.024 m, calibrado pela FK da mão).
+# Translação 170.46 mm = acoplador 55.46 mm + 115 mm da palma ao TCP
+# (hand_y dos MCPs ≈ 0.091 m + alcance médio dos dedos curvados ≈ 0.024 m,
+# calibrado pela FK da mão).
 T_HAND_ATTACH = np.array([
-    [1.0,  0.0,  0.0,  0.000],
-    [0.0,  1.0,  0.0,  0.000],
-    [0.0,  0.0,  1.0,  0.115],   # 115 mm — TCP no fingertip convergence
-    [0.0,  0.0,  0.0,  1.000],
+    [1.0,  0.0,  0.0,  0.00000],
+    [0.0,  1.0,  0.0,  0.00000],
+    [0.0,  0.0,  1.0,  0.17046],  # 55.46 mm acoplador + 115 mm palma→TCP
+    [0.0,  0.0,  0.0,  1.00000],
 ], dtype=float)
 
 # Limites articulares — convenção URDF (rad).
@@ -76,10 +80,10 @@ JOINT_MIN = np.deg2rad([-180., -260., -135., -260., -135., -360.])
 JOINT_MAX = np.deg2rad([ 180.,   80.,  135.,   80.,  135.,  360.])
 
 # Distância efetiva WC→TCP ao longo do vetor de abordagem (m).
-# WC→hand_base_link ≈ 0.260; offset palma→TCP = 0.115 → soma = 0.375.
-# Apenas heurística inicial: o refinamento numérico do IK (DLS) absorve
-# diferenças residuais.
-_D_WC_TCP = 0.375
+# WC→hand_base_link ≈ 0.260; acoplador 0.05546 + offset palma→TCP 0.115
+# → soma = 0.43046. Apenas heurística inicial: o refinamento numérico do
+# IK (DLS) absorve diferenças residuais.
+_D_WC_TCP = 0.43046
 
 # ──────────────────────────────────────────────────────────────────────
 # Origens URDF das juntas: (xyz, rpy)

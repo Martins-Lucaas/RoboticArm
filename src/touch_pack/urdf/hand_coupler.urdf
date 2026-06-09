@@ -1,0 +1,116 @@
+<?xml version="1.0"?>
+<!--
+  hand_coupler.urdf
+  Acoplador da prótese (peça que conecta a mão COVVI ao flange do robô).
+
+  Mesh: meshes/PecasProtese.stl (unidade original: mm)
+    X: ±37.545 mm  (⌀ ≈ 75 mm — disco de montagem)
+    Y: ±37.545 mm
+    Z:   0 … 55.46 mm  (altura do acoplador)
+
+  Convenção de frames:
+    • hand_coupler_link / origem: coincide com o flange do robô (Link6).
+      O fundo do mesh (Z = 0) assenta na face do flange; o acoplador
+      estende-se +55.46 mm ao longo de +Link6_z (eixo axial do pulso).
+    • A mão COVVI monta no TOPO do acoplador (Z = +0.05546 m), substituindo
+      o antigo acoplamento flush Link6→hand_base_link.
+
+  Cadeia real (integração CR10 + COVVI):
+    Link6 → hand_coupler_link (acoplador ⌀75×55.46 mm) → hand_base_link (COVVI)
+
+  Uso standalone (Gazebo):
+    spawn via spawn_entity.py; o bloco world/Link6 abaixo serve só de
+    harness de teste e é substituído por Link6 do CR10 na integração.
+
+  Integração nos launches (cr10_covvi_gazebo / conveyor_cell):
+    O link e os joints são injetados programaticamente, com o caminho do
+    mesh reescrito para file:// (Gazebo Classic não resolve package://
+    ao spawnar a partir de arquivo).
+-->
+<robot name="hand_coupler">
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       ROOT (modo standalone): liga o acoplador ao world para teste.
+       Na integração com o CR10 este bloco é substituído por Link6.
+  ══════════════════════════════════════════════════════════════════ -->
+  <link name="world"/>
+
+  <joint name="world_to_link6" type="fixed">
+    <parent link="world"/>
+    <child link="Link6"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="Link6">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-9" ixy="0.0" ixz="0.0"
+               iyy="1e-9" iyz="0.0" izz="1e-9"/>
+    </inertial>
+  </link>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       ACOPLADOR DA PRÓTESE (entre Link6 e a mão COVVI)
+       Disco ⌀75×55.46 mm; mesh já centrado em X/Y, Z de 0 a 55.46 mm.
+  ══════════════════════════════════════════════════════════════════ -->
+  <link name="hand_coupler_link">
+    <inertial>
+      <origin xyz="0 0 0.02773" rpy="0 0 0"/>
+      <mass value="0.150"/>
+      <!-- cilindro R=0.0375 H=0.05546: Ixx=Iyy=(1/12)m(3R²+H²); Izz=(1/2)mR² -->
+      <inertia ixx="9.12e-5" ixy="0.0" ixz="0.0"
+               iyy="9.12e-5" iyz="0.0"
+               izz="1.055e-4"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://touch_pack/meshes/PecasProtese.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="coupler_black">
+        <color rgba="0.03 0.03 0.03 1.0"/>
+      </material>
+    </visual>
+    <collision name="col_hand_coupler">
+      <origin xyz="0 0 0.02773" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.0375" length="0.05546"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Acoplador no flange (fundo do mesh assenta em Link6). -->
+  <joint name="coupler_attach" type="fixed">
+    <parent link="Link6"/>
+    <child link="hand_coupler_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       PROPRIEDADES GAZEBO
+  ══════════════════════════════════════════════════════════════════ -->
+  <gazebo reference="Link6">
+    <self_collide>false</self_collide>
+  </gazebo>
+
+  <gazebo reference="hand_coupler_link">
+    <self_collide>false</self_collide>
+    <gravity>true</gravity>
+    <mu1>0.40</mu1>
+    <mu2>0.40</mu2>
+    <kp>1.0e5</kp>
+    <kd>100.0</kd>
+    <maxContacts>4</maxContacts>
+    <minDepth>0.0002</minDepth>
+    <maxVel>0.05</maxVel>
+    <visual>
+      <material>
+        <ambient>0.02 0.02 0.02 1</ambient>
+        <diffuse>0.03 0.03 0.03 1</diffuse>
+        <specular>0.10 0.10 0.10 1</specular>
+      </material>
+    </visual>
+  </gazebo>
+
+</robot>

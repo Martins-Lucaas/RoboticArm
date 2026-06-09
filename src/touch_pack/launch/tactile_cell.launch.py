@@ -142,7 +142,8 @@ def _build_robot_urdf(end_effector: str):
         for n in arm_links if n not in existing_arm_gz)
 
     if end_effector == 'hand':
-        full_urdf = _build_hand_suffix(cr10_urdf, hand_pack_share, arm_gz)
+        full_urdf = _build_hand_suffix(
+            cr10_urdf, hand_pack_share, arm_gz, touch_pack_share)
     else:
         full_urdf = _build_touch_tool_suffix(cr10_urdf, touch_pack_share, arm_gz)
 
@@ -161,7 +162,8 @@ def _build_robot_urdf(end_effector: str):
     return full_urdf, minimal
 
 
-def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str) -> str:
+def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str,
+                       touch_pack_share: str) -> str:
     """Injeta a mão COVVI + tcp_link (Index distal) no CR10."""
     hand_urdf_path = os.path.join(
         hand_pack_share, 'urdf', 'linear_covvi_hand_gazebo.urdf')
@@ -215,12 +217,61 @@ def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str) -> str
             f'</gazebo>'
         )
 
-    attach_joint = '''
-    <joint name="hand_attach_joint" type="fixed">
+    # Acoplador da prótese (PecasProtese.stl) entre Link6 e a mão.
+    # Disco ⌀75×55.46 mm: fundo do mesh assenta no flange (Link6) e a mão
+    # COVVI monta no topo (+0.05546 m ao longo de +Link6_z). Rx(+90°) mantém
+    # a mão estendendo-se axialmente ao pulso, agora deslocada pela altura
+    # do acoplador. Gazebo Classic não resolve package:// → usa file://.
+    coupler_mesh = os.path.join(
+        touch_pack_share, 'meshes', 'PecasProtese.stl')
+    attach_joint = f'''
+    <link name="hand_coupler_link">
+      <inertial>
+        <origin xyz="0 0 0.02773" rpy="0 0 0"/>
+        <mass value="0.150"/>
+        <inertia ixx="9.12e-5" ixy="0.0" ixz="0.0"
+                 iyy="9.12e-5" iyz="0.0" izz="1.055e-4"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="file://{coupler_mesh}" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="coupler_black">
+          <color rgba="0.03 0.03 0.03 1.0"/>
+        </material>
+      </visual>
+      <collision name="col_hand_coupler">
+        <origin xyz="0 0 0.02773" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.0375" length="0.05546"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="coupler_attach" type="fixed">
       <parent link="Link6"/>
+      <child link="hand_coupler_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <joint name="hand_attach_joint" type="fixed">
+      <parent link="hand_coupler_link"/>
       <child link="hand_base_link"/>
-      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
-    </joint>'''
+      <origin xyz="0 0 0.05546" rpy="1.5708 0 0"/>
+    </joint>
+
+    <gazebo reference="hand_coupler_link">
+      <gravity>false</gravity>
+      <self_collide>false</self_collide>
+      <visual>
+        <material>
+          <ambient>0.02 0.02 0.02 1</ambient>
+          <diffuse>0.03 0.03 0.03 1</diffuse>
+          <specular>0.10 0.10 0.10 1</specular>
+        </material>
+      </visual>
+    </gazebo>'''
 
     tcp_alias = '''
     <link name="tcp_link"/>

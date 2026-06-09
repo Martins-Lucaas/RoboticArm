@@ -25,6 +25,12 @@
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
 
+  <!-- braço CR10 + mesh do acoplador da prótese (PecasProtese.stl).
+       hand_pack é resolvido em runtime (não declarado p/ evitar ciclo,
+       já que hand_pack faz soft-import de grasp_ml_pack). -->
+  <exec_depend>cra_description</exec_depend>
+  <exec_depend>touch_pack</exec_depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_pep8</test_depend>
   <test_depend>ament_xmllint</test_depend>

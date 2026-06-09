@@ -11,6 +11,7 @@ from launch_ros.actions import Node
 
 def _build_gazebo_urdf():
     hand_pack_share = get_package_share_directory('hand_pack')
+    touch_pack_share = get_package_share_directory('touch_pack')
     combined_yaml = os.path.join(
         hand_pack_share, 'config', 'cr10_covvi_controllers.yaml')
 
@@ -75,15 +76,61 @@ def _build_gazebo_urdf():
             f'</gazebo>'
         )
 
-    # Acoplamento flush: a face de montagem da mão coincide com a origem
-    # do Link6 (centro do flange). Rx(+90°) alinha o eixo Y da mão com o
-    # eixo Z do flange para a mão se estender axialmente ao pulso.
-    coupling_joint = """
-  <joint name="hand_coupling" type="fixed">
+    # Acoplador da prótese (PecasProtese.stl) entre Link6 e a mão.
+    # Disco ⌀75×55.46 mm: fundo do mesh assenta no flange (Link6) e a mão
+    # COVVI monta no topo (+0.05546 m ao longo de +Link6_z). Rx(+90°) mantém
+    # a mão estendendo-se axialmente ao pulso, agora deslocada pela altura
+    # do acoplador. Gazebo Classic não resolve package:// → usa file://.
+    coupler_mesh = os.path.join(
+        touch_pack_share, 'meshes', 'PecasProtese.stl')
+    coupling_joint = f"""
+  <link name="hand_coupler_link">
+    <inertial>
+      <origin xyz="0 0 0.02773" rpy="0 0 0"/>
+      <mass value="0.150"/>
+      <inertia ixx="9.12e-5" ixy="0.0" ixz="0.0"
+               iyy="9.12e-5" iyz="0.0" izz="1.055e-4"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://{coupler_mesh}" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="coupler_black">
+        <color rgba="0.03 0.03 0.03 1.0"/>
+      </material>
+    </visual>
+    <collision name="col_hand_coupler">
+      <origin xyz="0 0 0.02773" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.0375" length="0.05546"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="coupler_attach" type="fixed">
     <parent link="Link6"/>
-    <child link="hand_base_link"/>
-    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+    <child link="hand_coupler_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
+
+  <joint name="hand_coupling" type="fixed">
+    <parent link="hand_coupler_link"/>
+    <child link="hand_base_link"/>
+    <origin xyz="0 0 0.05546" rpy="1.5708 0 0"/>
+  </joint>
+
+  <gazebo reference="hand_coupler_link">
+    <gravity>false</gravity>
+    <self_collide>false</self_collide>
+    <visual>
+      <material>
+        <ambient>0.02 0.02 0.02 1</ambient>
+        <diffuse>0.03 0.03 0.03 1</diffuse>
+        <specular>0.10 0.10 0.10 1</specular>
+      </material>
+    </visual>
+  </gazebo>
 """
     combined = cr10_urdf.replace(
         '</robot>', hand_body + coupling_joint + '</robot>')
