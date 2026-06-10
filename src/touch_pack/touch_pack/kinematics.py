@@ -830,17 +830,21 @@ MIMIC_LIST: list[tuple[str, str, float]] = [
 
 
 # ─── Conversão URDF ↔ DOBOT ────────────────────────────────────────────────
-# Com eixos URDF em "0 0 -1" (eixo −Z), a convenção de sinal é a mesma do
-# O braço real espelha o Gazebo 1:1 — o valor do slider URDF é igual ao
-# ângulo Dobot. Não há offset entre as duas convenções.
+# joint1 do URDF tem axis "0 0 -1" (gira em −Z), mas o J1 do CR10 real
+# positivo gira em +Z → sinal INVERTIDO na junta 1 (verificado empiricamente:
+# sem o flip, sim e real giram a base em direções opostas). joints 2–6 têm a
+# mesma convenção nos dois lados. Não há offset angular.
+_URDF_DOBOT_SIGN   = np.array([-1., 1., 1., 1., 1., 1.])
 _URDF_DOBOT_OFFSET = np.zeros(6)
 
 
 def urdf_to_dobot(q_urdf: np.ndarray) -> np.ndarray:
     """Converte ângulos do URDF para a convenção do controlador CR10."""
-    return np.asarray(q_urdf, dtype=np.float64) + _URDF_DOBOT_OFFSET
+    return (_URDF_DOBOT_SIGN * np.asarray(q_urdf, dtype=np.float64)
+            + _URDF_DOBOT_OFFSET)
 
 
 def dobot_to_urdf(q_dobot: np.ndarray) -> np.ndarray:
     """Converte ângulos lidos do controlador CR10 para a convenção URDF."""
-    return np.asarray(q_dobot, dtype=np.float64) - _URDF_DOBOT_OFFSET
+    return _URDF_DOBOT_SIGN * (np.asarray(q_dobot, dtype=np.float64)
+                               - _URDF_DOBOT_OFFSET)

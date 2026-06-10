@@ -30,7 +30,7 @@ Controle por **streaming direto** a 33 Hz — sem action server, sem fila de tra
 | `palpation_gui` | GUI Tkinter: controle manual, parâmetros, calibração da célula de carga, poses e movimentos |
 | `palpation_logger` | Grava CSV + JSON por run em `~/touch_pack_runs/` |
 | `force_receiver` | Recebe pacotes UDP da ESP32 e publica `/load_cell/voltage` e `/load_cell/force` |
-| `gazebo_home_setter` | Posiciona o Gazebo na pose atual do robô real ao iniciar (uso único no launch) |
+| `real_pose_sync` | Lê a pose do robô real via rede e move o braço simulado até ela ao iniciar (uso único no launch) |
 
 ---
 

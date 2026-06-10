@@ -23,6 +23,7 @@ from ament_index_python.packages import get_package_share_directory
 from hand_pack.urdf_helpers import (
     clamp_hand_joint_limits,
     inject_visual_skin_layer,
+    HAND_DRIVER_LOWER,
     INTER_FINGER_COLLISION_LINKS,
 )
 from launch import LaunchDescription
@@ -101,6 +102,42 @@ def _stabilize_hand_joints(urdf_body: str) -> str:
         return jxml
     return re.sub(r'<joint\b[^>]*>.*?</joint>', _patch,
                   urdf_body, flags=re.DOTALL)
+
+
+def _inject_hand_initial_values(hand_body: str) -> str:
+    """Define <param name="initial_value"> nas juntas da mão (ros2_control).
+
+    gazebo_ros2_control aplica esses valores fisicamente no spawn — mesmo
+    mecanismo dos initial_value do braço no cr10_robot.xacro. Sem isso as
+    juntas partem de 0, abaixo do lower clampado, e o ODE aplica forças de
+    limite que fazem a mão "mexer sozinha" ao spawnar. Drivers usam
+    HAND_DRIVER_LOWER; mimics usam multiplier × lower do driver (lido dos
+    próprios <mimic> do URDF).
+    """
+    init = dict(HAND_DRIVER_LOWER)
+    for m in re.finditer(
+            r'<joint\s+name="([^"]+)"\s+type="revolute">'
+            r'(?:(?!</joint>).)*?<mimic\s+joint="([^"]+)"'
+            r'[^>]*multiplier="([-\d.eE]+)"',
+            hand_body, flags=re.DOTALL):
+        name, driver, mult = m.group(1), m.group(2), float(m.group(3))
+        if driver in HAND_DRIVER_LOWER:
+            init[name] = mult * HAND_DRIVER_LOWER[driver]
+
+    def _patch(m: re.Match) -> str:
+        val = init.get(m.group(1))
+        if val is None:
+            return m.group(0)
+        return (f'<joint name="{m.group(1)}">'
+                f'<command_interface name="position"/>'
+                f'<state_interface name="position">'
+                f'<param name="initial_value">{val:.5f}</param>'
+                f'</state_interface>')
+
+    return re.sub(
+        r'<joint name="([^"]+)"><command_interface name="position"/>'
+        r'<state_interface name="position"/>',
+        _patch, hand_body)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -191,6 +228,7 @@ def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str,
     hand_body = _fix_virtual_link_inertia(hand_body)
     hand_body = clamp_hand_joint_limits(hand_body)
     hand_body = _stabilize_hand_joints(hand_body)
+    hand_body = _inject_hand_initial_values(hand_body)
     # Remove <gazebo reference="..."> estáticos com propriedades de física (mu1,
     # kd, etc.) para evitar "multiple inconsistent" do parser_urdf ao reduzir
     # fixed joints: o loop abaixo adiciona valores canônicos para todos os links.
@@ -523,11 +561,12 @@ def launch_setup(context, *args, **kwargs):
                    '-x', '0.30', '-y', '0', '-z', '0.75'],
         parameters=[{'use_sim_time': True}])
 
-    # ── Home setter ───────────────────────────────────────────────────
-    home_setter = Node(
-        package='touch_pack', executable='gazebo_home_setter',
-        parameters=[{'use_sim_time': True, 'robot_ip': robot_ip,
-                     'end_effector': end_effector}])
+    # ── Sincronização com o robô real ─────────────────────────────────
+    # Lê a pose real via rede e move o braço simulado até ela via JTC.
+    # Robô off → sai em ~3 s sem efeito (pose inicial vem do URDF).
+    pose_sync = Node(
+        package='touch_pack', executable='real_pose_sync',
+        parameters=[{'use_sim_time': True, 'robot_ip': robot_ip}])
 
     # ── Controllers ───────────────────────────────────────────────────
     load_jsb = Node(
@@ -563,17 +602,16 @@ def launch_setup(context, *args, **kwargs):
     force_rx_node = Node(
         package='touch_pack', executable='force_receiver')
 
-    # Nós que não dependem de controllers — sobem logo após home_setter.
+    # Nós que não dependem de controllers — sobem logo após o spawn.
     early_nodes = [gui_node, logger_node, force_rx_node]
     # Explorer precisa da action do cr10_group_controller — sobe por último.
     late_nodes  = [explorer_node]
 
     # ── Cadeia de dependências: varia com end_effector ────────────────
-    after_spawn = RegisterEventHandler(
-        OnProcessExit(target_action=spawn_robot, on_exit=[home_setter]))
     # GUI, logger e force_rx sobem em paralelo com load_jsb — sem esperar controllers.
-    after_home = RegisterEventHandler(
-        OnProcessExit(target_action=home_setter, on_exit=[load_jsb] + early_nodes))
+    after_spawn = RegisterEventHandler(
+        OnProcessExit(target_action=spawn_robot,
+                      on_exit=[load_jsb] + early_nodes))
     after_jsb = RegisterEventHandler(
         OnProcessExit(target_action=load_jsb, on_exit=[load_arm]))
 
@@ -582,15 +620,18 @@ def launch_setup(context, *args, **kwargs):
             package='controller_manager', executable='spawner',
             arguments=['hand_position_controller',
                        '--controller-manager', '/controller_manager'])
+        # pose_sync só precisa do cr10_group_controller — paralelo ao load_hand.
         after_arm = RegisterEventHandler(
-            OnProcessExit(target_action=load_arm, on_exit=[load_hand]))
+            OnProcessExit(target_action=load_arm,
+                          on_exit=[load_hand, pose_sync]))
         after_last = RegisterEventHandler(
             OnProcessExit(target_action=load_hand, on_exit=late_nodes))
-        chain = [after_spawn, after_home, after_jsb, after_arm, after_last]
+        chain = [after_spawn, after_jsb, after_arm, after_last]
     else:  # touch_tool — sem hand controller
         after_arm = RegisterEventHandler(
-            OnProcessExit(target_action=load_arm, on_exit=late_nodes))
-        chain = [after_spawn, after_home, after_jsb, after_arm]
+            OnProcessExit(target_action=load_arm,
+                          on_exit=late_nodes + [pose_sync]))
+        chain = [after_spawn, after_jsb, after_arm]
 
     return [gazebo, rsp, spawn_robot] + chain
 

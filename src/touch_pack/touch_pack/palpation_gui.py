@@ -153,10 +153,18 @@ SPEED_FACTOR_MIN, SPEED_FACTOR_MAX, SPEED_FACTOR_DEFAULT = 1, 100, 10  # %
 # Scales inversely: 100 % → 0.3 s, 1 % → 30 s.
 _VEL_BASE_S = 3.0   # duration at 10 %
 
-# Profundidade de descida perpendicular — controle por posição (sem PID de força).
+# Curso máximo da descida — o término é por força (PID); isto é só segurança.
 DEPTH_MIN,  DEPTH_MAX,  DEPTH_DEFAULT  = 0.0, 120.0,  5.0   # mm
 SLIDE_DIST_MIN, SLIDE_DIST_MAX, SLIDE_DIST_DEFAULT = 1.0, 300.0, 50.0  # mm
-_FORCE_COMPRESSION_LIMIT_N = 10.0  # N: limite de segurança (espelhado do explorer)
+# Controle por PID de força: setpoint selecionável (máx. 10 N); a medição é
+# cancelada se a compressão exceder 15 N (espelhado do explorer).
+FORCE_SP_MIN, FORCE_SP_MAX, FORCE_SP_DEFAULT = 0.5, 10.0, 2.0  # N
+_FORCE_ABORT_LIMIT_N = 15.0  # N: cancela a medição (espelhado do explorer)
+# Ganhos do PID de força em mm/s (convertidos para m/s no payload).
+# Defaults espelham o explorer: kp=0.001, ki=0.0005, kd=0 (m/s).
+PID_KP_MIN, PID_KP_MAX, PID_KP_DEFAULT = 0.0, 10.0, 1.0   # (mm/s)/N
+PID_KI_MIN, PID_KI_MAX, PID_KI_DEFAULT = 0.0,  5.0, 0.5   # (mm/s)/(N·s)
+PID_KD_MIN, PID_KD_MAX, PID_KD_DEFAULT = 0.0,  5.0, 0.0   # (mm/s)/(N/s)
 
 # Período de publicação do bridge de força (real CR10 → /ft_sensor/wrench).
 FORCE_BRIDGE_PERIOD_S = 0.020   # 50 Hz
@@ -771,6 +779,10 @@ class PalpationGUI(Node):
 
         self.speed_var      = tk.DoubleVar(value=SPEED_DEFAULT)
         self.depth_var      = tk.DoubleVar(value=DEPTH_DEFAULT)
+        self.force_sp_var   = tk.DoubleVar(value=FORCE_SP_DEFAULT)
+        self.pid_kp_var     = tk.DoubleVar(value=PID_KP_DEFAULT)
+        self.pid_ki_var     = tk.DoubleVar(value=PID_KI_DEFAULT)
+        self.pid_kd_var     = tk.DoubleVar(value=PID_KD_DEFAULT)
         self.slide_dist_var = tk.DoubleVar(value=SLIDE_DIST_DEFAULT)
         self.approach_var   = tk.DoubleVar(value=APPROACH_DEFAULT)
         self.slide_dir_var  = tk.StringVar(value='+Y')
@@ -784,11 +796,31 @@ class PalpationGUI(Node):
                          vmin=SLIDE_DIST_MIN, vmax=SLIDE_DIST_MAX, step=5.0,
                          hint='Comprimento do trajeto lateral. '
                               'Máximo de segurança: 300 mm.')
-        self._param_row(params_card, label='Profundidade de Descida',
+        self._param_row(params_card, label='Força Alvo (Setpoint do PID)',
+                         unit='N', var=self.force_sp_var,
+                         vmin=FORCE_SP_MIN, vmax=FORCE_SP_MAX, step=0.5,
+                         hint='Compressão mantida pelo PID na descida, no '
+                              'HOLD e no deslizamento. Máximo: 10 N. '
+                              'Medição cancelada se exceder 15 N.')
+        self._param_row(params_card, label='Profundidade Máxima de Descida',
                          unit='mm', var=self.depth_var,
                          vmin=DEPTH_MIN, vmax=DEPTH_MAX, step=0.5,
-                         hint='Distância perpendicular à superfície. '
-                              'Limite de segurança: 10 N → retração automática.')
+                         hint='Curso máximo de segurança — a descida termina '
+                              'antes, ao atingir a Força Alvo.')
+        self._param_row(params_card, label='PID — Kp',
+                         unit='mm/s/N', var=self.pid_kp_var,
+                         vmin=PID_KP_MIN, vmax=PID_KP_MAX, step=0.1,
+                         hint='Ganho proporcional do PID de força.')
+        self._param_row(params_card, label='PID — Ki',
+                         unit='mm/s/N·s', var=self.pid_ki_var,
+                         vmin=PID_KI_MIN, vmax=PID_KI_MAX, step=0.1,
+                         hint='Ganho integral — zera o erro de regime. '
+                              'Reduza se houver oscilação no setpoint.')
+        self._param_row(params_card, label='PID — Kd',
+                         unit='mm·s/N/s', var=self.pid_kd_var,
+                         vmin=PID_KD_MIN, vmax=PID_KD_MAX, step=0.05,
+                         hint='Ganho derivativo. Padrão 0 (PI): a derivada '
+                              'amplifica o ruído da célula de carga.')
 
         self._build_slide_dir_selector(params_card)
 
@@ -830,10 +862,10 @@ class PalpationGUI(Node):
         tk.Frame(fb_card, bg=BORDER, height=1).pack(fill='x', pady=8)
         errrow = tk.Frame(fb_card, bg=PANEL)
         errrow.pack(fill='x', pady=(2, 6))
-        tk.Label(errrow, text='Profundidade alvo', font=FONT_LBL,
+        tk.Label(errrow, text='Força alvo (setpoint)', font=FONT_LBL,
                  bg=PANEL, fg=TEXT_MUTED).pack(side='left')
         self.err_value_lbl = tk.Label(
-            errrow, text='—  mm', font=FONT_HEAD, bg=PANEL, fg=TEXT)
+            errrow, text='—  N', font=FONT_HEAD, bg=PANEL, fg=TEXT)
         self.err_value_lbl.pack(side='right')
 
         compbox = tk.Frame(fb_card, bg=PANEL)
@@ -4305,9 +4337,9 @@ class PalpationGUI(Node):
     # ──────────────────────────────────────────────────────────────────
     def _refresh_status_panel(self):
         try:
-            tgt_depth = float(self.depth_var.get())
+            tgt_force = float(self.force_sp_var.get())
         except (ValueError, tk.TclError):
-            tgt_depth = DEPTH_DEFAULT
+            tgt_force = FORCE_SP_DEFAULT
         with self._lock:
             phase     = self._latest_phase
             f_net     = self._lc_force_net        # positivo = compressão
@@ -4326,22 +4358,22 @@ class PalpationGUI(Node):
             self.force_status_lbl.config(
                 text='aguardando /load_cell/force_net (inicie o receptor UDP)',
                 fg=TEXT_DIM)
-            self.err_value_lbl.config(text='—  mm', fg=TEXT_DIM)
+            self.err_value_lbl.config(text='—  N', fg=TEXT_DIM)
             self.fz_lbl.config(text='—  N')
             self.fx_lbl.config(text='—  V')
             self.fy_lbl.config(text='—  N')
         else:
             if not lc_tared:
                 color, status = WARN, 'tare não realizado'
-            elif f_net > _FORCE_COMPRESSION_LIMIT_N * 0.9:
-                color, status = DANGER, f'próximo do limite ({_FORCE_COMPRESSION_LIMIT_N:.0f} N)'
+            elif f_net > _FORCE_ABORT_LIMIT_N * 0.9:
+                color, status = DANGER, f'próximo do limite ({_FORCE_ABORT_LIMIT_N:.0f} N)'
             elif f_net >= 0.2:
                 color, status = OK, 'em contato'
             else:
                 color, status = TEXT_MUTED, 'sem contato'
             self.force_value_lbl.config(text=f'{f_net:+6.2f}  N', fg=color)
             self.force_status_lbl.config(text=status, fg=color)
-            self.err_value_lbl.config(text=f'{tgt_depth:.1f}  mm', fg=TEXT)
+            self.err_value_lbl.config(text=f'{tgt_force:.1f}  N', fg=TEXT)
             self.fz_lbl.config(text=f'{f_net:+6.2f} N')
             tare_txt = f'{lc_tare_v:.4f} V' if lc_tared else 'não realizado'
             self.fx_lbl.config(text=tare_txt)
@@ -4402,6 +4434,18 @@ class PalpationGUI(Node):
         try:
             speed      = self._clamp_var(self.speed_var, SPEED_MIN, SPEED_MAX)
             depth      = self._clamp_var(self.depth_var, DEPTH_MIN, DEPTH_MAX)
+            force_sp   = self._clamp_var(self.force_sp_var,
+                                          FORCE_SP_MIN, FORCE_SP_MAX,
+                                          default=FORCE_SP_DEFAULT)
+            pid_kp     = self._clamp_var(self.pid_kp_var,
+                                          PID_KP_MIN, PID_KP_MAX,
+                                          default=PID_KP_DEFAULT)
+            pid_ki     = self._clamp_var(self.pid_ki_var,
+                                          PID_KI_MIN, PID_KI_MAX,
+                                          default=PID_KI_DEFAULT)
+            pid_kd     = self._clamp_var(self.pid_kd_var,
+                                          PID_KD_MIN, PID_KD_MAX,
+                                          default=PID_KD_DEFAULT)
             slide_dist = self._clamp_var(self.slide_dist_var,
                                           SLIDE_DIST_MIN, SLIDE_DIST_MAX)
             approach   = self._clamp_var(self.approach_var,
@@ -4409,7 +4453,8 @@ class PalpationGUI(Node):
                                           default=APPROACH_DEFAULT)
         finally:
             self._suppressing = False
-        if None in (speed, depth, slide_dist, approach):
+        if None in (speed, depth, force_sp, pid_kp, pid_ki, pid_kd,
+                    slide_dist, approach):
             self._set_status('Parâmetros inválidos.', DANGER)
             return
         sf_pct = self._clamp_var(self.speed_factor_var,
@@ -4418,6 +4463,11 @@ class PalpationGUI(Node):
         payload = {
             'speed_mms':          float(speed),
             'depth_mm':           float(depth),
+            'force_n':            float(force_sp),
+            # GUI em mm/s → explorer em m/s
+            'kp':                 float(pid_kp) / 1000.0,
+            'ki':                 float(pid_ki) / 1000.0,
+            'kd':                 float(pid_kd) / 1000.0,
             'slide_dist_mm':      float(slide_dist),
             'approach_speed_mms': float(approach),
             'slide_dir':          self.slide_dir_var.get(),
