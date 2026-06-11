@@ -21,8 +21,10 @@ Uso (CLI):
 O logger também chama generate_report() automaticamente ao fechar cada run.
 
 Compatibilidade: lê tanto o schema novo (t_rel_s, cycle, phase, force_net_n,
-q1..q6, tcp_*) quanto o antigo (t_rel_s, phase, fx..tz — usa |fz| como força,
-cycle=1, sem TCP).
+q1..q6, tcp_*, touch_value, touch_age_ms) quanto os antigos (sem as colunas
+de touch; ou t_rel_s, phase, fx..tz — usa |fz| como força, cycle=1, sem TCP).
+Quando o run tem touch_value, cada fase ganha um bloco 'touch' com as mesmas
+estatísticas da força e o plot ganha um eixo direito com o sinal do toque.
 """
 from __future__ import annotations
 
@@ -54,7 +56,7 @@ _PHASE_COLORS = {
 
 def _load_rows(csv_path: str) -> list[dict]:
     """Lê o CSV num formato normalizado:
-    [{t, cycle, phase, force, tcp(x,y,z)|None}, ...]"""
+    [{t, cycle, phase, force, tcp(x,y,z)|None, touch|None}, ...]"""
     rows: list[dict] = []
     with open(csv_path, newline='') as fh:
         reader = csv.DictReader(fh)
@@ -74,11 +76,15 @@ def _load_rows(csv_path: str) -> list[dict]:
                     force = abs(float(r['fz']))
                     cycle = 1
                     tcp = None
+                # Coluna opcional (runs novos): vazia = sem amostra fresca.
+                touch = None
+                if r.get('touch_value'):
+                    touch = float(r['touch_value'])
             except (KeyError, TypeError, ValueError):
                 continue
             rows.append({'t': t, 'cycle': cycle,
                          'phase': r.get('phase', '?'), 'force': force,
-                         'tcp': tcp})
+                         'tcp': tcp, 'touch': touch})
     return rows
 
 
@@ -144,6 +150,9 @@ def _seg_summary(seg: dict, target: float | None) -> dict:
             dx = tcps[-1][0] - tcps[0][0]
             dy = tcps[-1][1] - tcps[0][1]
             out['lateral_dist_mm'] = round(math.hypot(dx, dy) * 1e3, 1)
+    touch_vals = [r['touch'] for r in rows if r.get('touch') is not None]
+    if touch_vals:
+        out['touch'] = _stats(touch_vals)
     return out
 
 
@@ -211,6 +220,17 @@ def _make_plot(rows: list[dict], summary: dict, out_png: str) -> bool:
         ax.axhline(target, color='#dc2626', linestyle='--',
                    linewidth=0.9, label=f'setpoint {target:g} N')
 
+    # Touch sensor no eixo direito (unidade arbitrária do STM32) — só nos
+    # runs novos que têm a coluna; lacunas (amostra estale) quebram a linha.
+    touch_pts = [(r['t'], r['touch']) for r in rows
+                 if r.get('touch') is not None]
+    if touch_pts:
+        ax_t = ax.twinx()
+        ax_t.plot([p[0] for p in touch_pts], [p[1] for p in touch_pts],
+                  color='#7c3aed', linewidth=0.8, alpha=0.7)
+        ax_t.set_ylabel('touch sensor (u.a.)', color='#7c3aed')
+        ax_t.tick_params(axis='y', labelcolor='#7c3aed')
+
     ax.set_xlabel('tempo (s)')
     ax.set_ylabel('força de compressão (N)')
     n_cyc = summary.get('cycles_detected', 0)
@@ -270,6 +290,9 @@ def _print_summary(summary: dict) -> None:
                 extra = f'  MAE={m["mae_vs_target_n"]:.2f}N'
             if 'lateral_dist_mm' in m:
                 extra += f'  percurso={m["lateral_dist_mm"]:.0f}mm'
+            if 'touch' in m:
+                extra += (f'  touch={m["touch"]["mean_n"]:.2f}'
+                          f'±{m["touch"]["std_n"]:.2f}u.a.')
             print(f'    ciclo {cyc} {phase:<11} {m["duration_s"]:5.1f}s  '
                   f'F={m["mean_n"]:.2f}±{m["std_n"]:.2f}N '
                   f'[{m["min_n"]:.2f}, {m["max_n"]:.2f}]{extra}')

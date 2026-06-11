@@ -39,6 +39,20 @@ FORCE_SETPOINT_MAX_N = 10.0
 # ── Célula de carga (ESP32 via UDP) ──────────────────────────────────────────
 LOAD_CELL_UDP_PORT = 8080
 
+# ── Touch sensor (STM32 → PC plotter → UDP) ──────────────────────────────────
+# Porta DIFERENTE da célula de carga: o force_receiver aceita qualquer
+# datagrama ≥ 8 bytes sem filtrar remetente — na mesma porta os fluxos
+# se misturariam silenciosamente.
+TOUCH_SENSOR_UDP_PORT = 8081
+# Payload (little-endian, 8 bytes): uint32 seq + float valor.
+# Espelhado em sensors/Touch_sensor/touch_sensor.py (roda fora do ROS).
+TOUCH_PAYLOAD_FMT = '<If'
+
+# Idade máxima de uma amostra para entrar no par sincronizado (s).
+# A célula amostra a 50 Hz (20 ms); 0.25 s = ~12 amostras perdidas antes
+# de considerarmos a fonte morta.
+SYNC_MAX_AGE_S = 0.25
+
 # ── Arquivos de configuração persistente (~/.config/touch_pack/) ─────────────
 CONFIG_DIR            = os.path.expanduser('~/.config/touch_pack')
 HOME_POSE_FILE        = os.path.join(CONFIG_DIR, 'home_pose.json')

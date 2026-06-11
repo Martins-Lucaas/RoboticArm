@@ -39,6 +39,8 @@ setup(
             'palpation_report  = touch_pack.palpation_report:main',
             'real_pose_sync    = touch_pack.real_pose_sync:main',
             'force_receiver    = touch_pack.force_receiver_node:main',
+            'touch_receiver    = touch_pack.touch_receiver_node:main',
+            'force_sync        = touch_pack.force_sync_node:main',
             'mirror_node       = touch_pack.mirror_node:main',
         ],
     },

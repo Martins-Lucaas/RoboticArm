@@ -605,8 +605,20 @@ def launch_setup(context, *args, **kwargs):
     force_rx_node = Node(
         package='touch_pack', executable='force_receiver')
 
+    # Receptor do touch sensor (STM32 → UDP 8081). Sem ele no launch o
+    # gráfico do toque na GUI só funcionava após o clique manual em
+    # "Conectar" — o auto-start da palpação pulava o spawn quando o
+    # force_receiver externo já estava vivo.
+    touch_rx_node = Node(
+        package='touch_pack', executable='touch_receiver')
+
+    # Pareador célula+toque → /touch_sync/data (50 Hz, com idades p/ auditoria).
+    force_sync_node = Node(
+        package='touch_pack', executable='force_sync')
+
     # Nós que não dependem de controllers — sobem logo após o spawn.
-    early_nodes = [gui_node, logger_node, force_rx_node]
+    early_nodes = [gui_node, logger_node, force_rx_node,
+                   touch_rx_node, force_sync_node]
 
     # ── Mirror standalone — só sem GUI ────────────────────────────────
     # Com a GUI aberta o espelhamento mora nela (conexão única ao CR10);

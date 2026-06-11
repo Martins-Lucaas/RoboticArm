@@ -4,7 +4,8 @@ palpation_gui.py — Painel Tkinter (tema claro) da célula de palpação tátil
 Funcionalidades:
   • Spinbox + Slider sincronizados para Velocidade / Força / Ganhos PID.
   • Botão "▶ Iniciar Palpação" (publica /palpation/start).
-  • Feedback em tempo real de /ft_sensor/wrench (semáforo OK/WARN/DANGER).
+  • Feedback em tempo real da célula de carga (/load_cell/force_net) e do
+    touch sensor (/touch_sensor/value) — semáforo OK/WARN/DANGER + sparklines.
   • Indicador de fase (IDLE/CONTACT/CALIBRATING/SLIDING/RETRACT/DONE/ABORTED).
   • Painel de conexão à MÃO COVVI real (IP + Conectar + ECI + PWR)
     — sobe o subprocesso `covvi_hand_driver server <IP>` e ativa o ECI.
@@ -16,7 +17,9 @@ Funcionalidades:
 Comunicação ROS:
   pub  /palpation/start    std_msgs/String   JSON {depth_mm, speed_mms, slide_dir}
   sub  /palpation/status   std_msgs/String   JSON {phase, measured_force_normal_n,...}
-  sub  /ft_sensor/wrench   geometry_msgs/WrenchStamped
+  sub  /load_cell/force_net  std_msgs/Float32  força tare-compensada (painel)
+  sub  /touch_sensor/value   std_msgs/Float32  touch sensor STM32 (painel)
+  pub  /ft_sensor/wrench   geometry_msgs/WrenchStamped (bridge do CR10 real)
   cli  covvi_interfaces/SetCurrentGrip   (lazy)
   cli  covvi_interfaces/SetHandPowerOn   (lazy)
   cli  covvi_interfaces/SetHandPowerOff  (lazy)
@@ -224,14 +227,10 @@ class PalpationGUI(Node):
             Bool, '/palpation/pause', 10)
         self.create_subscription(
             PalpationStatus, '/palpation/status', self._cb_status, 10)
-        self.create_subscription(
-            WrenchStamped, '/ft_sensor/wrench', self._cb_wrench, QOS_SENSOR)
         # Bridge real-CR10 → /ft_sensor/wrench: a thread `_force_bridge_loop`
         # lê `read_tcp_force()` do driver (estimado por torques articulares
-        # compensados pela dinâmica) e publica como WrenchStamped no mesmo
-        # tópico que o explorer e o painel da GUI já consomem — ou seja,
-        # a leitura da última junta do robô espelha automaticamente para
-        # a tela e para o PID do CALIBRATING/SLIDING.
+        # compensados pela dinâmica) e publica como WrenchStamped — telemetria
+        # para rosbag/auditoria; o painel e o PID usam /load_cell/force_net.
         self._wrench_pub = self.create_publisher(
             WrenchStamped, '/ft_sensor/wrench', QOS_SENSOR)
         # Tópico latched que indica se o drag teach está activo.
@@ -260,10 +259,8 @@ class PalpationGUI(Node):
         self._paused: bool = False
         # Histórico da força para o sparkline (t_wall, força_N) — 60 s @10 Hz.
         self._spark_data: collections.deque = collections.deque(maxlen=600)
-        self._latest_force_normal: float = 0.0
-        self._latest_force_mag: float = 0.0
-        self._fx = self._fy = self._fz = 0.0
-        self._last_wrench_ts: float = 0.0
+        # Idem para o touch sensor (STM32 via touch_receiver_node).
+        self._touch_spark_data: collections.deque = collections.deque(maxlen=600)
         # Cronômetro de fase: marca quando a fase atual começou (wall-clock)
         # e a duração esperada (em segundos) — usada pela progress bar para
         # SLIDING (distance/speed) e CALIBRATING; fases sem duração fixa
@@ -358,6 +355,8 @@ class PalpationGUI(Node):
             Float32, '/load_cell/voltage', self._cb_lc_voltage, QOS_SENSOR)
         self.create_subscription(
             Float32, '/load_cell/force_net', self._cb_lc_force_net_gui, QOS_SENSOR)
+        self.create_subscription(
+            Float32, '/touch_sensor/value', self._cb_touch_value, QOS_SENSOR)
 
         # ─── Home pose customizável ──────────────────────────────────
         # Default (ARM_HOME_DEG) é sobrescrito se ~/.config/touch_pack/
@@ -403,6 +402,14 @@ class PalpationGUI(Node):
         # Subprocesso do force_receiver_node (gerenciado pelo botão Conectar)
         self._force_rx_proc: subprocess.Popen | None = None
         self._force_rx_should_be_alive: bool = False
+        # ─── Touch sensor (STM32 → PC plotter → UDP via touch_receiver) ─
+        # Gerenciado junto com o force_receiver pelo mesmo botão Conectar.
+        self._touch_value: float = 0.0
+        self._touch_last_ts: float = 0.0
+        self._touch_rx_proc: subprocess.Popen | None = None
+        # palpation_logger spawnado pela GUI quando ela roda standalone
+        # (fora do launch) — sem ele nenhum run é gravado em ~/touch_pack_runs.
+        self._logger_proc: subprocess.Popen | None = None
         # Mini-painel de leitura da célula na aba Controle Manual (modo
         # touch_tool). None no modo hand — o espelhamento em _refresh_lc_panel
         # é ignorado quando não construído.
@@ -885,6 +892,26 @@ class PalpationGUI(Node):
             fb_card, height=64, bg=PANEL, highlightthickness=1,
             highlightbackground=BORDER)
         self.spark_canvas.pack(fill='x', pady=(4, 2))
+
+        # ── Sparkline do touch sensor (STM32, últimos 30 s) ───────────
+        # Mesmo desenho em Canvas puro do gráfico da célula acima.
+        tk.Frame(fb_card, bg=BORDER, height=1).pack(fill='x', pady=8)
+        touch_hdr = tk.Frame(fb_card, bg=PANEL)
+        touch_hdr.pack(fill='x')
+        tk.Label(touch_hdr, text='Sensor de Toque — últimos 30 s',
+                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED,
+                 anchor='w').pack(side='left')
+        self.touch_value_lbl = tk.Label(
+            touch_hdr, text='—', font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM)
+        self.touch_value_lbl.pack(side='right')
+        self.touch_spark_canvas = tk.Canvas(
+            fb_card, height=64, bg=PANEL, highlightthickness=1,
+            highlightbackground=BORDER)
+        self.touch_spark_canvas.pack(fill='x', pady=(4, 2))
+        self.touch_status_lbl = tk.Label(
+            fb_card, text='aguardando /touch_sensor/value',
+            font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM, anchor='w')
+        self.touch_status_lbl.pack(fill='x')
 
     # ── Aba "Controle Manual" ────────────────────────────────────────
     def _build_manual_tab(self, root: tk.Frame):
@@ -2323,6 +2350,12 @@ class PalpationGUI(Node):
             self._lc_force_net = float(msg.data)
             self._lc_force_net_ts = time.time()
 
+    def _cb_touch_value(self, msg: Float32) -> None:
+        """Recebe /touch_sensor/value (touch_receiver_node, UDP 8081)."""
+        with self._lock:
+            self._touch_value = float(msg.data)
+            self._touch_last_ts = time.time()
+
     # ── Calibração — load / save ──────────────────────────────────────
     def _load_lc_calib(self) -> None:
         try:
@@ -2529,7 +2562,81 @@ class PalpationGUI(Node):
         except Exception:
             return False
 
+    def _spawn_touch_receiver(self) -> None:
+        """Inicia o touch_receiver_node (UDP 8081) junto com o force_receiver.
+        Best-effort: o touch sensor é opcional — falha aqui não bloqueia a
+        célula de carga; o painel apenas fica em 'aguardando'."""
+        if self._touch_rx_proc is not None and self._touch_rx_proc.poll() is None:
+            return
+        try:
+            if self.count_publishers('/touch_sensor/value') > 0:
+                return      # já existe um receptor (launch) — não duplicar
+        except Exception:
+            pass
+        try:
+            self._touch_rx_proc = subprocess.Popen(
+                ['ros2', 'run', 'touch_pack', 'touch_receiver'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                preexec_fn=os.setsid)
+        except FileNotFoundError:
+            self._touch_rx_proc = None
+            return
+
+        def _pipe_log(proc=self._touch_rx_proc):
+            for raw in proc.stdout:
+                log.info('[TOUCH-RX] %s',
+                         raw.decode('utf-8', errors='replace').rstrip())
+        threading.Thread(target=_pipe_log, daemon=True,
+                         name='touch-rx-log').start()
+
+    def _ensure_palpation_logger(self) -> None:
+        """Garante um palpation_logger vivo — é ele quem grava o run em
+        ~/touch_pack_runs. No launch ele já sobe junto; aqui cobre a GUI
+        rodando standalone. O /palpation/start é TRANSIENT_LOCAL, então o
+        logger recebe o start mesmo subindo um instante depois do publish.
+        Best-effort: falha não bloqueia o experimento."""
+        if self._logger_proc is not None and self._logger_proc.poll() is None:
+            return
+        try:
+            if 'palpation_logger' in self.get_node_names():
+                return      # já existe (launch) — não duplicar o run
+        except Exception:
+            pass
+        try:
+            self._logger_proc = subprocess.Popen(
+                ['ros2', 'run', 'touch_pack', 'palpation_logger'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                preexec_fn=os.setsid)
+        except FileNotFoundError:
+            self._logger_proc = None
+            return
+
+        def _pipe_log(proc=self._logger_proc):
+            for raw in proc.stdout:
+                log.info('[LOGGER] %s',
+                         raw.decode('utf-8', errors='replace').rstrip())
+        threading.Thread(target=_pipe_log, daemon=True,
+                         name='logger-log').start()
+
+    def _kill_touch_receiver(self) -> None:
+        proc = self._touch_rx_proc
+        self._touch_rx_proc = None
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    pass
+            except OSError:
+                pass
+
     def _connect_force_receiver(self) -> None:
+        self._spawn_touch_receiver()
         if self._external_force_receiver_alive():
             self._force_rx_proc = None
             self._force_rx_should_be_alive = True   # liga o display ONLINE
@@ -2587,6 +2694,7 @@ class PalpationGUI(Node):
             fg=OK)
 
     def _disconnect_force_receiver(self) -> None:
+        self._kill_touch_receiver()
         self._force_rx_should_be_alive = False
         proc = self._force_rx_proc
         self._force_rx_proc = None
@@ -4462,20 +4570,6 @@ class PalpationGUI(Node):
     # ──────────────────────────────────────────────────────────────────
     # ROS subscriptions (rodam no executor)
     # ──────────────────────────────────────────────────────────────────
-    def _cb_wrench(self, msg: WrenchStamped):
-        with self._lock:
-            # Palpação HORIZONTAL: a força normal vem do eixo Z (vertical).
-            self._latest_force_normal = abs(float(msg.wrench.force.z))
-            self._latest_force_mag = math.sqrt(
-                msg.wrench.force.x ** 2 +
-                msg.wrench.force.y ** 2 +
-                msg.wrench.force.z ** 2)
-            self._fx = float(msg.wrench.force.x)
-            self._fy = float(msg.wrench.force.y)
-            self._fz = float(msg.wrench.force.z)
-            self._last_wrench_ts = (
-                msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
-
     def _cb_status(self, msg: PalpationStatus):
         with self._lock:
             if msg.phase != self._latest_phase:
@@ -4509,6 +4603,8 @@ class PalpationGUI(Node):
             lc_tare_v = self._lc_tare_voltage
             lc_tared  = self._lc_tare_done
             phase_t0  = self._phase_t_start
+            touch_val = self._touch_value
+            touch_ts  = self._touch_last_ts
 
         has_data = lc_ts > 0.0 and (time.time() - lc_ts) < 3.0
         if not has_data:
@@ -4568,6 +4664,20 @@ class PalpationGUI(Node):
         if has_data:
             self._spark_data.append((time.time(), f_net))
         self._draw_sparkline(tgt_force)
+
+        # Sparkline do touch sensor — mesmo critério de frescor (3 s).
+        touch_fresh = touch_ts > 0.0 and (time.time() - touch_ts) < 3.0
+        if touch_fresh:
+            self._touch_spark_data.append((time.time(), touch_val))
+            self.touch_value_lbl.config(text=f'{touch_val:+.3f}', fg=TEXT)
+            self.touch_status_lbl.config(text='recebendo (UDP 8081)', fg=OK)
+        else:
+            self.touch_value_lbl.config(text='—', fg=TEXT_DIM)
+            self.touch_status_lbl.config(
+                text='aguardando /touch_sensor/value '
+                     '(rode touch_sensor.py no PC do STM32)',
+                fg=TEXT_DIM)
+        self._draw_touch_spark()
 
         # Cronômetro só por label (sem Progressbar). SLIDING mostra só
         # tempo decorrido (sem distância fixa); CONTACT/RETRACT/CALIBRATING idem.
@@ -4666,6 +4776,42 @@ class PalpationGUI(Node):
             for t, f in pts:
                 coords.extend(xy(t, f))
             cv.create_line(*coords, fill=PRIMARY, width=2)
+
+    def _draw_touch_spark(self) -> None:
+        """Redesenha o gráfico do touch sensor (Canvas puro, 10 Hz) —
+        mesmo desenho do sparkline da célula, sem linha de setpoint e com
+        autoescala plena (a unidade do STM32 é arbitrária)."""
+        cv = getattr(self, 'touch_spark_canvas', None)
+        if cv is None:
+            return
+        try:
+            w = cv.winfo_width()
+            h = cv.winfo_height()
+            cv.delete('all')
+        except tk.TclError:
+            return
+        if w <= 10 or h <= 10:
+            return
+        now = time.time()
+        window = 30.0
+        pts = [(t, v) for t, v in self._touch_spark_data if now - t <= window]
+        vals = [v for _, v in pts]
+        v_hi = max(vals) if vals else 1.0
+        v_lo = min(vals + [0.0]) if vals else 0.0
+        rng = max(v_hi - v_lo, 1e-3)
+
+        def xy(t: float, v: float) -> tuple[float, float]:
+            x = w - (now - t) / window * w
+            y = (h - 4) - (v - v_lo) / rng * (h - 8)
+            return x, y
+
+        y_zero = xy(now, 0.0)[1]
+        cv.create_line(0, y_zero, w, y_zero, fill=BORDER)
+        if len(pts) >= 2:
+            coords: list[float] = []
+            for t, v in pts:
+                coords.extend(xy(t, v))
+            cv.create_line(*coords, fill=OK, width=2)
 
     def _on_stop_palpation(self) -> None:
         """Interrompe o experimento em curso: publica /palpation/stop e
@@ -4784,6 +4930,16 @@ class PalpationGUI(Node):
             except CR10RealDriverError as exc:
                 self.get_logger().warning(f'SpeedFactor(10) falhou: {exc}')
 
+        # ── Garante os nós auxiliares da palpação ─────────────────────────
+        # touch_receiver: o spawn dedup-a contra publishers existentes. Sem
+        # esta chamada o gráfico do toque ficava vazio quando o
+        # force_receiver externo (launch) já estava vivo — o único caminho
+        # que spawnava o touch_receiver (_connect_force_receiver) era pulado.
+        self._spawn_touch_receiver()
+        # palpation_logger: sem ele nada é gravado em ~/touch_pack_runs
+        # (caso da GUI standalone, fora do launch).
+        self._ensure_palpation_logger()
+
         # ── Auto-inicia o force_receiver_node se não estiver rodando ──────
         # (próprio subprocess OU um receptor externo, ex.: o do launch).
         rx_running = (self._force_rx_proc is not None
@@ -4892,6 +5048,21 @@ class PalpationGUI(Node):
             try:
                 os.killpg(os.getpgid(rx_proc.pid), signal.SIGTERM)
                 rx_proc.wait(timeout=2.0)
+            except Exception:
+                pass
+        # Idem para o touch_receiver_node.
+        try:
+            self._kill_touch_receiver()
+        except Exception:
+            pass
+        # Idem para o palpation_logger spawnado pela GUI (SIGTERM dá ao
+        # rclpy a chance de fechar o run e gerar o relatório).
+        logger_proc = self._logger_proc
+        self._logger_proc = None
+        if logger_proc is not None and logger_proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(logger_proc.pid), signal.SIGTERM)
+                logger_proc.wait(timeout=3.0)
             except Exception:
                 pass
         self._stop_force_bridge()

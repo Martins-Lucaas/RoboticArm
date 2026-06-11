@@ -1,7 +1,7 @@
 """
 palpation_logger.py — Nó ROS 2 que grava cada execução de palpação em disco.
 
-Lê quatro tópicos:
+Lê cinco tópicos:
   sub /palpation/start     touch_pack_msgs/PalpationStart — parâmetros do
                                                experimento; marca o início de
                                                um "run".
@@ -12,13 +12,20 @@ Lê quatro tópicos:
                                                compressão positiva) — é o sinal
                                                CANÔNICO do experimento e o
                                                gatilho de amostragem (~50 Hz).
+  sub /touch_sensor/value  std_msgs/Float32  leitura do touch sensor (STM32);
+                                               pareada por chegada com a
+                                               amostra de força (mesma regra
+                                               do force_sync: idade máxima
+                                               SYNC_MAX_AGE_S — estale e as
+                                               colunas saem vazias).
   sub /joint_states        sensor_msgs/JointState — juntas do braço; a pose do
                                                TCP é calculada via FK
                                                (kinematics + T_TOUCH_TOOL_ATTACH).
 
 Saída (em ~/touch_pack_runs/):
   <timestamp>__samples.csv   uma linha por amostra de força:
-      t_rel_s, cycle, phase, force_net_n, q1..q6, tcp_x, tcp_y, tcp_z
+      t_rel_s, cycle, phase, force_net_n, q1..q6, tcp_x, tcp_y, tcp_z,
+      touch_value, touch_age_ms
   <timestamp>__params.json   parâmetros do start
   <timestamp>__summary.json  métricas pós-run (gerado pelo palpation_report)
   <timestamp>__plot.png      força×tempo por fase (se matplotlib disponível)
@@ -52,7 +59,11 @@ from rosidl_runtime_py.convert import message_to_ordereddict
 from touch_pack_msgs.msg import PalpationStart, PalpationStatus
 
 from .kinematics import forward_kinematics, T_TOUCH_TOOL_ATTACH
-from .constants import ARM_JOINTS as _ARM_JOINTS, RUNS_DIR as OUTPUT_DIR
+from .constants import (
+    ARM_JOINTS as _ARM_JOINTS,
+    RUNS_DIR as OUTPUT_DIR,
+    SYNC_MAX_AGE_S,
+)
 
 
 log = logging.getLogger('touch_pack.palpation_logger')
@@ -61,7 +72,8 @@ RUN_IDLE_TIMEOUT_S = 300.0   # 5 min sem força → fecha run "perdido"
 
 CSV_HEADER = ['t_rel_s', 'cycle', 'phase', 'force_net_n',
               'q1', 'q2', 'q3', 'q4', 'q5', 'q6',
-              'tcp_x', 'tcp_y', 'tcp_z']
+              'tcp_x', 'tcp_y', 'tcp_z',
+              'touch_value', 'touch_age_ms']
 
 _QOS_COMMAND = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
@@ -92,6 +104,9 @@ class PalpationLogger(Node):
         # Últimas juntas do braço (rad, ordem _ARM_JOINTS); None até o
         # primeiro /joint_states.
         self._q: np.ndarray | None = None
+        # Última leitura do touch sensor: (valor, instante de chegada).
+        # None até o primeiro /touch_sensor/value — sensor é opcional.
+        self._touch: tuple[float, float] | None = None
 
         self.create_subscription(
             PalpationStart, '/palpation/start', self._cb_start, _QOS_COMMAND)
@@ -99,6 +114,8 @@ class PalpationLogger(Node):
             PalpationStatus, '/palpation/status', self._cb_status, 10)
         self.create_subscription(
             Float32, '/load_cell/force_net', self._cb_force, _QOS_SENSOR)
+        self.create_subscription(
+            Float32, '/touch_sensor/value', self._cb_touch, _QOS_SENSOR)
         self.create_subscription(
             JointState, '/joint_states', self._cb_joints, 50)
 
@@ -155,6 +172,10 @@ class PalpationLogger(Node):
             if msg.phase in ('DONE', 'ABORTED') and self._csv_fh is not None:
                 self._close_run_locked(msg.phase)
 
+    def _cb_touch(self, msg: Float32) -> None:
+        with self._lock:
+            self._touch = (float(msg.data), time.time())
+
     def _cb_joints(self, msg: JointState) -> None:
         idx = {n: i for i, n in enumerate(msg.name)}
         if not all(j in idx for j in _ARM_JOINTS):
@@ -182,6 +203,14 @@ class PalpationLogger(Node):
             else:
                 q_cols = [''] * 6
                 tcp_cols = [''] * 3
+            # Touch pareado por chegada (mesma regra do force_sync):
+            # fresco entra com valor + idade; estale/ausente sai vazio.
+            touch_cols = ['', '']
+            if self._touch is not None:
+                age_s = now - self._touch[1]
+                if age_s <= SYNC_MAX_AGE_S:
+                    touch_cols = [f'{self._touch[0]:.4f}',
+                                  f'{age_s * 1e3:.1f}']
             try:
                 self._csv_writer.writerow([
                     f'{now - self._run_t0:.4f}',
@@ -190,6 +219,7 @@ class PalpationLogger(Node):
                     f'{float(msg.data):.4f}',
                     *q_cols,
                     *tcp_cols,
+                    *touch_cols,
                 ])
                 self._sample_count += 1
                 # Flush a cada 50 amostras (~1 s @ 50 Hz) para não perder
