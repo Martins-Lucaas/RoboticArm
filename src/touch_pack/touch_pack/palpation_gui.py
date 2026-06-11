@@ -11,7 +11,7 @@ Funcionalidades:
   • Painel de conexão ao ROBÔ CR10 real (IP + Conectar + dropdown de modo
     SIM_ONLY / MIRROR / REAL_FROM_SIM) — abre as 3 sockets TCP do
     controlador e executa a sequência ClearError + EnableRobot.
-  • Botão ⏹ E-STOP — chama StopRobot+DisableRobot e abre a mão.
+  • Botão ■ E-STOP — chama StopRobot+DisableRobot e abre a mão.
 
 Comunicação ROS:
   pub  /palpation/start    std_msgs/String   JSON {depth_mm, speed_mms, slide_dir}
@@ -439,7 +439,7 @@ class PalpationGUI(Node):
 
         # ─── Home pose customizável ──────────────────────────────────
         # Default (ARM_HOME_DEG) é sobrescrito se ~/.config/touch_pack/
-        # home_pose.json existir. Atualizado pelo botão "💾 Salvar Home".
+        # home_pose.json existir. Atualizado pelo botão "✔ Salvar Home".
         self._arm_home_deg: dict[str, float] = dict(ARM_HOME_DEG)
         self._load_home_pose()
 
@@ -568,7 +568,7 @@ class PalpationGUI(Node):
                  text='CR10 + COVVI Index — Gupta et al. 2021',
                  font=FONT_SMALL, bg=HEADER, fg='#cbd5e1').pack(anchor='w')
 
-        estop = _hdr_btn(top, '⏹', 'E-STOP', self._estop,
+        estop = _hdr_btn(top, '■', 'E-STOP', self._estop,
                           bg=DANGER, fg='white',
                           font=FONT_HEAD,
                           padx=20, pady=10)
@@ -613,7 +613,7 @@ class PalpationGUI(Node):
             bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=12, pady=5)
         self._eci_btn.grid(row=1, column=3, sticky='w')
         self._pwr_btn = _hdr_btn(
-            conn, '⏻', 'PWR OFF', self._toggle_hand_power,
+            conn, '⊙', 'PWR OFF', self._toggle_hand_power,
             bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=12, pady=5)
         self._pwr_btn.grid(row=1, column=4, sticky='w', padx=(6, 0))
 
@@ -711,7 +711,7 @@ class PalpationGUI(Node):
         self._nb = nb
         self._palpation_blocked = (self._end_effector != 'touch_tool')
         if self._palpation_blocked:
-            nb.tab(0, text='Palpação 🔒', state='disabled')
+            nb.tab(0, text='Palpação ⊘', state='disabled')
         # Modo hand: sem célula de carga → esconde a aba dedicada (a coluna
         # da mão já ocupa o Controle Manual). Modo touch_tool: aba mantida e
         # o Controle Manual mostra o mini-painel de leitura da célula.
@@ -830,7 +830,7 @@ class PalpationGUI(Node):
         btn_wrap = tk.Frame(col_right, bg=BG)
         btn_wrap.pack(fill='x', side='bottom', pady=(14, 0))
         self.stop_palp_btn = tk.Button(
-            btn_wrap, text='⏹  Parar Palpação',
+            btn_wrap, text='■  Parar Palpação',
             command=self._on_stop_palpation, bg=WARN, fg='white',
             activebackground=_shade(WARN, -0.1), activeforeground='white',
             font=FONT_HEAD, relief='flat', bd=0, padx=18, pady=10,
@@ -958,8 +958,8 @@ class PalpationGUI(Node):
                    font=FONT_LBL, relief='flat', bd=0, padx=14, pady=8,
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True, padx=(0, 4))
-        # 💾 = grava os ângulos atuais como nova Home (persiste em JSON).
-        tk.Button(btns_arm, text='💾  Salvar Home',
+        # ✔ = grava os ângulos atuais como nova Home (persiste em JSON).
+        tk.Button(btns_arm, text='✔  Salvar Home',
                    command=self._save_home_pose,
                    bg=OK, fg='white',
                    activebackground=_shade(OK, -0.08),
@@ -970,7 +970,7 @@ class PalpationGUI(Node):
 
         btns_arm2 = tk.Frame(col_arm, bg=BG)
         btns_arm2.pack(fill='x', pady=(4, 0))
-        tk.Button(btns_arm2, text='📍  Capturar do Robô',
+        tk.Button(btns_arm2, text='⌖  Capturar do Robô',
                    command=self._capture_arm_from_robot,
                    bg=_shade(PRIMARY, 0.25), fg=PRIMARY,
                    activebackground=_shade(PRIMARY, 0.15),
@@ -1014,7 +1014,7 @@ class PalpationGUI(Node):
                    font=FONT_LBL, relief='flat', bd=0, padx=12, pady=8,
                    cursor='hand2'
                    ).pack(side='left', fill='x', expand=True, padx=(0, 3))
-        tk.Button(btns_hand, text='👉  Apontar',
+        tk.Button(btns_hand, text='☞  Apontar',
                    command=lambda: self._apply_hand_preset(
                        HAND_POINT_DEG, eci_grip_id=7),    # 7 = FINGER (Index ext.)
                    bg=OK, fg='white',
@@ -1967,7 +1967,7 @@ class PalpationGUI(Node):
         tare_btn_row = tk.Frame(card, bg=PANEL)
         tare_btn_row.pack(fill='x', pady=(0, 6))
         tk.Button(
-            tare_btn_row, text='🎯  Zerar Sensor (Tare)',
+            tare_btn_row, text='◎  Zerar Sensor (Tare)',
             command=self._lc_do_tare,
             bg=PRIMARY, fg='white',
             activebackground=PRIMARY_HV, activeforeground='white',
@@ -2239,7 +2239,10 @@ class PalpationGUI(Node):
             slope      = self._lc_calib_slope
             calibrated = self._lc_calibrated
         if calibrated and tare_done and abs(slope) > 1e-9:
-            f_net = (v - tare_v) / slope   # compressão → positivo (tensão sobe com compressão)
+            # Calibração feita em tração (pesos pendurados) → (v - tare_v)/slope
+            # sai positivo em TRAÇÃO. Invertemos para a convenção do sistema:
+            # compressão = POSITIVO (PID e limites de segurança dependem disso).
+            f_net = (tare_v - v) / slope   # compressão → positivo, tração → negativo
             out = Float32()
             out.data = float(f_net)
             try:
@@ -2472,7 +2475,7 @@ class PalpationGUI(Node):
 
         self._force_rx_should_be_alive = True
         self._force_rx_btn.config(
-            text='⏳  Iniciando…', state='disabled',
+            text='…  Iniciando…', state='disabled',
             bg=BTN_NEUTRAL, fg=TEXT)
         self._force_rx_status_lbl.config(
             text='Iniciando nó UDP…', fg=WARN)
@@ -2490,7 +2493,7 @@ class PalpationGUI(Node):
             self._force_rx_should_be_alive = False
             return
         self._force_rx_btn.config(
-            text='⏹  Desconectar', state='normal', bg=DANGER, fg='white')
+            text='■  Desconectar', state='normal', bg=DANGER, fg='white')
         self._force_rx_status_lbl.config(
             text='Nó ativo — aguardando pacotes UDP do ESP32 na porta 8080',
             fg=OK)
@@ -2565,9 +2568,11 @@ class PalpationGUI(Node):
         self.lc_voltage_lbl.config(text=volt_txt, fg=volt_color)
         self.lc_volt_live_lbl.config(text=volt_txt, fg=volt_color)
 
-        # Força total calibrada (inclui preload estático)
+        # Força total calibrada (inclui preload estático).
+        # Sinal invertido em relação à calibração (feita em tração):
+        # compressão = positivo, tração = negativo.
         if calibrated and has_data and abs(slope) > 1e-9:
-            force_total = (voltage - intercept) / slope
+            force_total = (intercept - voltage) / slope
             self.lc_force_lbl.config(
                 text=f'{force_total:6.2f}  N',
                 fg=OK if abs(force_total) < 100 else WARN)
@@ -2576,9 +2581,10 @@ class PalpationGUI(Node):
                      f'slope={slope:.4f}  intercept={intercept:.4f}',
                 fg=OK)
 
-            # Força de compressão ⊥ mesa: tensão SOBE com compressão → (v - tare_v) positivo.
+            # Força de compressão ⊥ mesa: calibração em tração → sinal invertido
+            # para que compressão fique positiva.
             if tare_done:
-                f_compress = (voltage - tare_v) / slope   # positivo = compressão, negativo = tração
+                f_compress = (tare_v - voltage) / slope   # positivo = compressão, negativo = tração
                 color = OK if abs(f_compress) < 100 else WARN
                 self.lc_normal_force_lbl.config(
                     text=f'{f_compress:+6.2f}  N', fg=color)
@@ -2651,7 +2657,7 @@ class PalpationGUI(Node):
         btn_row.pack(fill='x', pady=(0, 8))
 
         self._drag_btn = tk.Button(
-            btn_row, text='🖐 Drag OFF',
+            btn_row, text='✋ Drag OFF',
             command=self._toggle_drag,
             bg=BTN_NEUTRAL, fg=TEXT,
             activebackground=_shade(BTN_NEUTRAL, -0.08),
@@ -2660,7 +2666,7 @@ class PalpationGUI(Node):
         self._drag_btn.pack(side='left', padx=(0, 4))
 
         tk.Button(
-            btn_row, text='📷 Robot',
+            btn_row, text='◉ Robot',
             command=self._capture_pose_robot,
             bg=BTN_NEUTRAL, fg=TEXT,
             activebackground=_shade(BTN_NEUTRAL, -0.08),
@@ -2668,7 +2674,7 @@ class PalpationGUI(Node):
             cursor='hand2').pack(side='left', padx=(0, 4))
 
         tk.Button(
-            btn_row, text='🎮 Sim',
+            btn_row, text='⌨ Sim',
             command=self._capture_pose_sim,
             bg=BTN_NEUTRAL, fg=TEXT,
             activebackground=_shade(BTN_NEUTRAL, -0.08),
@@ -2702,7 +2708,7 @@ class PalpationGUI(Node):
             cursor='hand2').pack(side='left', padx=(0, 4))
 
         tk.Button(
-            pose_act, text='🗑 Deletar',
+            pose_act, text='✖ Deletar',
             command=self._delete_selected_pose,
             bg=DANGER, fg='white',
             activebackground=DANGER_HV,
@@ -2844,7 +2850,7 @@ class PalpationGUI(Node):
                   bg=BTN_NEUTRAL, fg=TEXT,
                   font=FONT_SMALL, relief='flat', bd=0,
                   padx=6, pady=2, cursor='hand2').pack(side='left', padx=(8, 0))
-        tk.Button(hdr, text='🗑 Deletar',
+        tk.Button(hdr, text='✖ Deletar',
                   command=lambda: self._delete_movement(mov['id']),
                   bg=DANGER, fg='white', activebackground=DANGER_HV,
                   font=FONT_SMALL, relief='flat', bd=0,
@@ -2993,13 +2999,13 @@ class PalpationGUI(Node):
                   bg=OK, fg='white', activebackground='#15803d',
                   font=FONT_SMALL, relief='flat', bd=0,
                   padx=8, pady=4, cursor='hand2').pack(fill='x', pady=(0, 4))
-        tk.Button(ctrl_col, text='🔄 Loop',
+        tk.Button(ctrl_col, text='↻ Loop',
                   command=lambda: self._start_movement(_mid, loop=True),
                   bg=WARN, fg='white', activebackground='#b45309',
                   font=FONT_SMALL, relief='flat', bd=0,
                   padx=8, pady=4, cursor='hand2').pack(fill='x', pady=(0, 4))
 
-        tk.Button(ctrl_col, text='⏹ Parar',
+        tk.Button(ctrl_col, text='■ Parar',
                   command=self._stop_execution,
                   bg=DANGER, fg='white', activebackground=DANGER_HV,
                   font=FONT_SMALL, relief='flat', bd=0,
@@ -3016,7 +3022,7 @@ class PalpationGUI(Node):
     def _capture_pose_robot(self) -> None:
         drv = self._real_driver
         if drv is None or not self._robot_connected:
-            self._set_status('Robô real não conectado — use 🎮 Sim.', WARN)
+            self._set_status('Robô real não conectado — use ⌨ Sim.', WARN)
             return
         try:
             q_urdf = drv.read_joints_urdf()
@@ -3118,10 +3124,10 @@ class PalpationGUI(Node):
         btn = self._drag_btn
         if btn is not None:
             if new_state:
-                btn.config(text='🖐 Drag ON', bg=WARN, fg='white',
+                btn.config(text='✋ Drag ON', bg=WARN, fg='white',
                            activebackground='#b45309')
             else:
-                btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
+                btn.config(text='✋ Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
                            activebackground=_shade(BTN_NEUTRAL, -0.08))
         self._set_status(
             'Drag ativo — ative o botão físico no robô para mover.' if new_state
@@ -3546,8 +3552,8 @@ class PalpationGUI(Node):
         self._hand_powered = False
         self._disable_hand_mirror()
         self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
-        self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
-        self._hand_connect_btn.set_state('⏳', 'Desconectando…', BTN_NEUTRAL, TEXT)
+        self._pwr_btn.set_state('⊙', 'PWR OFF', BTN_NEUTRAL, TEXT)
+        self._hand_connect_btn.set_state('…', 'Desconectando…', BTN_NEUTRAL, TEXT)
         self._set_status('Desconectando mão COVVI…', TEXT_DIM)
 
         threading.Thread(
@@ -3623,8 +3629,8 @@ class PalpationGUI(Node):
         self._hand_powered = False
         self._disable_hand_mirror()
         self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
-        self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
-        self._hand_connect_btn.set_state('⏳', 'Reconectando…', WARN, 'white')
+        self._pwr_btn.set_state('⊙', 'PWR OFF', BTN_NEUTRAL, TEXT)
+        self._hand_connect_btn.set_state('…', 'Reconectando…', WARN, 'white')
         # Aguarda 15 s antes de re-spawnar: a caixa ECI precisa desse tempo
         # para liberar o estado TCP após a conexão quebrada (ExistingConnectionError).
         self._set_status(
@@ -3720,7 +3726,7 @@ class PalpationGUI(Node):
                 except Exception:
                     pass
             self._hand_powered = False
-            self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
+            self._pwr_btn.set_state('⊙', 'PWR OFF', BTN_NEUTRAL, TEXT)
             self._eci_enabled = False
             self._disable_hand_mirror()
             self._eci_btn.set_state('◉', 'ECI OFF', BTN_NEUTRAL, TEXT)
@@ -3775,7 +3781,7 @@ class PalpationGUI(Node):
             return
         self._cli_hand_pwr_on.call_async(self._eci_srv.SetHandPowerOn.Request())
         self._hand_powered = True
-        self._pwr_btn.set_state('⏻', 'PWR ON', OK, 'white')
+        self._pwr_btn.set_state('⊙', 'PWR ON', OK, 'white')
         self._set_status('Canal ECI ativo — alimentação ligada (LED azul aceso).', OK)
         # Versão B: liga o mirror real→sim da mão ~600 ms depois (tempo para
         # o serviço SetRealtimeCfg e o tópico DigitPosnAll subirem no grafo).
@@ -3803,10 +3809,10 @@ class PalpationGUI(Node):
         cli.call_async(req)
         self._hand_powered = target_on
         if target_on:
-            self._pwr_btn.set_state('⏻', 'PWR ON', OK, 'white')
+            self._pwr_btn.set_state('⊙', 'PWR ON', OK, 'white')
             self._set_status('Power da mão LIGADO (LED azul aceso).', OK)
         else:
-            self._pwr_btn.set_state('⏻', 'PWR OFF', BTN_NEUTRAL, TEXT)
+            self._pwr_btn.set_state('⊙', 'PWR OFF', BTN_NEUTRAL, TEXT)
             self._set_status('Power da mão DESLIGADO.', TEXT_DIM)
 
     # ──────────────────────────────────────────────────────────────────
@@ -3830,7 +3836,7 @@ class PalpationGUI(Node):
         # Conexão em background — evita congelar a GUI durante os ~5 s de
         # handshake TCP + sequência ClearError/EnableRobot/SpeedFactor.
         self._robot_connecting = True
-        self._robot_connect_btn.set_state('⏳', 'Conectando…', BTN_NEUTRAL, TEXT)
+        self._robot_connect_btn.set_state('…', 'Conectando…', BTN_NEUTRAL, TEXT)
         self._set_status(f'Abrindo sockets para CR10 em {ip}…', PRIMARY)
         threading.Thread(
             target=self._connect_robot_worker, args=(ip,), daemon=True).start()
@@ -3895,7 +3901,7 @@ class PalpationGUI(Node):
             self._publish_drag_state(False)
             btn = self._drag_btn
             if btn is not None:
-                btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
+                btn.config(text='✋ Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
                            activebackground=_shade(BTN_NEUTRAL, -0.08))
         log.warning('[DBG] _finish_robot_connect: _robot_connected=True drv=%s', drv)
         self._robot_connect_btn.set_state('⚡', 'Desconectar', OK, 'white')
@@ -4132,12 +4138,12 @@ class PalpationGUI(Node):
         if btn is None:
             return
         if active:
-            btn.config(text='🖐 Drag (auto)', bg=WARN, fg='white',
+            btn.config(text='✋ Drag (auto)', bg=WARN, fg='white',
                        activebackground='#b45309')
             self._set_status(
                 'Drag físico detectado — simulação a seguir o braço real.', WARN)
         else:
-            btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
+            btn.config(text='✋ Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
                        activebackground=_shade(BTN_NEUTRAL, -0.08))
             self._set_status('Drag desactivado.', OK)
 
@@ -4154,10 +4160,10 @@ class PalpationGUI(Node):
             self._publish_drag_state(False)
             btn = self._drag_btn
             if btn is not None:
-                btn.config(text='🖐 Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
+                btn.config(text='✋ Drag OFF', bg=BTN_NEUTRAL, fg=TEXT,
                            activebackground=_shade(BTN_NEUTRAL, -0.08))
         self._robot_connect_btn.set_state(
-            '⏳', 'Reconectando…', WARN, 'white')
+            '…', 'Reconectando…', WARN, 'white')
         self._set_status(
             'Conexão CR10 perdida — tentando reconectar automaticamente…',
             WARN)

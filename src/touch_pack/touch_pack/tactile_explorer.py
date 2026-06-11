@@ -113,7 +113,7 @@ _HAND_PRIMARY = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
 # ── Célula de carga calibrada (/load_cell/force_net) ─────────────────────────
 # Convenção de sinal: compressão = POSITIVO, tração = NEGATIVO.
 # O force_receiver_node publica força calibrada (N). A GUI aplica tara
-# (v_now - tare_v) / slope → compressão positiva, tração negativa.
+# (tare_v - v_now) / slope → compressão positiva, tração negativa.
 _CONTACT_DETECT_N     = 0.2    # N: limiar — usado no SLIDING para detecção de perda de contato
 _FORCE_ABORT_LIMIT_N  = 15.0   # N: segurança — cancela a medição se exceder
 _FORCE_SETPOINT_MAX_N = 10.0   # N: setpoint máximo selecionável na GUI
@@ -970,7 +970,7 @@ class TactileExplorer(Node):
         self.get_logger().warn(
             f'DESCENDING: curso máximo de {descended_m * 1000:.1f} mm esgotado '
             f'sem atingir {target_f:.2f} N (fz={self._fz_corrected():.2f} N) — '
-            'abortando com retração e retorno à home.')
+            'abortando com retorno lento à home.')
         return 'no_contact'
 
     def _phase_hold(self, hold_s: float = 3.0) -> str:
@@ -1265,14 +1265,19 @@ class TactileExplorer(Node):
     def _retreat_and_home(self, final_phase: str) -> None:
         """Afasta da superfície (RETRACT) e retorna à home lentamente.
 
-        Usado em TODOS os términos com a ferramenta na amostra — sucesso,
-        curso esgotado ou limite de força — para nunca arrastar o TCP nem
-        deixá-lo pressionado. Velocidades: retract = approach × speed_factor;
-        home = home_speed_rad_s por junta.
+        Usado apenas no término com SUCESSO. Velocidades:
+        retract = approach × speed_factor; home = home_speed_rad_s por junta.
         """
         self._phase_retract()
         self._phase_goto_home()
         self._set_phase(final_phase)
+
+    def _abort_to_home(self) -> None:
+        """Falha do experimento (qualquer motivo): sem RETRACT — retorna
+        direto à home lentamente (≤ home_speed_rad_s por junta) e marca
+        ABORTED."""
+        self._phase_goto_home()
+        self._set_phase('ABORTED')
 
     def _run_protocol(self):
         self._busy.set()
@@ -1282,19 +1287,19 @@ class TactileExplorer(Node):
 
             out = self._phase_descending()
             if out in ('force', 'no_contact'):
-                self._retreat_and_home('ABORTED'); return
+                self._abort_to_home(); return
             if out != 'ok':   # stop do usuário → para no lugar
                 self._set_phase('ABORTED'); return
 
             out = self._phase_hold()
             if out == 'force':
-                self._retreat_and_home('ABORTED'); return
+                self._abort_to_home(); return
             if out != 'ok':
                 self._set_phase('ABORTED'); return
 
             out = self._phase_sliding()
-            if out == 'force':
-                self._retreat_and_home('ABORTED'); return
+            if out in ('force', 'error'):
+                self._abort_to_home(); return
             if out != 'ok':
                 self._set_phase('ABORTED'); return
 

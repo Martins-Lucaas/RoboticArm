@@ -4,7 +4,7 @@ e publica os dados como tópicos ROS2.
 
 Tópicos publicados:
   /load_cell/voltage    std_msgs/Float32   tensão do sensor (V)
-  /load_cell/force      std_msgs/Float32   força calibrada (N)
+  /load_cell/force      std_msgs/Float32   força calibrada (N, compressão = positivo)
   /load_cell/calibrated std_msgs/Bool      True quando calibração existe
 
 A calibração é lida de ~/.config/touch_pack/load_cell_calib.json
@@ -123,7 +123,9 @@ class ForceReceiverNode(Node):
             self._calib_pub.publish(cb_msg)
 
             if abs(sl) > 1e-9:
-                force = (v_sensor - ic) / sl
+                # Calibração feita em tração → invertido para a convenção do
+                # sistema: compressão = positivo, tração = negativo.
+                force = (ic - v_sensor) / sl
                 f_msg = Float32(); f_msg.data = float(force)
                 self._force_pub.publish(f_msg)
 

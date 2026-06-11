@@ -5,7 +5,7 @@
   Compatível com Gazebo Classic 11 + gazebo_ros Humble.
 
   Decisões de cena:
-    • Duas paredes apenas (sul + oeste) formando um canto aberto, evita
+    • Duas paredes apenas (norte + oeste) formando um canto aberto, evita
       bloquear a visão das outras direções no Gazebo.
     • Piso e paredes com material Gazebo/Wood (textura de madeira clara) —
       reproduz o aspecto de uma "casa de madeira".
@@ -15,7 +15,7 @@
       → spawn do CR10 em x=0.30, y=0, z=0.75 (centro exato da mesa)
       → área de trabalho simétrica: ±55 cm em X, ±30 cm em Y
     • Decoração: 2 armários encostados nas paredes, prateleira com livros,
-      vaso de planta, abajur de chão e moldura de janela.
+      vaso de planta e abajur de chão.
     • Iluminação difusa quente (1.0, 0.95, 0.80) — ambiente acolhedor.
 
   Convenção de eixos:
@@ -26,7 +26,7 @@
   <world name="research_lab">
 
     <!-- ──────────────────── ILUMINAÇÃO ─────────────────────────────── -->
-    <!-- Luz solar quase neutra entrando obliquamente pela "janela". -->
+    <!-- Luz solar quase neutra entrando obliquamente. -->
     <light name="sun" type="directional">
       <pose>0 0 12 0 0 0</pose>
       <diffuse>1.00 0.95 0.85 1</diffuse>
@@ -108,10 +108,10 @@
     </model>
 
     <!-- ────────────────── DUAS PAREDES DE MADEIRA ──────────────────── -->
-    <!-- Parede SUL — madeira clara — segue o lado −Y. -->
-    <model name="wall_south">
+    <!-- Parede NORTE — madeira clara — segue o lado +Y. -->
+    <model name="wall_north">
       <static>true</static>
-      <pose>0 -2.5 1.25 0 0 0</pose>
+      <pose>0 2.5 1.25 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>6.0 0.12 2.5</size></box></geometry>
@@ -144,18 +144,6 @@
               <name>Gazebo/Wood</name>
             </script>
           </material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Moldura de janela na parede sul (visual decorativo). -->
-    <model name="window_frame">
-      <static>true</static>
-      <pose>-1.3 -2.43 1.55 0 0 0</pose>
-      <link name="link">
-        <visual name="vis">
-          <geometry><box><size>0.90 0.04 0.70</size></box></geometry>
-          <material><script><name>Gazebo/SkyBlue</name></script></material>
         </visual>
       </link>
     </model>
@@ -208,10 +196,10 @@
     </model>
 
     <!-- ────────────────────── ARMÁRIOS DECORATIVOS ──────────────────── -->
-    <!-- Armário longo encostado na parede sul — 2.4 × 0.5 × 0.95 m. -->
-    <model name="cabinet_south">
+    <!-- Armário longo encostado na parede norte — 2.4 × 0.5 × 0.95 m. -->
+    <model name="cabinet_north">
       <static>true</static>
-      <pose>0.50 -2.20 0.475 0 0 0</pose>
+      <pose>0.50 2.20 0.475 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>2.40 0.50 0.95</size></box></geometry>
@@ -228,15 +216,15 @@
       </link>
       <!-- 3 puxadores horizontais (visual). -->
       <link name="handle1">
-        <pose>-0.65 -1.96 0.55 0 0 0</pose>
+        <pose>-0.65 1.96 0.55 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.20 0.02 0.02</size></box></geometry><material><script><name>Gazebo/Black</name></script></material></visual>
       </link>
       <link name="handle2">
-        <pose> 0.00 -1.96 0.55 0 0 0</pose>
+        <pose> 0.00 1.96 0.55 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.20 0.02 0.02</size></box></geometry><material><script><name>Gazebo/Black</name></script></material></visual>
       </link>
       <link name="handle3">
-        <pose> 0.65 -1.96 0.55 0 0 0</pose>
+        <pose> 0.65 1.96 0.55 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.20 0.02 0.02</size></box></geometry><material><script><name>Gazebo/Black</name></script></material></visual>
       </link>
     </model>
@@ -265,31 +253,31 @@
       </link>
     </model>
 
-    <!-- Prateleira com livros — apoiada no armário sul. -->
+    <!-- Prateleira com livros — apoiada no armário norte. -->
     <model name="shelf_books">
       <static>true</static>
       <link name="shelf">
-        <pose>0.20 -2.10 1.05 0 0 0</pose>
+        <pose>0.20 2.10 1.05 0 0 0</pose>
         <visual name="v"><geometry><box><size>1.20 0.30 0.04</size></box></geometry><material><script><name>Gazebo/Wood</name></script></material></visual>
       </link>
       <link name="book_a">
-        <pose>-0.40 -2.10 1.18 0 0 0</pose>
+        <pose>-0.40 2.10 1.18 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.05 0.22 0.24</size></box></geometry><material><script><name>Gazebo/Red</name></script></material></visual>
       </link>
       <link name="book_b">
-        <pose>-0.33 -2.10 1.18 0 0 0</pose>
+        <pose>-0.33 2.10 1.18 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.04 0.20 0.22</size></box></geometry><material><script><name>Gazebo/Blue</name></script></material></visual>
       </link>
       <link name="book_c">
-        <pose>-0.27 -2.10 1.16 0 0 0</pose>
+        <pose>-0.27 2.10 1.16 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.06 0.22 0.20</size></box></geometry><material><script><name>Gazebo/DarkYellow</name></script></material></visual>
       </link>
       <link name="book_d">
-        <pose>-0.20 -2.10 1.17 0 0 0</pose>
+        <pose>-0.20 2.10 1.17 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.05 0.21 0.22</size></box></geometry><material><script><name>Gazebo/Green</name></script></material></visual>
       </link>
       <link name="book_e">
-        <pose> 0.00 -2.10 1.18 0 0 0</pose>
+        <pose> 0.00 2.10 1.18 0 0 0</pose>
         <visual name="v"><geometry><box><size>0.18 0.18 0.04</size></box></geometry><material><script><name>Gazebo/Bricks</name></script></material></visual>
       </link>
     </model>
