@@ -31,8 +31,8 @@ from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-ROBOT_CONFIG_FILE = os.path.expanduser('~/.config/touch_pack/robot.json')
-_ARM_JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+from .constants import ARM_JOINTS as _ARM_JOINTS, ROBOT_CONFIG_FILE
+
 _CONTROLLER_ACTION = '/cr10_group_controller/follow_joint_trajectory'
 _MOVE_DURATION_S = 3.0
 

@@ -56,6 +56,7 @@ from geometry_msgs.msg import WrenchStamped
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+from touch_pack_msgs.msg import PalpationStart, PalpationStatus
 
 # QoS para comando crítico (/palpation/start): RELIABLE + TRANSIENT_LOCAL
 # faz com que o último start fique persistido — se o explorer subir
@@ -72,12 +73,22 @@ QOS_SENSOR = QoSProfile(
     durability=QoSDurabilityPolicy.VOLATILE,
     history=QoSHistoryPolicy.KEEP_LAST, depth=1)
 
+# Constantes compartilhadas (fonte única GUI ↔ explorer ↔ nós auxiliares).
+from .constants import (
+    ARM_JOINTS, HAND_JOINTS, HAND_POINT_DEG, POINTING_SEED_DEG,
+    FORCE_ABORT_LIMIT_N as _FORCE_ABORT_LIMIT_N,
+    FORCE_SETPOINT_MAX_N,
+    HOME_POSE_FILE, ROBOT_CONFIG_FILE, LC_CALIB_FILE, POSES_FILE,
+    PALPATION_PARAMS_FILE,
+)
+
 # Driver TCP/IP do CR10 real (cabeada via 192.168.5.1 / LAN1).
 try:
     from .real_driver import (
         CR10RealDriver, CR10RealDriverConfig, CR10RealDriverError,
     )
     from .kinematics import urdf_to_dobot as _urdf_to_dobot, MIMIC_LIST
+    from .kinematics import fk_partial as _fk_partial
     _REAL_DRIVER_OK = True
 except Exception:  # pragma: no cover
     CR10RealDriver = None
@@ -85,61 +96,21 @@ except Exception:  # pragma: no cover
     CR10RealDriverError = Exception
     _urdf_to_dobot = None
     MIMIC_LIST = []
+    _fk_partial = None
     _REAL_DRIVER_OK = False
 
 
+# Tema + widgets compartilhados (cores, named fonts do Tk — ver o aviso
+# sobre o bug do fontconfig em ui_helpers — tooltip e botões do header).
+from .ui_helpers import (
+    BG, PANEL, HEADER, HEADER_FG, TEXT, TEXT_MUTED, TEXT_DIM,
+    PRIMARY, PRIMARY_HV, OK, WARN, DANGER, DANGER_HV, BORDER, BTN_NEUTRAL,
+    FONT_TITLE, FONT_HEAD, FONT_LBL, FONT_SMALL, FONT_BIG,
+    FONT_MONO, FONT_MONO_S,
+    _shade, _Tooltip, _hdr_btn,
+)
+
 log = logging.getLogger('touch_pack.palpation_gui')
-
-# ──────────────────────────────────────────────────────────────────────
-# Tema claro (consistente com a paleta do laboratório).
-# ──────────────────────────────────────────────────────────────────────
-BG          = '#f1f5f9'
-PANEL       = '#ffffff'
-HEADER      = '#1d4ed8'
-HEADER_FG   = 'white'
-TEXT        = '#0f172a'
-TEXT_MUTED  = '#475569'
-TEXT_DIM    = '#94a3b8'
-PRIMARY     = '#2563eb'
-PRIMARY_HV  = '#1d4ed8'
-OK          = '#16a34a'
-WARN        = '#d97706'
-DANGER      = '#dc2626'
-DANGER_HV   = '#b91c1c'
-BORDER      = '#cbd5e1'
-BTN_NEUTRAL = '#e2e8f0'
-
-FONT_TITLE  = ('Segoe UI', 18, 'bold')
-FONT_HEAD   = ('Segoe UI', 12, 'bold')
-FONT_LBL    = ('Segoe UI', 11)
-FONT_SMALL  = ('Segoe UI', 10)
-FONT_BIG    = ('Segoe UI', 26, 'bold')
-FONT_MONO   = ('JetBrains Mono', 11)
-FONT_MONO_S = ('JetBrains Mono', 10)
-
-
-def _resolve_fonts(_root) -> None:
-    """Mapeia FONT_* para os named fonts internos do Tk.
-
-    Raiz do crash: qualquer font= com tamanho/peso diferente dos built-ins
-    força o Tk a criar um novo XftFont via fontconfig. No Tk 8.6 / Ubuntu
-    22.04 com a configuração de display desta máquina, cada chamada ao
-    fontconfig corrompe o heap; após ~50 widgets o crash acontece.
-
-    Solução definitiva: usar APENAS os 9 named fonts embutidos do Tk, que
-    são pré-alocados durante tk.Tk() sem nenhuma chamada ao fontconfig.
-    Widget criados com esses nomes encontram o XftFont já no cache → zero
-    chamadas ao fontconfig durante _build_ui().
-    """
-    global FONT_TITLE, FONT_HEAD, FONT_LBL, FONT_SMALL, FONT_BIG
-    global FONT_MONO, FONT_MONO_S
-    FONT_TITLE  = 'TkCaptionFont'       # 12 pt bold
-    FONT_HEAD   = 'TkCaptionFont'       # 12 pt bold
-    FONT_LBL    = 'TkDefaultFont'       # 10 pt
-    FONT_SMALL  = 'TkSmallCaptionFont'  #  9 pt
-    FONT_BIG    = 'TkCaptionFont'       # 12 pt bold (display de força)
-    FONT_MONO   = 'TkFixedFont'         # 10 pt mono
-    FONT_MONO_S = 'TkFixedFont'         # 10 pt mono
 
 # Faixas dos parâmetros — adequadas ao protocolo Gupta et al. 2021.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 1.0,  30.0,  10.0    # mm/s
@@ -155,11 +126,14 @@ _VEL_BASE_S = 3.0   # duration at 10 %
 
 # Curso máximo da descida — o término é por força (PID); isto é só segurança.
 DEPTH_MIN,  DEPTH_MAX,  DEPTH_DEFAULT  = 0.0, 120.0,  5.0   # mm
+# Repetições automáticas do experimento (ciclos descida→deslizamento→recuo).
+REPEAT_MIN, REPEAT_MAX, REPEAT_DEFAULT = 1, 50, 1
 SLIDE_DIST_MIN, SLIDE_DIST_MAX, SLIDE_DIST_DEFAULT = 1.0, 300.0, 50.0  # mm
-# Controle por PID de força: setpoint selecionável (máx. 10 N); a medição é
-# cancelada se a compressão exceder 15 N (espelhado do explorer).
-FORCE_SP_MIN, FORCE_SP_MAX, FORCE_SP_DEFAULT = 0.5, 10.0, 2.0  # N
-_FORCE_ABORT_LIMIT_N = 15.0  # N: cancela a medição (espelhado do explorer)
+# Controle por PID de força: setpoint selecionável (máx. FORCE_SETPOINT_MAX_N);
+# a medição é cancelada se a compressão exceder FORCE_ABORT_LIMIT_N — ambos
+# vêm de constants.py (fonte única com o explorer).
+# Apenas números naturais (1..10 N) — pedido do usuário.
+FORCE_SP_MIN, FORCE_SP_MAX, FORCE_SP_DEFAULT = 1, int(FORCE_SETPOINT_MAX_N), 2
 # Ganhos do PID de força em mm/s (convertidos para m/s no payload).
 # Defaults espelham o explorer: kp=0.001, ki=0.0005, kd=0 (m/s).
 PID_KP_MIN, PID_KP_MAX, PID_KP_DEFAULT = 0.0, 10.0, 1.0   # (mm/s)/N
@@ -174,40 +148,28 @@ FORCE_BRIDGE_PERIOD_S = 0.020   # 50 Hz
 # ──────────────────────────────────────────────────────────────────────
 import math as _math   # alias para evitar sombrear `math` global do escopo
 
-# Juntas do braço (URDF). Faixa de slider em graus.
-ARM_JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+# Faixas de slider do braço, em graus (ARM_JOINTS vem de constants.py).
 ARM_LIMITS_DEG = {
     'joint1': (-180, 180), 'joint2': (-180, 180), 'joint3': (-160, 160),
     'joint4': (-180, 180), 'joint5': (-180, 180), 'joint6': (-180, 180),
 }
-ARM_HOME_DEG = {'joint1': 0, 'joint2': 0, 'joint3': -90,
-                 'joint4': 0, 'joint5': 90, 'joint6': 0}
-# Arquivo persistente para a home customizada do usuário. Sobrescreve
-# `ARM_HOME_DEG` em runtime quando existe.
-HOME_POSE_FILE = os.path.expanduser('~/.config/touch_pack/home_pose.json')
-# Arquivo persistente com IPs e último modo. Carregado no __init__ e
-# reescrito sempre que o usuário conectar com sucesso ou trocar de modo.
-ROBOT_CONFIG_FILE = os.path.expanduser('~/.config/touch_pack/robot.json')
-LC_CALIB_FILE     = os.path.expanduser('~/.config/touch_pack/load_cell_calib.json')
-POSES_FILE        = os.path.expanduser('~/.config/touch_pack/poses.json')
+# Home default (= POINTING_SEED_DEG do constants.py). Sobrescrita em
+# runtime por HOME_POSE_FILE quando existe ("✔ Salvar Home").
+ARM_HOME_DEG = dict(POINTING_SEED_DEG)
 ROBOT_CONFIG_DEFAULTS = {
     'hand_ip':    '192.168.5.103',
     'robot_ip':   '192.168.5.2',
     'robot_mode': 'SIM_ONLY',
 }
 
-# Juntas primárias da mão COVVI. Faixa de slider em graus → rad.
-HAND_JOINTS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
+# Faixas de slider da mão COVVI, em graus (HAND_JOINTS e a pose POINTING
+# HAND_POINT_DEG vêm de constants.py — mesma fonte do explorer).
 HAND_LIMITS_DEG = {
     'Thumb':  (0, 90), 'Index':  (0, 90), 'Middle': (0, 90),
     'Ring':   (0, 90), 'Little': (0, 90), 'Rotate': (0, 60),
 }
 HAND_OPEN_DEG  = {j: 0 for j in HAND_JOINTS}
 HAND_CLOSE_DEG = {'Thumb': 70, 'Index': 80, 'Middle': 80,
-                  'Ring':  80, 'Little': 80, 'Rotate': 0}
-# Pose POINTING (apontar com Index) — coerente com _HAND_POINTING_RAD do
-# tactile_explorer; é a configuração da mão durante a palpação.
-HAND_POINT_DEG = {'Thumb': 30, 'Index': 0, 'Middle': 80,
                   'Ring':  80, 'Little': 80, 'Rotate': 0}
 
 # ── Grip-patterns embutidos da mão COVVI (CurrentGripID 1–14) ─────────
@@ -245,53 +207,6 @@ COVVI_GRIPS: dict[str, tuple[int | None, dict[str, float]]] = {
 # de juntas mimic vira no-op em vez de derrubar a GUI inteira.
 
 
-def _shade(hex_color: str, factor: float) -> str:
-    """Clareia/escurece uma cor hex (factor positivo = mais claro)."""
-    h = hex_color.lstrip('#')
-    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
-    if factor >= 0:
-        r = int(r + (255 - r) * factor)
-        g = int(g + (255 - g) * factor)
-        b = int(b + (255 - b) * factor)
-    else:
-        f = 1.0 + factor
-        r = int(r * f); g = int(g * f); b = int(b * f)
-    return f'#{r:02x}{g:02x}{b:02x}'
-
-
-def _hdr_btn(parent, icon: str, label: str, command, *,
-              bg=BTN_NEUTRAL, fg=TEXT, font=None, padx=12, pady=5):
-    """Botão estilizado da barra superior — ícone Unicode + label,
-    com troca dinâmica de estado via `btn.set_state(icon, label, bg, fg)`."""
-    # font=None (não FONT_LBL) no default: defaults são avaliados no import,
-    # antes de _resolve_fonts() remapear as famílias. Resolver aqui em runtime
-    # garante a família já corrigida.
-    if font is None:
-        font = FONT_LBL
-    state = {'bg': bg, 'fg': fg}
-    text = f' {icon}  {label} ' if icon else f' {label} '
-    btn = tk.Button(parent, text=text, command=command,
-                    bg=bg, fg=fg,
-                    activebackground=_shade(bg, -0.08),
-                    activeforeground=fg,
-                    relief='flat', bd=0, padx=padx, pady=pady,
-                    font=font, cursor='hand2',
-                    highlightthickness=0)
-    btn.bind('<Enter>',
-              lambda _e: btn.config(bg=_shade(state['bg'], -0.08)))
-    btn.bind('<Leave>',
-              lambda _e: btn.config(bg=state['bg']))
-
-    def set_state(icon: str, label: str, bg: str, fg: str = 'white'):
-        state['bg'] = bg; state['fg'] = fg
-        new = f' {icon}  {label} ' if icon else f' {label} '
-        btn.config(text=new, bg=bg, fg=fg,
-                    activebackground=_shade(bg, -0.08),
-                    activeforeground=fg)
-    btn.set_state = set_state  # type: ignore[attr-defined]
-    return btn
-
-
 # ──────────────────────────────────────────────────────────────────────
 # Nó ROS + GUI
 # ──────────────────────────────────────────────────────────────────────
@@ -302,11 +217,13 @@ class PalpationGUI(Node):
 
         # ─── Comunicação ROS (palpation/wrench) ───────────────────────
         self._start_pub = self.create_publisher(
-            String, '/palpation/start', QOS_COMMAND)
+            PalpationStart, '/palpation/start', QOS_COMMAND)
         self._stop_pub = self.create_publisher(
             String, '/palpation/stop', 10)
+        self._pause_pub = self.create_publisher(
+            Bool, '/palpation/pause', 10)
         self.create_subscription(
-            String, '/palpation/status', self._cb_status, 10)
+            PalpationStatus, '/palpation/status', self._cb_status, 10)
         self.create_subscription(
             WrenchStamped, '/ft_sensor/wrench', self._cb_wrench, QOS_SENSOR)
         # Bridge real-CR10 → /ft_sensor/wrench: a thread `_force_bridge_loop`
@@ -338,6 +255,11 @@ class PalpationGUI(Node):
         # ─── Estado partilhado (Tk ↔ ROS) ────────────────────────────
         self._lock = threading.Lock()
         self._latest_phase: str = 'IDLE'
+        self._latest_cycle: int = 0
+        self._latest_cycles_total: int = 1
+        self._paused: bool = False
+        # Histórico da força para o sparkline (t_wall, força_N) — 60 s @10 Hz.
+        self._spark_data: collections.deque = collections.deque(maxlen=600)
         self._latest_force_normal: float = 0.0
         self._latest_force_mag: float = 0.0
         self._fx = self._fy = self._fz = 0.0
@@ -442,6 +364,10 @@ class PalpationGUI(Node):
         # home_pose.json existir. Atualizado pelo botão "✔ Salvar Home".
         self._arm_home_deg: dict[str, float] = dict(ARM_HOME_DEG)
         self._load_home_pose()
+        # Parâmetros da palpação persistidos do último start — usados como
+        # defaults dos vars na construção da aba (não voltam ao default de
+        # fábrica a cada sessão).
+        self._palp_saved: dict = self._load_palp_params()
 
         # IPs e modo persistidos — carregar antes da UI para os defaults
         # dos campos refletirem o último valor usado.
@@ -511,10 +437,6 @@ class PalpationGUI(Node):
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
         self.root.withdraw()
-        # Remapeia fontes ausentes (Segoe UI/JetBrains Mono) → fontes
-        # instaladas ANTES de construir a UI: evita o segfault do Tk 8.6 ao
-        # resolver famílias inexistentes via fontconfig. Ver _resolve_fonts.
-        _resolve_fonts(self.root)
         self._build_ui()
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
         self.root.deiconify()
@@ -550,95 +472,86 @@ class PalpationGUI(Node):
         self._build_body()
         self._build_statusbar()
 
-    # ── Header com título + painéis de conexão + E-STOP ─────────────
+    # ── Header: título + barra de conexões + E-STOP ──────────────────
     def _build_header(self):
-        hdr = tk.Frame(self.root, bg=HEADER, height=128)
+        """Header compacto em 2 linhas: título/E-STOP e uma barra única de
+        conexões com os grupos inline (separados por divisores sutis)."""
+        hdr = tk.Frame(self.root, bg=HEADER)
         hdr.pack(fill='x', side='top')
-        hdr.pack_propagate(False)
 
         # Linha 1: título à esquerda, E-STOP à direita ────────────────
         top = tk.Frame(hdr, bg=HEADER)
-        top.pack(fill='x', padx=18, pady=(8, 0))
+        top.pack(fill='x', padx=18, pady=(10, 4))
 
-        title_box = tk.Frame(top, bg=HEADER)
-        title_box.pack(side='left')
-        tk.Label(title_box, text='Palpação Tátil', font=FONT_TITLE,
-                 bg=HEADER, fg=HEADER_FG).pack(anchor='w')
-        tk.Label(title_box,
-                 text='CR10 + COVVI Index — Gupta et al. 2021',
-                 font=FONT_SMALL, bg=HEADER, fg='#cbd5e1').pack(anchor='w')
+        tk.Label(top, text='Palpação Tátil', font=FONT_TITLE,
+                 bg=HEADER, fg=HEADER_FG).pack(side='left')
 
         estop = _hdr_btn(top, '■', 'E-STOP', self._estop,
                           bg=DANGER, fg='white',
                           font=FONT_HEAD,
-                          padx=20, pady=10)
+                          padx=20, pady=8)
         estop.bind('<Enter>',
                     lambda e, b=estop: b.config(bg=DANGER_HV), add='+')
         estop.bind('<Leave>',
                     lambda e, b=estop: b.config(bg=DANGER), add='+')
-        estop.pack(side='right', padx=(12, 0))
+        estop.pack(side='right')
 
-        # Linha 2: painéis de conexão (mão à esquerda, robô à direita) ─
+        # Linha 2: barra de conexões ──────────────────────────────────
         mid = tk.Frame(hdr, bg=HEADER)
-        mid.pack(fill='x', padx=18, pady=(8, 10))
+        mid.pack(fill='x', padx=18, pady=(2, 10))
 
-        # ── COVVI HAND ────────────────────────────────────────────────
-        # Só aparece no modo `hand` (a mão não existe com o touch_tool).
-        # Os widgets são sempre criados (callbacks os referenciam), mas o
-        # frame só é empacotado quando há mão.
+        def _sep():
+            tk.Frame(mid, bg=_shade(HEADER, 0.25), width=1
+                     ).pack(side='left', fill='y', padx=14, pady=3)
+
+        def _group_lbl(parent, text):
+            tk.Label(parent, text=text, font=FONT_SMALL,
+                     bg=HEADER, fg='#cbd5e1').pack(side='left', padx=(0, 8))
+
+        # ── COVVI HAND — só aparece no modo `hand` ────────────────────
+        # Widgets sempre criados (callbacks os referenciam); o frame só é
+        # empacotado quando há mão.
         conn = tk.Frame(mid, bg=HEADER)
         if self._end_effector == 'hand':
             conn.pack(side='left')
-
-        tk.Label(conn, text='MÃO COVVI', font=FONT_SMALL,
-                 bg=HEADER, fg='#cbd5e1'
-                 ).grid(row=0, column=0, columnspan=5, sticky='w',
-                        pady=(0, 2))
-        tk.Label(conn, text='IP:', font=FONT_LBL,
-                 bg=HEADER, fg=HEADER_FG
-                 ).grid(row=1, column=0, sticky='w', padx=(0, 6))
+        _group_lbl(conn, 'MÃO COVVI')
         self._hand_ip_var = tk.StringVar(value=self._robot_cfg['hand_ip'])
         tk.Entry(conn, textvariable=self._hand_ip_var,
-                  width=16, font=FONT_MONO_S, bg='white', fg=TEXT,
-                  relief='flat', bd=0, highlightthickness=1,
-                  highlightbackground=BORDER, highlightcolor=PRIMARY,
-                  justify='center'
-                  ).grid(row=1, column=1, padx=(0, 8), ipady=4, sticky='w')
-        self._hand_connect_btn = _hdr_btn(
-            conn, '⚡', 'Conectar', self._connect_real_hand,
-            bg=PRIMARY, fg='white', font=FONT_LBL, padx=14, pady=5)
-        self._hand_connect_btn.grid(row=1, column=2, sticky='w', padx=(0, 8))
-        self._eci_btn = _hdr_btn(
-            conn, '◉', 'ECI OFF', self._toggle_eci,
-            bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=12, pady=5)
-        self._eci_btn.grid(row=1, column=3, sticky='w')
-        self._pwr_btn = _hdr_btn(
-            conn, '⊙', 'PWR OFF', self._toggle_hand_power,
-            bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=12, pady=5)
-        self._pwr_btn.grid(row=1, column=4, sticky='w', padx=(6, 0))
-
-        # ── ROBÔ CR10 ─────────────────────────────────────────────────
-        conn_rob = tk.Frame(mid, bg=HEADER)
-        conn_rob.pack(side='left', padx=(28, 0))
-
-        tk.Label(conn_rob, text='ROBÔ CR10', font=FONT_SMALL,
-                 bg=HEADER, fg='#cbd5e1'
-                 ).grid(row=0, column=0, columnspan=4, sticky='w',
-                        pady=(0, 2))
-        tk.Label(conn_rob, text='IP:', font=FONT_LBL,
-                 bg=HEADER, fg=HEADER_FG
-                 ).grid(row=1, column=0, sticky='w', padx=(0, 6))
-        self._robot_ip_var = tk.StringVar(value=self._robot_cfg['robot_ip'])
-        tk.Entry(conn_rob, textvariable=self._robot_ip_var,
                   width=14, font=FONT_MONO_S, bg='white', fg=TEXT,
                   relief='flat', bd=0, highlightthickness=1,
                   highlightbackground=BORDER, highlightcolor=PRIMARY,
                   justify='center'
-                  ).grid(row=1, column=1, padx=(0, 8), ipady=4, sticky='w')
+                  ).pack(side='left', padx=(0, 6), ipady=4)
+        self._hand_connect_btn = _hdr_btn(
+            conn, '⚡', 'Conectar', self._connect_real_hand,
+            bg=PRIMARY, fg='white', font=FONT_LBL, padx=12, pady=5)
+        self._hand_connect_btn.pack(side='left', padx=(0, 6))
+        self._eci_btn = _hdr_btn(
+            conn, '◉', 'ECI OFF', self._toggle_eci,
+            bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=10, pady=5)
+        self._eci_btn.pack(side='left', padx=(0, 6))
+        self._pwr_btn = _hdr_btn(
+            conn, '⊙', 'PWR OFF', self._toggle_hand_power,
+            bg=BTN_NEUTRAL, fg=TEXT, font=FONT_SMALL, padx=10, pady=5)
+        self._pwr_btn.pack(side='left')
+        if self._end_effector == 'hand':
+            _sep()
+
+        # ── ROBÔ CR10 ─────────────────────────────────────────────────
+        conn_rob = tk.Frame(mid, bg=HEADER)
+        conn_rob.pack(side='left')
+        _group_lbl(conn_rob, 'ROBÔ CR10')
+        self._robot_ip_var = tk.StringVar(value=self._robot_cfg['robot_ip'])
+        tk.Entry(conn_rob, textvariable=self._robot_ip_var,
+                  width=13, font=FONT_MONO_S, bg='white', fg=TEXT,
+                  relief='flat', bd=0, highlightthickness=1,
+                  highlightbackground=BORDER, highlightcolor=PRIMARY,
+                  justify='center'
+                  ).pack(side='left', padx=(0, 6), ipady=4)
         self._robot_connect_btn = _hdr_btn(
             conn_rob, '⚡', 'Conectar', self._connect_real_robot,
-            bg=PRIMARY, fg='white', font=FONT_LBL, padx=14, pady=5)
-        self._robot_connect_btn.grid(row=1, column=2, sticky='w', padx=(0, 8))
+            bg=PRIMARY, fg='white', font=FONT_LBL, padx=12, pady=5)
+        self._robot_connect_btn.pack(side='left', padx=(0, 6))
         self._robot_mode_var = tk.StringVar(value=self._robot_cfg['robot_mode'])
         # `_robot_mode` (estado interno) deve seguir o valor carregado.
         self._robot_mode = self._robot_cfg['robot_mode']
@@ -654,22 +567,21 @@ class PalpationGUI(Node):
         mode_menu['menu'].config(bg=PANEL, fg=TEXT, font=FONT_SMALL,
                                    activebackground=PRIMARY,
                                    activeforeground='white')
-        mode_menu.grid(row=1, column=3, sticky='w')
+        mode_menu.pack(side='left')
 
-        # ── ESP32 / LOAD CELL ─────────────────────────────────────────────
-        # Só aparece no modo `touch_tool` (célula de carga faz parte do TCP).
+        # ── ESP32 / LOAD CELL — só no modo `touch_tool` ───────────────
+        if self._end_effector == 'touch_tool':
+            _sep()
         conn_esp = tk.Frame(mid, bg=HEADER)
         if self._end_effector == 'touch_tool':
-            conn_esp.pack(side='left', padx=(28, 0))
-        tk.Label(conn_esp, text='LOAD CELL (ESP32)', font=FONT_SMALL,
-                 bg=HEADER, fg='#cbd5e1'
-                 ).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
+            conn_esp.pack(side='left')
+        _group_lbl(conn_esp, 'LOAD CELL (ESP32)')
         self._esp32_dot_lbl = tk.Label(
             conn_esp, text='●', font=FONT_LBL, bg=HEADER, fg=TEXT_DIM)
-        self._esp32_dot_lbl.grid(row=1, column=0, sticky='w')
+        self._esp32_dot_lbl.pack(side='left')
         self._esp32_status_lbl = tk.Label(
             conn_esp, text='OFFLINE', font=FONT_LBL, bg=HEADER, fg=TEXT_DIM)
-        self._esp32_status_lbl.grid(row=1, column=1, sticky='w', padx=(4, 0))
+        self._esp32_status_lbl.pack(side='left', padx=(4, 0))
 
     # ── Corpo: Notebook com 2 abas ───────────────────────────────────
     def _build_body(self):
@@ -777,16 +689,39 @@ class PalpationGUI(Node):
 
         params_card = self._card(col_left, 'Parâmetros da Palpação')
 
-        self.speed_var      = tk.DoubleVar(value=SPEED_DEFAULT)
-        self.depth_var      = tk.DoubleVar(value=DEPTH_DEFAULT)
-        self.force_sp_var   = tk.DoubleVar(value=FORCE_SP_DEFAULT)
-        self.pid_kp_var     = tk.DoubleVar(value=PID_KP_DEFAULT)
-        self.pid_ki_var     = tk.DoubleVar(value=PID_KI_DEFAULT)
-        self.pid_kd_var     = tk.DoubleVar(value=PID_KD_DEFAULT)
-        self.slide_dist_var = tk.DoubleVar(value=SLIDE_DIST_DEFAULT)
-        self.approach_var   = tk.DoubleVar(value=APPROACH_DEFAULT)
-        self.slide_dir_var  = tk.StringVar(value='+Y')
+        # Defaults vêm do último start persistido (PALPATION_PARAMS_FILE);
+        # sem arquivo, os defaults de fábrica.
+        sv = self._palp_saved
 
+        def _f(key, default):
+            try:
+                return float(sv.get(key, default))
+            except (TypeError, ValueError):
+                return default
+
+        self.speed_var      = tk.DoubleVar(value=_f('speed', SPEED_DEFAULT))
+        self.depth_var      = tk.DoubleVar(value=_f('depth', DEPTH_DEFAULT))
+        # IntVar: força e repetições aceitam apenas números naturais —
+        # o slider faz snap para inteiro via `integer=True` no _param_row.
+        self.force_sp_var   = tk.IntVar(value=int(_f('force_sp',
+                                                     FORCE_SP_DEFAULT)))
+        self.pid_kp_var     = tk.DoubleVar(value=_f('kp', PID_KP_DEFAULT))
+        self.pid_ki_var     = tk.DoubleVar(value=_f('ki', PID_KI_DEFAULT))
+        self.pid_kd_var     = tk.DoubleVar(value=_f('kd', PID_KD_DEFAULT))
+        self.slide_dist_var = tk.DoubleVar(value=_f('slide_dist',
+                                                    SLIDE_DIST_DEFAULT))
+        self.approach_var   = tk.DoubleVar(value=_f('approach',
+                                                    APPROACH_DEFAULT))
+        self.slide_dir_var  = tk.StringVar(
+            value=str(sv.get('slide_dir', '+Y')))
+        self.repeats_var    = tk.IntVar(value=int(_f('repeats',
+                                                     REPEAT_DEFAULT)))
+        # Estabilização do HOLD (defaults espelham o explorer).
+        self.hold_tol_var     = tk.DoubleVar(value=_f('hold_tol', 0.15))
+        self.hold_stable_var  = tk.DoubleVar(value=_f('hold_stable', 1.0))
+        self.hold_timeout_var = tk.DoubleVar(value=_f('hold_timeout', 12.0))
+
+        # Parâmetros essenciais — sempre visíveis.
         self._param_row(params_card, label='Velocidade de Deslizamento',
                          unit='mm/s', var=self.speed_var,
                          vmin=SPEED_MIN, vmax=SPEED_MAX, step=1.0,
@@ -798,31 +733,67 @@ class PalpationGUI(Node):
                               'Máximo de segurança: 300 mm.')
         self._param_row(params_card, label='Força Alvo (Setpoint do PID)',
                          unit='N', var=self.force_sp_var,
-                         vmin=FORCE_SP_MIN, vmax=FORCE_SP_MAX, step=0.5,
+                         vmin=FORCE_SP_MIN, vmax=FORCE_SP_MAX, step=1,
+                         integer=True,
                          hint='Compressão mantida pelo PID na descida, no '
-                              'HOLD e no deslizamento. Máximo: 10 N. '
-                              'Medição cancelada se exceder 15 N.')
-        self._param_row(params_card, label='Profundidade Máxima de Descida',
+                              'HOLD e no deslizamento. Apenas valores '
+                              'inteiros (1–10 N). Medição cancelada se '
+                              'exceder 15 N.')
+        self._param_row(params_card, label='Repetições do Experimento',
+                         unit='×', var=self.repeats_var,
+                         vmin=REPEAT_MIN, vmax=REPEAT_MAX, step=1,
+                         integer=True,
+                         hint='Quantos ciclos completos (descida → '
+                              'deslizamento → recuo) executar em sequência '
+                              'automaticamente. A fase mostra o ciclo atual.')
+
+        self._build_slide_dir_selector(params_card)
+
+        # Parâmetros avançados — recolhidos por padrão (segurança + PID).
+        adv = self._collapsible(params_card, 'Parâmetros avançados')
+        self._param_row(adv, label='Profundidade Máxima de Descida',
                          unit='mm', var=self.depth_var,
                          vmin=DEPTH_MIN, vmax=DEPTH_MAX, step=0.5,
                          hint='Curso máximo de segurança — a descida termina '
                               'antes, ao atingir a Força Alvo.')
-        self._param_row(params_card, label='PID — Kp',
+        self._param_row(adv, label='PID — Kp',
                          unit='mm/s/N', var=self.pid_kp_var,
                          vmin=PID_KP_MIN, vmax=PID_KP_MAX, step=0.1,
                          hint='Ganho proporcional do PID de força.')
-        self._param_row(params_card, label='PID — Ki',
+        self._param_row(adv, label='PID — Ki',
                          unit='mm/s/N·s', var=self.pid_ki_var,
                          vmin=PID_KI_MIN, vmax=PID_KI_MAX, step=0.1,
                          hint='Ganho integral — zera o erro de regime. '
                               'Reduza se houver oscilação no setpoint.')
-        self._param_row(params_card, label='PID — Kd',
+        self._param_row(adv, label='PID — Kd',
                          unit='mm·s/N/s', var=self.pid_kd_var,
                          vmin=PID_KD_MIN, vmax=PID_KD_MAX, step=0.05,
                          hint='Ganho derivativo. Padrão 0 (PI): a derivada '
                               'amplifica o ruído da célula de carga.')
-
-        self._build_slide_dir_selector(params_card)
+        self._param_row(adv, label='Velocidade de Aproximação',
+                         unit='mm/s', var=self.approach_var,
+                         vmin=APPROACH_MIN, vmax=APPROACH_MAX, step=5.0,
+                         hint='Velocidade máxima da descida (DESCENDING) e '
+                              'do recuo (RETRACT). O perfil desacelera para '
+                              '20% deste valor perto do contato.')
+        self._param_row(adv, label='HOLD — Tolerância da Banda',
+                         unit='N', var=self.hold_tol_var,
+                         vmin=0.05, vmax=2.0, step=0.05,
+                         hint='Meia-largura da banda em torno do setpoint '
+                              'dentro da qual a força é considerada '
+                              'estabilizada. Aumente se a célula for ruidosa.')
+        self._param_row(adv, label='HOLD — Janela Estável',
+                         unit='s', var=self.hold_stable_var,
+                         vmin=0.2, vmax=5.0, step=0.1,
+                         hint='Tempo CONTÍNUO dentro da banda exigido para '
+                              'liberar o deslizamento. Sair da banda '
+                              'reinicia a contagem.')
+        self._param_row(adv, label='HOLD — Timeout',
+                         unit='s', var=self.hold_timeout_var,
+                         vmin=2.0, vmax=60.0, step=1.0,
+                         hint='Teto de espera pela estabilização. Estourou: '
+                              'o experimento prossegue com aviso (o PID do '
+                              'SLIDING continua corrigindo).')
 
         # ── Coluna direita: botão de início (fixado no fundo) + feedback FT ──
         # O botão é empacotado primeiro com side='bottom' para ficar visível
@@ -836,6 +807,15 @@ class PalpationGUI(Node):
             font=FONT_HEAD, relief='flat', bd=0, padx=18, pady=10,
             cursor='hand2')
         self.stop_palp_btn.pack(fill='x', pady=(0, 6))
+        # ⏸/▶ — pausa segura: o explorer congela a posição atual e, em modo
+        # MIRROR, o braço real recebe pause()/resume() do driver.
+        self.pause_btn = tk.Button(
+            btn_wrap, text='⏸  Pausar',
+            command=self._toggle_pause, bg=BTN_NEUTRAL, fg=TEXT,
+            activebackground=_shade(BTN_NEUTRAL, -0.08), activeforeground=TEXT,
+            font=FONT_HEAD, relief='flat', bd=0, padx=18, pady=10,
+            cursor='hand2')
+        self.pause_btn.pack(fill='x', pady=(0, 6))
         self.start_btn = tk.Button(
             btn_wrap, text='▶  Iniciar Palpação',
             command=self._on_start, bg=PRIMARY, fg='white',
@@ -895,6 +875,17 @@ class PalpationGUI(Node):
             timerow, text='—', font=FONT_HEAD, bg=PANEL, fg=TEXT_MUTED)
         self.timer_lbl.pack(side='right')
 
+        # ── Sparkline da força (últimos 30 s) ─────────────────────────
+        # tk.Canvas com desenho puro (linhas) — sem fontes novas, portanto
+        # imune ao bug do fontconfig descrito em ui_helpers.
+        tk.Frame(fb_card, bg=BORDER, height=1).pack(fill='x', pady=8)
+        tk.Label(fb_card, text='Força — últimos 30 s', font=FONT_SMALL,
+                 bg=PANEL, fg=TEXT_MUTED, anchor='w').pack(fill='x')
+        self.spark_canvas = tk.Canvas(
+            fb_card, height=64, bg=PANEL, highlightthickness=1,
+            highlightbackground=BORDER)
+        self.spark_canvas.pack(fill='x', pady=(4, 2))
+
     # ── Aba "Controle Manual" ────────────────────────────────────────
     def _build_manual_tab(self, root: tk.Frame):
         """Constrói a aba de jog manual: tempo de movimento + 6 sliders do
@@ -908,17 +899,10 @@ class PalpationGUI(Node):
         body.pack(fill='both', expand=True)
 
         # ── Top: controle de velocidade (SpeedFactor %) ─────────────────
-        speed_card = tk.Frame(body, bg=PANEL,
-                               highlightthickness=1,
-                               highlightbackground=BORDER,
-                               highlightcolor=BORDER)
-        speed_card.pack(fill='x', pady=(0, 10))
-        tk.Label(speed_card, text='Velocidade de Movimento',
-                 bg=PANEL, fg=TEXT, font=FONT_HEAD,
-                 anchor='w').pack(fill='x', padx=14, pady=(10, 6))
-        tk.Frame(speed_card, bg=BORDER, height=1).pack(fill='x')
-        speed_inner = tk.Frame(speed_card, bg=PANEL)
-        speed_inner.pack(fill='x', padx=14, pady=10)
+        speed_wrap = tk.Frame(body, bg=BG)
+        speed_wrap.pack(fill='x', pady=(0, 10))
+        speed_inner = self._card(speed_wrap, 'Velocidade de Movimento',
+                                 expand=False)
 
         self.speed_factor_var = tk.DoubleVar(value=SPEED_FACTOR_DEFAULT)
         self._param_row(speed_inner, label='Velocidade', unit='%',
@@ -977,7 +961,17 @@ class PalpationGUI(Node):
                    activeforeground=PRIMARY,
                    font=FONT_LBL, relief='flat', bd=0, padx=14, pady=6,
                    cursor='hand2'
-                   ).pack(side='left', fill='x', expand=True)
+                   ).pack(side='left', fill='x', expand=True, padx=(0, 4))
+        # ⊥ = solver de pulso: ajusta joint4/joint5 para o TCP ficar
+        # exatamente perpendicular à mesa, mantendo joint1-3 e joint6.
+        tk.Button(btns_arm2, text='⊥  TCP ⊥ Mesa',
+                   command=self._solve_tcp_perpendicular,
+                   bg=_shade(OK, 0.25), fg=OK,
+                   activebackground=_shade(OK, 0.15),
+                   activeforeground=OK,
+                   font=FONT_LBL, relief='flat', bd=0, padx=14, pady=6,
+                   cursor='hand2'
+                   ).pack(side='left', fill='x', expand=True, padx=(4, 0))
 
         # ── Coluna direita: adapta ao efetuador final ─────────────────
         #   hand       → controle da mão COVVI (sliders + presets + grips)
@@ -1049,15 +1043,14 @@ class PalpationGUI(Node):
         grip_menu['menu'].config(bg=PANEL, fg=TEXT, font=FONT_MONO,
                                  activebackground=PRIMARY, activeforeground='white')
         grip_menu.pack(side='left', fill='x', expand=True, ipady=2)
-        tk.Button(grow, text='✓  Aplicar', command=self._apply_covvi_grip,
-                   bg=PRIMARY, fg='white', activebackground=PRIMARY_HV,
-                   activeforeground='white', font=FONT_LBL, relief='flat',
-                   bd=0, padx=12, pady=6, cursor='hand2'
-                   ).pack(side='left', padx=(6, 0))
-        tk.Label(grips_card,
-                 text='Move o sim (juntas) + envia SetCurrentGrip ao real (ECI).',
-                 font=FONT_SMALL, bg=PANEL, fg=TEXT_MUTED, anchor='w'
-                 ).pack(fill='x', pady=(6, 0))
+        apply_btn = tk.Button(
+            grow, text='✓  Aplicar', command=self._apply_covvi_grip,
+            bg=PRIMARY, fg='white', activebackground=PRIMARY_HV,
+            activeforeground='white', font=FONT_LBL, relief='flat',
+            bd=0, padx=12, pady=6, cursor='hand2')
+        apply_btn.pack(side='left', padx=(6, 0))
+        _Tooltip(apply_btn,
+                 'Move o sim (juntas) + envia SetCurrentGrip ao real (ECI).')
 
     def _build_manual_lc_panel(self, col_hand: tk.Frame) -> None:
         """Coluna direita do Controle Manual no modo `touch_tool`: leitura ao
@@ -1709,6 +1702,80 @@ class PalpationGUI(Node):
         finally:
             self._suppressing = False
         self._publish_arm_from_sliders()
+
+    def _solve_tcp_perpendicular(self):
+        """Solver de pulso: dado joint1-3 dos sliders, calcula joint4/joint5
+        para que o eixo z do Link6 (eixo do TCP — touch tool ou mão) fique
+        exatamente perpendicular à mesa, apontando para baixo (−Z mundo).
+
+        joint6 gira em torno do próprio eixo do TCP e não altera a direção
+        dele — é preservado. Solução analítica fechada: com z6 expresso no
+        frame 3 como Rz(q4−π/2)·Ry(−q5)·ez = [−s5·cos(q4−π/2),
+        −s5·sin(q4−π/2), c5], iguala-se a v = R03ᵀ·(−Z) e extrai-se
+        q5 = atan2(±s5, v_z), q4 = atan2(∓v_y, ∓v_x) + π/2. Dos dois ramos
+        do pulso, escolhe o mais próximo da pose atual (continuidade).
+        """
+        if _fk_partial is None:
+            self._set_status('kinematics indisponível — solver desabilitado.',
+                             DANGER)
+            return
+        try:
+            q_deg = {j: float(self.arm_sliders[j].get()) for j in ARM_JOINTS}
+        except (ValueError, tk.TclError):
+            self._set_status('Sliders inválidos.', DANGER)
+            return
+        q = np.array([_math.radians(q_deg[j]) for j in ARM_JOINTS])
+
+        R03 = _fk_partial(q, 3)[:3, :3]
+        v = R03.T @ np.array([0.0, 0.0, -1.0])   # −Z mundo no frame 3
+        s5 = _math.hypot(float(v[0]), float(v[1]))
+
+        if s5 < 1e-9:
+            # Degenerado: −Z mundo coincide com o eixo de joint5 (z do
+            # frame 3). Se v_z>0, q5=0 já alinha (qualquer q4 serve);
+            # caso contrário seria q5=±180°, fora do alcance físico.
+            if float(v[2]) > 0.0:
+                sols = [(q[3], 0.0)]
+            else:
+                self._set_status(
+                    'TCP ⊥ mesa inalcançável com joint1-3 atuais '
+                    '(exigiria joint5 = ±180°).', DANGER)
+                return
+        else:
+            sols = []
+            for sgn in (+1.0, -1.0):
+                q5 = _math.atan2(sgn * s5, float(v[2]))
+                q4 = _math.atan2(-sgn * float(v[1]),
+                                 -sgn * float(v[0])) + _math.pi / 2
+                q4 = (q4 + _math.pi) % (2 * _math.pi) - _math.pi
+                sols.append((q4, q5))
+
+        # Filtra por limites dos sliders e escolhe o ramo mais próximo
+        # da pose atual do pulso (evita flip desnecessário de 180°).
+        lo4, hi4 = ARM_LIMITS_DEG['joint4']
+        lo5, hi5 = ARM_LIMITS_DEG['joint5']
+        feasible = [
+            (q4, q5) for q4, q5 in sols
+            if lo4 <= _math.degrees(q4) <= hi4
+            and lo5 <= _math.degrees(q5) <= hi5
+        ]
+        if not feasible:
+            self._set_status('TCP ⊥ mesa fora dos limites de joint4/joint5.',
+                             DANGER)
+            return
+        q4, q5 = min(feasible,
+                     key=lambda s: abs(s[0] - q[3]) + abs(s[1] - q[4]))
+
+        self._suppressing = True
+        try:
+            self.arm_sliders['joint4'].set(round(_math.degrees(q4), 2))
+            self.arm_sliders['joint5'].set(round(_math.degrees(q5), 2))
+        finally:
+            self._suppressing = False
+        self._publish_arm_from_sliders()
+        self._set_status(
+            f'TCP ⊥ mesa: joint4={_math.degrees(q4):+.1f}° / '
+            f'joint5={_math.degrees(q5):+.1f}°.', OK)
 
     # ── Home customizada — load / save em ~/.config/touch_pack/ ──────
     def _load_home_pose(self) -> None:
@@ -2451,7 +2518,28 @@ class PalpationGUI(Node):
         else:
             self._connect_force_receiver()
 
+    def _external_force_receiver_alive(self) -> bool:
+        """True se já existe um force_receiver publicando /load_cell/voltage
+        (ex.: o nó iniciado pelo launch). Spawnar um segundo duplicaria o
+        bind UDP — com SO_REUSEPORT o kernel reparte os datagramas entre os
+        dois sockets e cada nó publica a ~metade da taxa, possivelmente com
+        calibrações divergentes. Nesse caso a GUI usa o existente."""
+        try:
+            return self.count_publishers('/load_cell/voltage') > 0
+        except Exception:
+            return False
+
     def _connect_force_receiver(self) -> None:
+        if self._external_force_receiver_alive():
+            self._force_rx_proc = None
+            self._force_rx_should_be_alive = True   # liga o display ONLINE
+            self._force_rx_btn.config(
+                text='✓  Receptor externo', state='normal',
+                bg=BTN_NEUTRAL, fg=TEXT)
+            self._force_rx_status_lbl.config(
+                text='force_receiver já ativo (launch) — usando o existente',
+                fg=OK)
+            return
         cmd = ['ros2', 'run', 'touch_pack', 'force_receiver']
         try:
             self._force_rx_proc = subprocess.Popen(
@@ -3386,26 +3474,65 @@ class PalpationGUI(Node):
         return result[0]
 
     def _build_statusbar(self):
-        self.status_var = tk.StringVar(value='pronto.')
-        bar = tk.Frame(self.root, bg=PANEL, height=28)
+        self.status_var = tk.StringVar(value='Pronto.')
+        bar = tk.Frame(self.root, bg=PANEL)
         bar.pack(side='bottom', fill='x')
+        tk.Frame(bar, bg=BORDER, height=1).pack(fill='x', side='top')
+        self._status_dot = tk.Label(bar, text='●', bg=PANEL, fg=OK,
+                                     font=FONT_SMALL)
+        self._status_dot.pack(side='left', padx=(18, 6), pady=3)
         self._status_lbl = tk.Label(bar, textvariable=self.status_var,
                                      bg=PANEL, fg=TEXT_MUTED,
                                      anchor='w', font=FONT_LBL)
-        self._status_lbl.pack(side='left', padx=18)
+        self._status_lbl.pack(side='left')
 
     # ── helpers UI ────────────────────────────────────────────────────
-    def _card(self, parent, title: str) -> tk.Frame:
+    def _card(self, parent, title: str, *, expand: bool = True) -> tk.Frame:
+        """Card com cabeçalho de barra de acento (sem divisor pesado)."""
         card = tk.Frame(parent, bg=PANEL,
                          highlightthickness=1,
                          highlightbackground=BORDER,
                          highlightcolor=BORDER)
-        card.pack(fill='both', expand=True)
-        tk.Label(card, text=title, bg=PANEL, fg=TEXT, font=FONT_HEAD,
-                 anchor='w').pack(fill='x', padx=14, pady=(10, 6))
-        tk.Frame(card, bg=BORDER, height=1).pack(fill='x')
+        card.pack(fill='both' if expand else 'x', expand=expand)
+        head = tk.Frame(card, bg=PANEL)
+        head.pack(fill='x', padx=14, pady=(12, 6))
+        tk.Frame(head, bg=PRIMARY, width=4).pack(side='left', fill='y',
+                                                  padx=(0, 8))
+        tk.Label(head, text=title, bg=PANEL, fg=TEXT, font=FONT_HEAD,
+                 anchor='w').pack(side='left')
         inner = tk.Frame(card, bg=PANEL)
-        inner.pack(fill='both', expand=True, padx=14, pady=10)
+        inner.pack(fill='both', expand=True, padx=14, pady=(2, 12))
+        return inner
+
+    def _collapsible(self, parent, title: str,
+                      expanded: bool = False) -> tk.Frame:
+        """Seção expansível (disclosure ▸/▾) para parâmetros avançados —
+        mantém o card principal enxuto sem remover funcionalidade."""
+        wrap = tk.Frame(parent, bg=PANEL)
+        wrap.pack(fill='x', pady=(10, 0))
+        tk.Frame(wrap, bg=BORDER, height=1).pack(fill='x', pady=(0, 6))
+        btn = tk.Button(wrap, bg=PANEL, fg=TEXT_MUTED,
+                        activebackground=PANEL, activeforeground=TEXT,
+                        font=FONT_LBL, relief='flat', bd=0, anchor='w',
+                        highlightthickness=0, cursor='hand2', padx=0)
+        btn.pack(fill='x')
+        inner = tk.Frame(wrap, bg=PANEL)
+        state = {'open': bool(expanded)}
+
+        def _render():
+            arrow = '▾' if state['open'] else '▸'
+            btn.config(text=f'{arrow}  {title}')
+            if state['open']:
+                inner.pack(fill='x', pady=(4, 0))
+            else:
+                inner.pack_forget()
+
+        def _toggle():
+            state['open'] = not state['open']
+            _render()
+
+        btn.config(command=_toggle)
+        _render()
         return inner
 
     def _kv(self, parent, key: str, val: str) -> tk.Label:
@@ -3420,8 +3547,15 @@ class PalpationGUI(Node):
         """Segmented control (4 botões mutex) para a direção do sliding."""
         row = tk.Frame(parent, bg=PANEL); row.pack(fill='x', pady=(8, 2))
         top = tk.Frame(row, bg=PANEL); top.pack(fill='x')
-        tk.Label(top, text='Direção do Deslizamento', font=FONT_LBL,
-                 bg=PANEL, fg=TEXT, anchor='w').pack(side='left')
+        dir_lbl = tk.Label(top, text='Direção do Deslizamento', font=FONT_LBL,
+                           bg=PANEL, fg=TEXT, anchor='w')
+        dir_lbl.pack(side='left')
+        info = tk.Label(top, text='ⓘ', font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM)
+        info.pack(side='left', padx=(5, 0))
+        _hint = ('Arrasto Cartesiano retilíneo em XY (mundo); as juntas se '
+                 'coordenam para preservar Z e orientação.')
+        _Tooltip(dir_lbl, _hint)
+        _Tooltip(info, _hint)
         btns = tk.Frame(row, bg=PANEL); btns.pack(fill='x', pady=(4, 2))
         self._slide_dir_btns: dict[str, tk.Button] = {}
         for d in ('+X', '-X', '+Y', '-Y'):
@@ -3435,11 +3569,6 @@ class PalpationGUI(Node):
             b.pack(side='left', fill='x', expand=True,
                    padx=(0 if d == '+X' else 4, 0))
             self._slide_dir_btns[d] = b
-        tk.Label(row,
-                 text='Arrasto Cartesiano retilíneo em XY (mundo); as '
-                      'juntas se coordenam para preservar Z e orientação.',
-                 font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM,
-                 anchor='w').pack(fill='x', pady=(2, 0))
         self._on_slide_dir(self.slide_dir_var.get())
 
     def _on_slide_dir(self, d: str) -> None:
@@ -3453,11 +3582,42 @@ class PalpationGUI(Node):
                 b.config(bg=BTN_NEUTRAL, fg=TEXT)
 
     def _param_row(self, parent, *, label, unit, var,
-                    vmin, vmax, step, hint=''):
-        row = tk.Frame(parent, bg=PANEL); row.pack(fill='x', pady=(4, 2))
+                    vmin, vmax, step, hint='', integer=False):
+        """Linha de parâmetro: label (+ⓘ tooltip) + unidade + spinbox +
+        slider. O texto de ajuda vira tooltip no hover — sem ruído inline.
+
+        integer=True: aceita apenas números naturais — o ttk.Scale escreve
+        doubles na variável Tcl ao arrastar. O snap NÃO pode reescrever a
+        variável dentro do próprio trace: o Tcl suprime os demais traces
+        durante a execução de um trace, então o Spinbox nunca seria
+        notificado e exibiria o valor fracionário antigo. Por isso o trace
+        apenas agenda `after_idle(_snap)`: fora do contexto do trace, a
+        reescrita dispara todos os traces e o display sincroniza. A
+        comparação é TEXTUAL (str) para também normalizar "3.0" → "3",
+        que passaria ileso numa comparação numérica (3.0 == 3)."""
+        row = tk.Frame(parent, bg=PANEL); row.pack(fill='x', pady=(5, 3))
+        if integer:
+            def _snap():
+                name = str(var)
+                try:
+                    raw = self.root.tk.globalgetvar(name)
+                    iv = int(round(float(raw)))
+                    if str(raw) != str(iv):
+                        var.set(iv)
+                except (ValueError, tk.TclError):
+                    pass   # campo vazio/parcial ou widget destruído
+            var.trace_add('write',
+                          lambda *_a: self.root.after_idle(_snap))
         top = tk.Frame(row, bg=PANEL); top.pack(fill='x')
-        tk.Label(top, text=label, font=FONT_LBL, bg=PANEL, fg=TEXT,
-                 anchor='w').pack(side='left')
+        lbl = tk.Label(top, text=label, font=FONT_LBL, bg=PANEL, fg=TEXT,
+                       anchor='w')
+        lbl.pack(side='left')
+        if hint:
+            info = tk.Label(top, text='ⓘ', font=FONT_SMALL, bg=PANEL,
+                            fg=TEXT_DIM)
+            info.pack(side='left', padx=(5, 0))
+            _Tooltip(info, hint)
+            _Tooltip(lbl, hint)
         tk.Spinbox(top, from_=vmin, to=vmax, increment=step,
                     textvariable=var, width=8, font=FONT_MONO,
                     justify='right', relief='flat', bd=0,
@@ -3470,10 +3630,6 @@ class PalpationGUI(Node):
                    orient='horizontal',
                    style='Tactile.Horizontal.TScale'
                    ).pack(fill='x', pady=(2, 0))
-        if hint:
-            tk.Label(row, text=hint, font=FONT_SMALL,
-                     bg=PANEL, fg=TEXT_DIM, anchor='w'
-                     ).pack(fill='x', pady=(0, 4))
 
     # ──────────────────────────────────────────────────────────────────
     # MÃO COVVI — conexão / ECI / PWR
@@ -4320,23 +4476,16 @@ class PalpationGUI(Node):
             self._last_wrench_ts = (
                 msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
 
-    def _cb_status(self, msg: String):
-        try:
-            data = json.loads(msg.data)
-        except json.JSONDecodeError:
-            return
+    def _cb_status(self, msg: PalpationStatus):
         with self._lock:
-            new_phase = str(data.get('phase', 'IDLE'))
-            if new_phase != self._latest_phase:
+            if msg.phase != self._latest_phase:
                 self._phase_t_start = time.time()
-            self._latest_phase = new_phase
-            # Atualiza durações esperadas só quando o explorer publicar
-            # (mantém defaults razoáveis quando os campos faltam).
-            try:
-                self._latest_speed_mms = float(data.get(
-                    'speed_mms', self._latest_speed_mms))
-            except (TypeError, ValueError):
-                pass
+            self._latest_phase = msg.phase
+            self._latest_cycle = int(msg.cycle)
+            self._latest_cycles_total = int(msg.cycles_total)
+            self._paused = bool(msg.paused)
+            if msg.speed_mms > 0.0:
+                self._latest_speed_mms = float(msg.speed_mms)
 
     # ──────────────────────────────────────────────────────────────────
     # Refresh do painel direito (Tk thread, 10 Hz)
@@ -4348,6 +4497,9 @@ class PalpationGUI(Node):
             tgt_force = FORCE_SP_DEFAULT
         with self._lock:
             phase     = self._latest_phase
+            cycle     = self._latest_cycle
+            cyc_total = self._latest_cycles_total
+            paused    = self._paused
             f_net     = self._lc_force_net        # positivo = compressão
             lc_ts     = self._lc_force_net_ts
             lc_v      = self._lc_voltage
@@ -4391,7 +4543,31 @@ class PalpationGUI(Node):
             'HOLD': OK, 'SLIDING': PRIMARY, 'RETRACT': TEXT_MUTED,
             'DONE': OK, 'ABORTED': DANGER,
         }.get(phase, TEXT)
-        self.phase_lbl.config(text=phase, fg=phase_color)
+        phase_txt = phase
+        if (cyc_total > 1 and cycle > 0
+                and phase not in ('IDLE', 'DONE', 'ABORTED')):
+            phase_txt = f'{phase} · {cycle}/{cyc_total}'
+        if paused:
+            phase_txt += '  ⏸ PAUSADO'
+            phase_color = WARN
+        self.phase_lbl.config(text=phase_txt, fg=phase_color)
+
+        # Botão Pausar/Retomar segue o estado vindo do explorer.
+        if paused:
+            self.pause_btn.config(
+                text='▶  Retomar', bg=OK, fg='white',
+                activebackground=_shade(OK, -0.08),
+                activeforeground='white')
+        else:
+            self.pause_btn.config(
+                text='⏸  Pausar', bg=BTN_NEUTRAL, fg=TEXT,
+                activebackground=_shade(BTN_NEUTRAL, -0.08),
+                activeforeground=TEXT)
+
+        # Sparkline: alimenta o histórico apenas com leituras frescas.
+        if has_data:
+            self._spark_data.append((time.time(), f_net))
+        self._draw_sparkline(tgt_force)
 
         # Cronômetro só por label (sem Progressbar). SLIDING mostra só
         # tempo decorrido (sem distância fixa); CONTACT/RETRACT/CALIBRATING idem.
@@ -4406,6 +4582,91 @@ class PalpationGUI(Node):
     # ──────────────────────────────────────────────────────────────────
     # Disparo da palpação
     # ──────────────────────────────────────────────────────────────────
+    def _toggle_pause(self) -> None:
+        """Pausa/retoma o experimento: o explorer segura a posição atual
+        (_pause_gate) e, com o braço real conectado, pause()/resume() do
+        driver congela/retoma a fila de movimento do controlador."""
+        with self._lock:
+            phase = self._latest_phase
+            paused = self._paused
+        if phase in ('IDLE', 'DONE', 'ABORTED'):
+            self._set_status('Nada para pausar — experimento inativo.',
+                             TEXT_DIM)
+            return
+        new_state = not paused
+        msg = Bool(); msg.data = new_state
+        self._pause_pub.publish(msg)
+        if self._robot_connected and self._real_driver is not None:
+            try:
+                if new_state:
+                    self._real_driver.pause()
+                else:
+                    self._real_driver.resume()
+            except CR10RealDriverError as exc:
+                self.get_logger().warning(f'pause/resume real falhou: {exc}')
+        # Feedback imediato (o status do explorer confirma em seguida).
+        with self._lock:
+            self._paused = new_state
+        self._set_status(
+            'Experimento pausado — posição mantida.' if new_state
+            else 'Experimento retomado.',
+            WARN if new_state else OK)
+
+    # ── Persistência dos parâmetros da palpação ──────────────────────
+    def _load_palp_params(self) -> dict:
+        try:
+            with open(PALPATION_PARAMS_FILE) as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _save_palp_params(self, vals: dict) -> None:
+        """Persiste os valores da aba Palpação usados no último start —
+        viram os defaults da próxima sessão (como IPs/home já fazem)."""
+        try:
+            os.makedirs(os.path.dirname(PALPATION_PARAMS_FILE), exist_ok=True)
+            with open(PALPATION_PARAMS_FILE, 'w') as fh:
+                json.dump(vals, fh, indent=2, sort_keys=True)
+        except OSError as exc:
+            self.get_logger().warning(f'Falha ao salvar parâmetros: {exc}')
+
+    def _draw_sparkline(self, target: float) -> None:
+        """Redesenha o gráfico de força (Canvas puro, 10 Hz)."""
+        cv = getattr(self, 'spark_canvas', None)
+        if cv is None:
+            return
+        try:
+            w = cv.winfo_width()
+            h = cv.winfo_height()
+            cv.delete('all')
+        except tk.TclError:
+            return
+        if w <= 10 or h <= 10:
+            return
+        now = time.time()
+        window = 30.0
+        pts = [(t, f) for t, f in self._spark_data if now - t <= window]
+        forces = [f for _, f in pts]
+        f_hi = max([target * 1.3, 1.0] + forces)
+        f_lo = min([0.0] + forces)
+        rng = max(f_hi - f_lo, 0.5)
+
+        def xy(t: float, f: float) -> tuple[float, float]:
+            x = w - (now - t) / window * w
+            y = (h - 4) - (f - f_lo) / rng * (h - 8)
+            return x, y
+
+        y_zero = xy(now, 0.0)[1]
+        cv.create_line(0, y_zero, w, y_zero, fill=BORDER)
+        y_tgt = xy(now, target)[1]
+        cv.create_line(0, y_tgt, w, y_tgt, fill=DANGER, dash=(3, 3))
+        if len(pts) >= 2:
+            coords: list[float] = []
+            for t, f in pts:
+                coords.extend(xy(t, f))
+            cv.create_line(*coords, fill=PRIMARY, width=2)
+
     def _on_stop_palpation(self) -> None:
         """Interrompe o experimento em curso: publica /palpation/stop e
         pausa o braço real imediatamente via Halt()."""
@@ -4457,6 +4718,15 @@ class PalpationGUI(Node):
             approach   = self._clamp_var(self.approach_var,
                                           APPROACH_MIN, APPROACH_MAX,
                                           default=APPROACH_DEFAULT)
+            repeats    = self._clamp_var(self.repeats_var,
+                                          REPEAT_MIN, REPEAT_MAX,
+                                          default=REPEAT_DEFAULT)
+            hold_tol     = self._clamp_var(self.hold_tol_var, 0.05, 2.0,
+                                            default=0.15)
+            hold_stable  = self._clamp_var(self.hold_stable_var, 0.2, 5.0,
+                                            default=1.0)
+            hold_timeout = self._clamp_var(self.hold_timeout_var, 2.0, 60.0,
+                                            default=12.0)
         finally:
             self._suppressing = False
         if None in (speed, depth, force_sp, pid_kp, pid_ki, pid_kd,
@@ -4466,6 +4736,16 @@ class PalpationGUI(Node):
         sf_pct = self._clamp_var(self.speed_factor_var,
                                   SPEED_FACTOR_MIN, SPEED_FACTOR_MAX,
                                   default=SPEED_FACTOR_DEFAULT)
+        # Persiste os valores em unidades da GUI — defaults da próxima sessão.
+        self._save_palp_params({
+            'speed': float(speed), 'depth': float(depth),
+            'force_sp': int(force_sp), 'repeats': int(repeats),
+            'kp': float(pid_kp), 'ki': float(pid_ki), 'kd': float(pid_kd),
+            'slide_dist': float(slide_dist), 'approach': float(approach),
+            'slide_dir': self.slide_dir_var.get(),
+            'hold_tol': float(hold_tol), 'hold_stable': float(hold_stable),
+            'hold_timeout': float(hold_timeout),
+        })
         payload = {
             'speed_mms':          float(speed),
             'depth_mm':           float(depth),
@@ -4477,13 +4757,16 @@ class PalpationGUI(Node):
             'slide_dist_mm':      float(slide_dist),
             'approach_speed_mms': float(approach),
             'slide_dir':          self.slide_dir_var.get(),
+            'repeats':            int(repeats if repeats is not None
+                                      else REPEAT_DEFAULT),
             'speed_factor_pct':   float(sf_pct if sf_pct is not None
                                          else SPEED_FACTOR_DEFAULT),
+            'hold_tol_n':         float(hold_tol),
+            'hold_stable_s':      float(hold_stable),
+            'hold_timeout_s':     float(hold_timeout),
             # Home customizada: explorer leva o braço PARA CÁ antes
-            # de descer. Em graus URDF, mesma chave/ordem do
-            # `_apply_arm_home`.
-            'home_deg': {j: float(self._arm_home_deg[j])
-                          for j in ARM_JOINTS},
+            # de descer. Em graus URDF, ordem joint1..joint6.
+            'home_deg': [float(self._arm_home_deg[j]) for j in ARM_JOINTS],
         }
         # Garante SpeedFactor=10% no braço real durante a palpação.
         # Velocidades altas são perigosas nesse protocolo — impõe aqui
@@ -4502,8 +4785,10 @@ class PalpationGUI(Node):
                 self.get_logger().warning(f'SpeedFactor(10) falhou: {exc}')
 
         # ── Auto-inicia o force_receiver_node se não estiver rodando ──────
+        # (próprio subprocess OU um receptor externo, ex.: o do launch).
         rx_running = (self._force_rx_proc is not None
-                      and self._force_rx_proc.poll() is None)
+                      and self._force_rx_proc.poll() is None) \
+            or self._external_force_receiver_alive()
         if not rx_running:
             self._connect_force_receiver()
             # Aguarda 1.8 s para UDP bind + primeiros pacotes, depois tara e inicia.
@@ -4530,8 +4815,22 @@ class PalpationGUI(Node):
         with self._mirror_timer_lock:
             self._mirror_last_target = None
 
-        msg = String()
-        msg.data = json.dumps(payload)
+        msg = PalpationStart()
+        msg.speed_mms          = float(payload['speed_mms'])
+        msg.depth_mm           = float(payload['depth_mm'])
+        msg.force_n            = float(payload['force_n'])
+        msg.kp                 = float(payload['kp'])
+        msg.ki                 = float(payload['ki'])
+        msg.kd                 = float(payload['kd'])
+        msg.slide_dist_mm      = float(payload['slide_dist_mm'])
+        msg.approach_speed_mms = float(payload['approach_speed_mms'])
+        msg.slide_dir          = str(payload['slide_dir'])
+        msg.repeats            = int(payload['repeats'])
+        msg.speed_factor_pct   = float(payload['speed_factor_pct'])
+        msg.home_deg           = [float(v) for v in payload['home_deg']]
+        msg.hold_tol_n         = float(payload['hold_tol_n'])
+        msg.hold_stable_s      = float(payload['hold_stable_s'])
+        msg.hold_timeout_s     = float(payload['hold_timeout_s'])
         self._start_pub.publish(msg)
         # Quando a mão real está conectada via ECI, aciona o grip FINGER
         # (Index estendido) automaticamente, já que o tactile_explorer
@@ -4541,8 +4840,11 @@ class PalpationGUI(Node):
         # (SetCurrentGrip usa velocidade interna do firmware; SetDigitPosn permite controle).
         if self._eci_enabled:
             self._schedule_eci_posn(HAND_POINT_DEG)
+        rep_txt = (f'{payload["repeats"]}× | '
+                   if payload.get('repeats', 1) > 1 else '')
         self._set_status(
-            f'/palpation/start — v={payload["speed_mms"]:.1f} mm/s, '
+            f'/palpation/start — {rep_txt}'
+            f'v={payload["speed_mms"]:.1f} mm/s, '
             f'F={payload["force_n"]:.2f} N, '
             f'dir={payload["slide_dir"]} '
             f'@ {payload["approach_speed_mms"]:.0f} mm/s | '
@@ -4555,6 +4857,8 @@ class PalpationGUI(Node):
         self.status_var.set(text)
         try:
             self._status_lbl.config(fg=color)
+            self._status_dot.config(
+                fg=color if color != TEXT_MUTED else TEXT_DIM)
         except AttributeError:
             pass  # statusbar ainda não foi construída
 

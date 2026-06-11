@@ -7,8 +7,9 @@ Argumentos (todos opcionais):
                        touch_tool → CR10 + TouchTool Square 20×20 mm; tcp_link = ponta do probe
     control_mode     sim_only | mirror | real_from_sim (default sim_only)
     robot_ip         IP do controlador CR10 real (default 192.168.5.2)
-    robot_dry_run    true = sockets não abertos (default true)
-    no_gui           true = não abrir palpation_gui (default false)
+    no_gui           true = não abrir palpation_gui (default false);
+                       com control_mode:=mirror, sobe o mirror_node
+                       standalone no lugar do espelhamento da GUI
 
 Exemplos:
     ros2 launch touch_pack tactile_cell.launch.py
@@ -17,6 +18,7 @@ Exemplos:
 """
 import os
 import re
+import tempfile
 import xacro
 
 from ament_index_python.packages import get_package_share_directory
@@ -524,8 +526,8 @@ def launch_setup(context, *args, **kwargs):
     end_effector = LaunchConfiguration('end_effector').perform(context)
     control_mode = LaunchConfiguration('control_mode').perform(context)
     robot_ip     = LaunchConfiguration('robot_ip').perform(context)
-    robot_dry    = LaunchConfiguration('robot_dry_run').perform(context)
     no_gui_val   = LaunchConfiguration('no_gui').perform(context)
+    no_gui       = no_gui_val.strip().lower() in ('true', '1', 'yes')
 
     robot_mode = _CONTROL_MODE_MAP.get(control_mode, 'SIM_ONLY')
 
@@ -533,9 +535,11 @@ def launch_setup(context, *args, **kwargs):
     pkg_gazebo = get_package_share_directory('gazebo_ros')
 
     # ── URDFs ─────────────────────────────────────────────────────────
+    # tempfile (não path fixo): duas sessões simultâneas não colidem.
     full_urdf, minimal_urdf = _build_robot_urdf(end_effector)
-    urdf_spawn_path = '/tmp/tactile_cell_robot.urdf'
-    with open(urdf_spawn_path, 'w') as f:
+    fd, urdf_spawn_path = tempfile.mkstemp(
+        prefix='tactile_cell_robot_', suffix='.urdf')
+    with os.fdopen(fd, 'w') as f:
         f.write(full_urdf)
 
     world_file = os.path.join(pkg_touch, 'worlds', 'research_lab.world')
@@ -582,9 +586,8 @@ def launch_setup(context, *args, **kwargs):
     explorer_node = Node(
         package='touch_pack', executable='tactile_explorer',
         parameters=[{
-            'arm_base_z':        0.78,
-            'controller_action': '/cr10_group_controller/follow_joint_trajectory',
-            'use_sim_time':      True,
+            'arm_base_z':   0.78,
+            'use_sim_time': True,
         }])
 
     gui_node = Node(
@@ -604,6 +607,14 @@ def launch_setup(context, *args, **kwargs):
 
     # Nós que não dependem de controllers — sobem logo após o spawn.
     early_nodes = [gui_node, logger_node, force_rx_node]
+
+    # ── Mirror standalone — só sem GUI ────────────────────────────────
+    # Com a GUI aberta o espelhamento mora nela (conexão única ao CR10);
+    # sem GUI (no_gui:=true) este nó assume para o MIRROR não quebrar.
+    if robot_mode == 'MIRROR' and no_gui:
+        early_nodes.append(Node(
+            package='touch_pack', executable='mirror_node',
+            parameters=[{'robot_ip': robot_ip}]))
     # Explorer precisa da action do cr10_group_controller — sobe por último.
     late_nodes  = [explorer_node]
 
@@ -649,8 +660,6 @@ def generate_launch_description():
             description='sim_only | mirror | real_from_sim'),
         DeclareLaunchArgument(
             'robot_ip', default_value='192.168.5.2'),
-        DeclareLaunchArgument(
-            'robot_dry_run', default_value='true'),
         DeclareLaunchArgument(
             'no_gui', default_value='false'),
 

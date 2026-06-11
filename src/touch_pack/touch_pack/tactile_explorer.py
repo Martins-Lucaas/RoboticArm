@@ -23,7 +23,9 @@ Fases:
   HOME         Interpolação linear no espaço de juntas a ≤ 0.3 rad/s.
   DESCENDING   Streaming Jacobiano ao longo do approach até a compressão
                atingir o setpoint (profundidade da GUI = curso máximo).
-  HOLD         PID de força estabiliza a compressão no setpoint.
+  HOLD         PID de força leva a compressão ao setpoint e ESPERA a
+               estabilização (janela contínua dentro da tolerância)
+               antes de liberar o SLIDING.
   SLIDING      Streaming Jacobiano lateral + PID de força no approach.
 
 Controle de força (DESCENDING/HOLD/SLIDING):
@@ -31,11 +33,12 @@ Controle de força (DESCENDING/HOLD/SLIDING):
   CANCELADA se a compressão exceder 15 N (_FORCE_ABORT_LIMIT_N).
 
 Interface ROS:
-  sub /palpation/start    std_msgs/String   JSON params
+  sub /palpation/start    touch_pack_msgs/PalpationStart
   sub /palpation/stop     std_msgs/String
-  sub /ft_sensor/wrench   geometry_msgs/WrenchStamped
+  sub /palpation/pause    std_msgs/Bool     true=pausa (segura posição), false=retoma
+  sub /load_cell/force_net std_msgs/Float32
   sub /joint_states       sensor_msgs/JointState
-  pub /palpation/status   std_msgs/String   JSON {phase, ...}
+  pub /palpation/status   touch_pack_msgs/PalpationStatus
   pub /cr10_group_controller/joint_trajectory  (streaming direto)
 
 Parâmetros ROS:
@@ -45,7 +48,6 @@ Parâmetros ROS:
 """
 from __future__ import annotations
 
-import json
 import math
 import sys
 import threading
@@ -76,53 +78,59 @@ _QOS_SENSOR = QoSProfile(
     durability=QoSDurabilityPolicy.VOLATILE,
     history=QoSHistoryPolicy.KEEP_LAST, depth=1)
 
-from std_msgs.msg import String, Float32
+from std_msgs.msg import String, Float32, Bool
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+from touch_pack_msgs.msg import PalpationStart, PalpationStatus
 
 from .kinematics import (
     forward_kinematics, jacobian,
     JOINT_MIN, JOINT_MAX, MIMIC_LIST as _MIMIC_LIST,
     T_TOUCH_TOOL_ATTACH,
 )
+from .constants import (
+    ARM_JOINTS as _ARM_JOINTS,
+    HAND_JOINTS as _HAND_PRIMARY,
+    HAND_POINTING_RAD as _HAND_POINTING_RAD,
+    POINTING_SEED_DEG as _POINTING_SEED_DEG,
+    FORCE_ABORT_LIMIT_N as _FORCE_ABORT_LIMIT_N,
+    FORCE_SETPOINT_MAX_N as _FORCE_SETPOINT_MAX_N,
+)
 
-
-_ARM_JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
-
-_POINTING_SEED_Q = np.array([
-    0.0,
-    0.0,
-    math.radians(-90.0),
-    0.0,
-    math.radians(90.0),
-    0.0,
-])
-
-_HAND_POINTING_RAD = {
-    'Thumb':  math.radians(30.0),
-    'Index':  0.0,
-    'Middle': math.radians(80.0),
-    'Ring':   math.radians(80.0),
-    'Little': math.radians(80.0),
-    'Rotate': 0.0,
-}
-
-_HAND_PRIMARY = ['Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Rotate']
+_POINTING_SEED_Q = np.array(
+    [math.radians(_POINTING_SEED_DEG[j]) for j in _ARM_JOINTS])
 
 # ── Célula de carga calibrada (/load_cell/force_net) ─────────────────────────
 # Convenção de sinal: compressão = POSITIVO, tração = NEGATIVO.
 # O force_receiver_node publica força calibrada (N). A GUI aplica tara
 # (tare_v - v_now) / slope → compressão positiva, tração negativa.
 _CONTACT_DETECT_N     = 0.2    # N: limiar — usado no SLIDING para detecção de perda de contato
-_FORCE_ABORT_LIMIT_N  = 15.0   # N: segurança — cancela a medição se exceder
-_FORCE_SETPOINT_MAX_N = 10.0   # N: setpoint máximo selecionável na GUI
 _SLIDING_SAFETY_M   = 0.30   # m: distância máxima de segurança no SLIDING
 
 # ── PID de força (DESCENDING / HOLD / SLIDING) ───────────────────────────────
 _PID_V_MAX_MS = 0.005    # m/s: correção máxima do PID (5 mm/s)
 _PID_I_MAX_Ns = 5.0      # N·s: anti-windup do integrador
 _FORCE_LOST_TICKS    = int(2.0 / 0.030)  # ticks sem contato antes de parar SLIDING
+
+# ── Estabilização do setpoint no HOLD ────────────────────────────────────────
+# O HOLD só libera o SLIDING quando a compressão fica DENTRO da tolerância
+# em torno do setpoint por _HOLD_STABLE_S contínuos (tol = máx(_HOLD_TOL_N,
+# _HOLD_TOL_PCT × setpoint)). Sair da banda reinicia a janela. Se não
+# estabilizar em _HOLD_TIMEOUT_S, prossegue com aviso — o PID do SLIDING
+# continua corrigindo a força durante o deslizamento.
+_HOLD_TOL_N     = 0.15   # N: tolerância absoluta mínima (≈ ruído da célula)
+_HOLD_TOL_PCT   = 0.05   # fração do setpoint (5 %)
+_HOLD_STABLE_S  = 1.0    # s contínuos dentro da tolerância
+_HOLD_TIMEOUT_S = 12.0   # s: teto de espera pela estabilização
+
+# ── Staleness da célula de carga ─────────────────────────────────────────────
+# Idade máxima da última leitura de /load_cell/force_net para que o controle
+# por força seja confiável. Se a ESP32/receiver cair no meio de uma fase
+# controlada por força, _fz_corrected() devolveria um valor CONGELADO e o
+# PID continuaria corrigindo às cegas (abaixo do setpoint → afundaria a
+# ferramenta na mesa). DESCENDING/HOLD/SLIDING abortam com outcome 'stale'.
+_FORCE_STALE_S = 0.5
 
 
 # ── Parâmetros do loop de streaming ──────────────────────────────────────────
@@ -205,25 +213,40 @@ class TactileExplorer(Node):
         self._approach_dir: np.ndarray | None = None
         self._user_home_q: np.ndarray | None = None
         self._speed_factor_pct: float = 10.0   # % do slider da GUI (padrão 10 %)
+        # Repetições automáticas do experimento (campo 'repeats' da GUI).
+        # _cycle/_cycles_total alimentam o status para a GUI mostrar "i/N".
+        self._repeats: int = 1
+        self._cycle: int = 0
+        self._cycles_total: int = 1
+        # Overrides de estabilização do HOLD vindos do PalpationStart
+        # (0.0 no msg = "usar default" → None aqui).
+        self._hold_tol_n: float | None = None
+        self._hold_stable_s: float | None = None
+        self._hold_timeout_s: float | None = None
         self._lc_lock = threading.Lock()
         self._lc_force_net: float = 0.0   # compressão positiva, tare-compensada
+        self._lc_force_ts: float = 0.0    # time.monotonic() da última leitura
         self._q_lock = threading.Lock()
         self._current_q = _POINTING_SEED_Q.copy()
         self._stop_requested = threading.Event()
+        self._pause_requested = threading.Event()
         self._protocol_thread: threading.Thread | None = None
 
         cb = ReentrantCallbackGroup()
 
-        self.create_subscription(String, '/palpation/start',
+        self.create_subscription(PalpationStart, '/palpation/start',
                                   self._cb_start, _QOS_COMMAND, callback_group=cb)
         self.create_subscription(String, '/palpation/stop',
                                   self._cb_stop, 10, callback_group=cb)
+        self.create_subscription(Bool, '/palpation/pause',
+                                  self._cb_pause, 10, callback_group=cb)
         self.create_subscription(Float32, '/load_cell/force_net',
                                   self._cb_lc_force_net, _QOS_SENSOR, callback_group=cb)
         self.create_subscription(JointState, '/joint_states',
                                   self._cb_joints, 50, callback_group=cb)
 
-        self._status_pub = self.create_publisher(String, '/palpation/status', 10)
+        self._status_pub = self.create_publisher(
+            PalpationStatus, '/palpation/status', 10)
 
         # Publisher direto no tópico do controller — sem action server.
         # depth=1: sem fila; cada nova mensagem substitui a anterior para
@@ -250,6 +273,7 @@ class TactileExplorer(Node):
             return
         with self._lc_lock:
             self._lc_force_net = val
+            self._lc_force_ts = time.monotonic()
 
     def _cb_joints(self, msg: JointState):
         idx = {n: i for i, n in enumerate(msg.name)}
@@ -261,56 +285,50 @@ class TactileExplorer(Node):
     def _cb_stop(self, msg: String) -> None:
         if self._busy.is_set():
             self._stop_requested.set()
+            self._pause_requested.clear()   # stop vence pausa
             self.get_logger().warn('[STOP] Parada solicitada.')
 
-    def _cb_start(self, msg: String):
+    def _cb_pause(self, msg: Bool) -> None:
+        """Pausa/retoma o experimento — as fases seguram a posição atual
+        enquanto pausadas (ver _pause_gate)."""
+        if bool(msg.data):
+            if self._busy.is_set():
+                self._pause_requested.set()
+        else:
+            self._pause_requested.clear()
+
+    def _cb_start(self, msg: PalpationStart):
         if self._busy.is_set():
             self.get_logger().warn(
                 f'Recebido /palpation/start mas explorer está em '
                 f'{self._phase}. Ignorando.')
             return
-        try:
-            payload = json.loads(msg.data) if msg.data else {}
-        except json.JSONDecodeError as exc:
-            self.get_logger().error(f'JSON inválido em /palpation/start: {exc}')
-            return
         with self._params_lock:
-            self._target_depth_mm = float(
-                payload.get('depth_mm', self._target_depth_mm))
+            self._target_depth_mm = float(msg.depth_mm)
             # Setpoint do PID de força — saturado no máximo selecionável.
             self._target_force_n = float(np.clip(
-                float(payload.get('force_n', self._target_force_n)),
-                0.1, _FORCE_SETPOINT_MAX_N))
-            self._kp = float(payload.get('kp', self._kp))
-            self._ki = float(payload.get('ki', self._ki))
-            self._kd = float(payload.get('kd', self._kd))
-            self._target_slide_mm = float(
-                payload.get('slide_dist_mm', self._target_slide_mm))
-            self._slide_speed_mms = float(
-                payload.get('speed_mms', self._slide_speed_mms))
-            approach = payload.get('approach_speed_mms')
-            if approach is not None:
-                try:
-                    v_max = max(1.0, float(approach))
-                    v_min = max(0.5, v_max * 0.2)
-                    self.set_parameters([
-                        rclpy.parameter.Parameter(
-                            'approach_v_max_mms',
-                            rclpy.parameter.Parameter.Type.DOUBLE, v_max),
-                        rclpy.parameter.Parameter(
-                            'approach_v_min_mms',
-                            rclpy.parameter.Parameter.Type.DOUBLE, v_min),
-                    ])
-                except (TypeError, ValueError) as exc:
-                    self.get_logger().warn(f'approach_speed_mms inválido: {exc}')
-            sf = payload.get('speed_factor_pct')
-            if sf is not None:
-                try:
-                    self._speed_factor_pct = float(
-                        max(1.0, min(100.0, float(sf))))
-                except (TypeError, ValueError):
-                    pass
-            slide_dir = str(payload.get('slide_dir', '+Y')).upper().strip()
+                float(msg.force_n), 0.1, _FORCE_SETPOINT_MAX_N))
+            self._kp = float(msg.kp)
+            self._ki = float(msg.ki)
+            self._kd = float(msg.kd)
+            self._target_slide_mm = float(msg.slide_dist_mm)
+            self._slide_speed_mms = float(msg.speed_mms)
+            if msg.approach_speed_mms > 0.0:
+                v_max = max(1.0, float(msg.approach_speed_mms))
+                v_min = max(0.5, v_max * 0.2)
+                self.set_parameters([
+                    rclpy.parameter.Parameter(
+                        'approach_v_max_mms',
+                        rclpy.parameter.Parameter.Type.DOUBLE, v_max),
+                    rclpy.parameter.Parameter(
+                        'approach_v_min_mms',
+                        rclpy.parameter.Parameter.Type.DOUBLE, v_min),
+                ])
+            if msg.speed_factor_pct > 0.0:
+                self._speed_factor_pct = float(
+                    max(1.0, min(100.0, float(msg.speed_factor_pct))))
+            self._repeats = int(np.clip(int(msg.repeats) or 1, 1, 100))
+            slide_dir = str(msg.slide_dir).upper().strip() or '+Y'
             _DIR_MAP = {
                 '+X': (1.0, 0.0), '-X': (-1.0, 0.0),
                 '+Y': (0.0, 1.0), '-Y': (0.0, -1.0),
@@ -321,16 +339,17 @@ class TactileExplorer(Node):
                 self.get_logger().warn(
                     f'slide_dir inválido "{slide_dir}" — usando +Y.')
                 self._slide_dir_vec = np.array([0.0, 1.0])
-            home_deg = payload.get('home_deg')
-            if isinstance(home_deg, dict):
-                try:
-                    self._user_home_q = np.array([
-                        math.radians(float(home_deg[j]))
-                        for j in _ARM_JOINTS
-                    ], dtype=np.float64)
-                except (KeyError, TypeError, ValueError) as exc:
-                    self.get_logger().warn(
-                        f'home_deg malformado: {exc} — usando seed default')
+            self._user_home_q = np.array(
+                [math.radians(float(v)) for v in msg.home_deg],
+                dtype=np.float64)
+            # Estabilização do HOLD — 0.0 no msg = usar default do explorer.
+            self._hold_tol_n = (float(msg.hold_tol_n)
+                                if msg.hold_tol_n > 0.0 else None)
+            self._hold_stable_s = (float(msg.hold_stable_s)
+                                   if msg.hold_stable_s > 0.0 else None)
+            self._hold_timeout_s = (float(msg.hold_timeout_s)
+                                    if msg.hold_timeout_s > 0.0 else None)
+        self._pause_requested.clear()
         self._protocol_thread = threading.Thread(
             target=self._run_protocol, daemon=True)
         self._protocol_thread.start()
@@ -343,23 +362,60 @@ class TactileExplorer(Node):
             force_net = self._lc_force_net
         with self._params_lock:
             depth_mm  = float(self._target_depth_mm)
-            speed_mms = self._slide_speed_mms
+            speed_mms = float(self._slide_speed_mms)
             target_f  = float(self._target_force_n)
-        msg = String()
-        msg.data = json.dumps({
-            'phase': self._phase,
-            'target_depth_mm': depth_mm,
-            'target_force_n': target_f,
-            'force_net_n': float(force_net),
-            'measured_force_normal_n': float(force_net),   # + compressão, − tração
-            'speed_mms': speed_mms,
-        })
+        msg = PalpationStatus()
+        msg.phase = self._phase
+        msg.cycle = int(self._cycle)
+        msg.cycles_total = int(self._cycles_total)
+        msg.target_depth_mm = depth_mm
+        msg.target_force_n = target_f
+        msg.force_net_n = float(force_net)
+        msg.speed_mms = speed_mms
+        msg.paused = self._pause_requested.is_set()
         self._status_pub.publish(msg)
 
     def _fz_corrected(self) -> float:
         """Força de contato tare-compensada (N). Positivo = compressão."""
         with self._lc_lock:
             return self._lc_force_net
+
+    def _force_stale_abort(self, phase: str) -> bool:
+        """True se a leitura de força está velha/ausente — a fase chamadora
+        deve abortar com outcome 'stale'. Loga o motivo uma única vez."""
+        with self._lc_lock:
+            ts = self._lc_force_ts
+        if ts > 0.0:
+            age = time.monotonic() - ts
+            if age <= _FORCE_STALE_S:
+                return False
+            detail = f'última leitura há {age:.1f} s (> {_FORCE_STALE_S:.1f} s)'
+        else:
+            detail = 'nenhuma leitura recebida em /load_cell/force_net'
+        self.get_logger().error(
+            f'SEGURANÇA [{phase}]: célula de carga sem dados frescos — '
+            f'{detail}. Controle por força não confiável; abortando. '
+            'Verifique a ESP32 e o force_receiver.')
+        return True
+
+    def _pause_gate(self) -> bool:
+        """Bloqueia enquanto o experimento estiver pausado, segurando a
+        posição atual (re-publica o setpoint corrente como o _settle).
+        Retorna False se um STOP chegar durante a pausa."""
+        if not self._pause_requested.is_set():
+            return True
+        self.get_logger().warn('[PAUSE] experimento pausado — segurando posição.')
+        q_hold = self._q_now()
+        zero_vel = np.zeros(6)
+        while self._pause_requested.is_set():
+            if self._stop_requested.is_set():
+                self._stop_requested.clear()
+                self.get_logger().warn('[PAUSE] stop durante a pausa.')
+                return False
+            self._stream_q(q_hold, _CTRL_LOOK + _CTRL_DT, velocities=zero_vel)
+            time.sleep(_CTRL_DT)
+        self.get_logger().info('[PAUSE] experimento retomado.')
+        return True
 
     def _set_phase(self, phase: str):
         self._phase = phase
@@ -891,7 +947,8 @@ class TactileExplorer(Node):
         máximo de segurança.
 
         Retorna: 'ok' (setpoint atingido) | 'no_contact' (curso esgotado)
-                 | 'force' (> 15 N) | 'stop' (usuário).
+                 | 'force' (> 15 N) | 'stale' (célula sem dados frescos)
+                 | 'stop' (usuário).
         """
         self._set_phase('DESCENDING')
         self._settle()
@@ -930,9 +987,13 @@ class TactileExplorer(Node):
                 self._stop_requested.clear()
                 self.get_logger().warn('[STOP] DESCENDING interrompido pelo usuário.')
                 return 'stop'
+            if not self._pause_gate():
+                return 'stop'
 
             t0 = time.time()
 
+            if self._force_stale_abort('DESCENDING'):
+                return 'stale'
             fz = self._fz_corrected()  # + compressão, − tração
             if fz > _FORCE_ABORT_LIMIT_N:
                 self.get_logger().error(
@@ -973,19 +1034,35 @@ class TactileExplorer(Node):
             'abortando com retorno lento à home.')
         return 'no_contact'
 
-    def _phase_hold(self, hold_s: float = 3.0) -> str:
-        """HOLD — PID de força estabiliza a compressão no setpoint por `hold_s` s.
+    def _phase_hold(self, stable_s: float = _HOLD_STABLE_S,
+                    timeout_s: float = _HOLD_TIMEOUT_S) -> str:
+        """HOLD — PID de força leva a compressão ao setpoint e ESPERA a
+        estabilização antes de liberar o SLIDING.
+
+        Critério de saída: |fz − alvo| ≤ tol por `stable_s` s CONTÍNUOS
+        (tol = máx(_HOLD_TOL_N, _HOLD_TOL_PCT × alvo)); sair da banda
+        reinicia a janela. `timeout_s` é o teto de espera — estourou,
+        prossegue com aviso (o PID do SLIDING continua corrigindo).
 
         Corrige ao longo do approach_dir: compressão abaixo do alvo →
         aprofunda; acima → alivia. Interrompível pelo botão Parar.
 
-        Retorna: 'ok' | 'force' (> 15 N) | 'stop' (usuário).
+        Retorna: 'ok' | 'force' (> 15 N) | 'stale' (célula sem dados)
+                 | 'stop' (usuário).
         """
         self._set_phase('HOLD')
         with self._params_lock:
             target_f = float(self._target_force_n)
             kp, ki, kd = self._kp, self._ki, self._kd
+            # Overrides do PalpationStart (avançados da GUI); None = default.
+            tol_override = self._hold_tol_n
+            if self._hold_stable_s is not None:
+                stable_s = self._hold_stable_s
+            if self._hold_timeout_s is not None:
+                timeout_s = self._hold_timeout_s
 
+        tol_n = (tol_override if tol_override is not None
+                 else max(_HOLD_TOL_N, _HOLD_TOL_PCT * target_f))
         approach_dir = (self._approach_dir if self._approach_dir is not None
                         else np.array([0., 0., -1.]))
         pid = _ForcePID(kp, ki, kd, _CTRL_DT)
@@ -994,23 +1071,49 @@ class TactileExplorer(Node):
         v_lim = (self._speed_factor_pct / 100.0) * _MAX_JOINT_VEL_RAD_S
 
         self.get_logger().info(
-            f'HOLD-PID: alvo {target_f:.2f} N  '
-            f'Kp={kp:.4g} Ki={ki:.4g} Kd={kd:.4g}  duração {hold_s:.1f} s')
+            f'HOLD-PID: alvo {target_f:.2f} ± {tol_n:.2f} N  '
+            f'Kp={kp:.4g} Ki={ki:.4g} Kd={kd:.4g}  '
+            f'estável por {stable_s:.1f} s (timeout {timeout_s:.0f} s)')
 
         t_start = time.time()
-        while time.time() - t_start < hold_s:
+        t_stable0: float | None = None   # início da janela estável corrente
+        timed_out = False
+        while True:
             if self._stop_requested.is_set():
                 self._stop_requested.clear()
                 self.get_logger().warn('[STOP] HOLD interrompido pelo usuário.')
                 return 'stop'
+            if not self._pause_gate():
+                return 'stop'
             t0 = time.time()
 
+            if self._force_stale_abort('HOLD'):
+                return 'stale'
             fz = self._fz_corrected()
             if fz > _FORCE_ABORT_LIMIT_N:
                 self.get_logger().error(
                     f'SEGURANÇA: compressão {fz:.1f} N > '
                     f'{_FORCE_ABORT_LIMIT_N:.0f} N — medição cancelada.')
                 return 'force'
+
+            # ── Critério de estabilização do setpoint ─────────────────
+            if abs(target_f - fz) <= tol_n:
+                if t_stable0 is None:
+                    t_stable0 = t0
+                    self.get_logger().info(
+                        f'HOLD-PID: dentro da banda (fz={fz:.2f} N) — '
+                        f'aguardando {stable_s:.1f} s estável.')
+                elif t0 - t_stable0 >= stable_s:
+                    break    # setpoint estável — libera o SLIDING
+            else:
+                if t_stable0 is not None:
+                    self.get_logger().info(
+                        f'HOLD-PID: saiu da banda (fz={fz:.2f} N) — '
+                        'janela de estabilidade reiniciada.')
+                t_stable0 = None
+            if t0 - t_start >= timeout_s:
+                timed_out = True
+                break
 
             v_cmd = pid.step(target_f - fz,
                              in_contact=(fz > _CONTACT_DETECT_N))
@@ -1036,13 +1139,22 @@ class TactileExplorer(Node):
             if elapsed < dt:
                 time.sleep(dt - elapsed)
 
-        self.get_logger().info(
-            f'HOLD-PID: concluído — fz={self._fz_corrected():.2f} N '
-            f'(alvo {target_f:.2f} N).')
+        if timed_out:
+            self.get_logger().warn(
+                f'HOLD-PID: timeout ({timeout_s:.0f} s) sem estabilizar — '
+                f'fz={self._fz_corrected():.2f} N '
+                f'(alvo {target_f:.2f} ± {tol_n:.2f} N). Prosseguindo: '
+                'o PID do SLIDING continua corrigindo.')
+        else:
+            self.get_logger().info(
+                f'HOLD-PID: setpoint estável — fz={self._fz_corrected():.2f} N '
+                f'(alvo {target_f:.2f} ± {tol_n:.2f} N por {stable_s:.1f} s) '
+                f'em {time.time() - t_start:.1f} s.')
         return 'ok'
 
-    def _phase_sliding(self) -> bool:
+    def _phase_sliding(self) -> str:
         """SLIDING — movimento lateral com PID de força simultâneo.
+        Retorna: 'ok' | 'force' | 'stale' | 'error' | 'stop'.
 
         Streaming rolling-window (_SLIDE_WIN pts) combinando:
           • passo lateral constante em dir_world (velocidade do usuário)
@@ -1117,6 +1229,9 @@ class TactileExplorer(Node):
                 self._stop_requested.clear()
                 outcome = 'stop'
                 break
+            if not self._pause_gate():
+                outcome = 'stop'
+                break
 
             t0 = time.time()
 
@@ -1138,6 +1253,9 @@ class TactileExplorer(Node):
                 break
 
             # PID de força (+ compressão, − tração)
+            if self._force_stale_abort('SLIDING'):
+                outcome = 'stale'
+                break
             fz_corr = self._fz_corrected()
 
             if fz_corr > _FORCE_ABORT_LIMIT_N:
@@ -1282,31 +1400,54 @@ class TactileExplorer(Node):
     def _run_protocol(self):
         self._busy.set()
         try:
-            if not self._phase_goto_home():
-                self._set_phase('ABORTED'); return
+            with self._params_lock:
+                repeats = int(self._repeats)
+            self._cycles_total = repeats
 
-            out = self._phase_descending()
-            if out in ('force', 'no_contact'):
-                self._abort_to_home(); return
-            if out != 'ok':   # stop do usuário → para no lugar
-                self._set_phase('ABORTED'); return
+            for cycle in range(1, repeats + 1):
+                self._cycle = cycle
+                if repeats > 1:
+                    self.get_logger().info(
+                        f'[CICLO] experimento {cycle}/{repeats}')
 
-            out = self._phase_hold()
-            if out == 'force':
-                self._abort_to_home(); return
-            if out != 'ok':
-                self._set_phase('ABORTED'); return
+                if not self._phase_goto_home():
+                    self._set_phase('ABORTED'); return
 
-            out = self._phase_sliding()
-            if out in ('force', 'error'):
-                self._abort_to_home(); return
-            if out != 'ok':
-                self._set_phase('ABORTED'); return
+                out = self._phase_descending()
+                if out in ('force', 'no_contact', 'stale'):
+                    self._abort_to_home(); return
+                if out != 'ok':   # stop do usuário → para no lugar
+                    self._set_phase('ABORTED'); return
+
+                out = self._phase_hold()
+                if out in ('force', 'stale'):
+                    self._abort_to_home(); return
+                if out != 'ok':
+                    self._set_phase('ABORTED'); return
+
+                out = self._phase_sliding()
+                if out in ('force', 'error', 'stale'):
+                    self._abort_to_home(); return
+                if out != 'ok':
+                    self._set_phase('ABORTED'); return
+
+                if cycle < repeats:
+                    # Entre ciclos: só recua da superfície — o próximo
+                    # ciclo refaz o HOME (e a re-aproximação) sozinho.
+                    if not self._phase_retract():
+                        self._set_phase('ABORTED'); return
+                    # Stop pedido durante o RETRACT → não inicia o próximo.
+                    if self._stop_requested.is_set():
+                        self._stop_requested.clear()
+                        self._phase_goto_home()
+                        self._set_phase('ABORTED'); return
 
             self._retreat_and_home('DONE')
             time.sleep(0.5)
             self._set_phase('IDLE')
         finally:
+            self._cycle = 0
+            self._cycles_total = 1
             self._busy.clear()
 
 

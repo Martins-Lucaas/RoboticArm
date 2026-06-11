@@ -16,7 +16,6 @@ Payload UDP (little-endian, 8 bytes):
 """
 
 import json
-import os
 import socket
 import struct
 import threading
@@ -26,8 +25,11 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy
 from std_msgs.msg import Float32, Bool
 
-UDP_PORT    = 8080
-CALIB_FILE  = os.path.expanduser('~/.config/touch_pack/load_cell_calib.json')
+from .constants import (
+    LOAD_CELL_UDP_PORT as UDP_PORT,
+    LC_CALIB_FILE as CALIB_FILE,
+)
+
 PAYLOAD_FMT = '<ff'
 PAYLOAD_SZ  = struct.calcsize(PAYLOAD_FMT)   # 8 bytes
 
@@ -53,6 +55,9 @@ class ForceReceiverNode(Node):
 
         self._load_calib()
         self.create_timer(10.0, self._load_calib)
+        # Flag de calibração a 1 Hz (antes era publicada a cada pacote UDP,
+        # ~50 Hz — desperdício para um Bool que quase nunca muda).
+        self.create_timer(1.0, self._publish_calibrated)
 
         self._running = True
         self._udp_thr = threading.Thread(
@@ -82,6 +87,13 @@ class ForceReceiverNode(Node):
             pass
         except Exception as exc:
             self.get_logger().warn(f'Falha ao carregar calibração: {exc}')
+
+    # ──────────────────────────────────────────────────────────────────
+    def _publish_calibrated(self) -> None:
+        with self._lock:
+            is_cal = self._calibrated
+        msg = Bool(); msg.data = is_cal
+        self._calib_pub.publish(msg)
 
     # ──────────────────────────────────────────────────────────────────
     def _udp_loop(self) -> None:
@@ -115,12 +127,8 @@ class ForceReceiverNode(Node):
             self._voltage_pub.publish(v_msg)
 
             with self._lock:
-                is_cal = self._calibrated
-                sl     = self._slope
-                ic     = self._intercept
-
-            cb_msg = Bool(); cb_msg.data = is_cal
-            self._calib_pub.publish(cb_msg)
+                sl = self._slope
+                ic = self._intercept
 
             if abs(sl) > 1e-9:
                 # Calibração feita em tração → invertido para a convenção do

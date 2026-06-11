@@ -98,11 +98,18 @@ JOINT_MAX = np.array([np.deg2rad( 180.), np.deg2rad(  80.),
                         2.861,
                         np.deg2rad(  80.), np.deg2rad( 135.), np.deg2rad( 360.)])
 
-# Distância efetiva WC→TCP ao longo do vetor de abordagem (m).
-# WC→hand_base_link ≈ 0.260; acoplador 0.05546 + offset palma→TCP 0.115
-# → soma = 0.43046. Apenas heurística inicial: o refinamento numérico do
-# IK (DLS) absorve diferenças residuais.
-_D_WC_TCP = 0.43046
+# Distância efetiva WC→flange ao longo do vetor de abordagem (m).
+# A distância WC→TCP depende do efetuador: flange + translação z do
+# transform de attach (T_HAND_ATTACH ou T_TOUCH_TOOL_ATTACH). Apenas
+# heurística inicial: o refinamento numérico da IK (DLS) absorve
+# diferenças residuais.
+_D_WC_FLANGE = 0.26
+_D_WC_TCP = _D_WC_FLANGE + float(T_HAND_ATTACH[2, 3])   # mão: 0.43046
+
+
+def _ik_attach(T_end: np.ndarray | None) -> np.ndarray:
+    """Transform flange→TCP usado pela IK (default: mão COVVI)."""
+    return T_HAND_ATTACH if T_end is None else np.asarray(T_end, dtype=float)
 
 # ──────────────────────────────────────────────────────────────────────
 # Origens URDF das juntas: (xyz, rpy)
@@ -308,7 +315,8 @@ def _wrist_from_R36(R36: np.ndarray) -> tuple[float, float, float]:
 
 def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
                      elbow_up: bool = True,
-                     q1_force: float | None = None) -> np.ndarray:
+                     q1_force: float | None = None,
+                     T_end: np.ndarray | None = None) -> np.ndarray:
     """
     Palpite inicial analítico geométrico em convenção URDF.
 
@@ -318,8 +326,10 @@ def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
         q4_urdf = θ4_DH − π/2   (extraído do R36_urdf com +π/2)
         q5_urdf = θ5_DH,  q6_urdf = θ6_DH
     """
+    att = _ik_attach(T_end)
     # ── Posição do wrist center ─────────────────────────────────────
-    p_wc = p_tcp - _D_WC_TCP * R_tcp[:, 2]
+    d_wc_tcp = _D_WC_FLANGE + float(att[2, 3])
+    p_wc = p_tcp - d_wc_tcp * R_tcp[:, 2]
 
     q1 = float(q1_force) if q1_force is not None else math.atan2(p_wc[1], p_wc[0])
 
@@ -341,7 +351,7 @@ def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
     # ── R36 via fk_partial (j1=−Z, j2/j3=+Z) ──────────────────────
     # j1 usa −Z: passar −q1 faz Rz(−1·(−q1))=Rz(q1) — rotação física correta.
     # j2/j3 usam +Z: q2, q3 já estão em convenção URDF, passá-los diretamente.
-    R_flange_target = R_tcp @ T_HAND_ATTACH[:3, :3].T
+    R_flange_target = R_tcp @ att[:3, :3].T
     q_tmp = np.array([-q1, q2, q3, 0., 0., 0.])
     R03 = fk_partial(q_tmp, 3)[:3, :3]
     R36 = R03.T @ R_flange_target
@@ -352,7 +362,8 @@ def _geometric_guess(p_tcp: np.ndarray, R_tcp: np.ndarray,
 
 
 def _set_wrist(q: np.ndarray, R_target: np.ndarray,
-                q_ref: np.ndarray | None = None) -> np.ndarray:
+                q_ref: np.ndarray | None = None,
+                T_end: np.ndarray | None = None) -> np.ndarray:
     """
     Recalcula q3-q5 analiticamente dado q0-q2 (posição do braço).
     Testa ambas as soluções do pulso (±q5_u) e retorna a de menor erro.
@@ -364,7 +375,8 @@ def _set_wrist(q: np.ndarray, R_target: np.ndarray,
     indesejado entre poses geometricamente próximas (e.g. POINTING e
     TOUCH na mesma vertical).
     """
-    R_flange_target = R_target @ T_HAND_ATTACH[:3, :3].T
+    att = _ik_attach(T_end)
+    R_flange_target = R_target @ att[:3, :3].T
     R03 = fk_partial(q, 3)[:3, :3]
     R36 = R03.T @ R_flange_target
 
@@ -381,14 +393,14 @@ def _set_wrist(q: np.ndarray, R_target: np.ndarray,
             q4 = q4_raw
             q6 = math.atan2(-sign * R36[2,1]/s5p,  sign * R36[2,0]/s5p)
             q_cand = q.copy(); q_cand[3], q_cand[4], q_cand[5] = q4, q5, q6
-            T_check = forward_kinematics(q_cand)
+            T_check = forward_kinematics(q_cand, T_end=att)
             ang_err = float(np.linalg.norm(_rot_error(T_check[:3,:3], R_target)))
             solutions.append((ang_err, q_cand))
     else:
         q5, q4 = 0.0, 0.0
         q6 = math.atan2(-R36[0,1], R36[0,0])
         q_cand = q.copy(); q_cand[3], q_cand[4], q_cand[5] = q4, q5, q6
-        T_check = forward_kinematics(q_cand)
+        T_check = forward_kinematics(q_cand, T_end=att)
         ang_err = float(np.linalg.norm(_rot_error(T_check[:3,:3], R_target)))
         solutions.append((ang_err, q_cand))
 
@@ -414,13 +426,15 @@ def _ik_refine(p_target: np.ndarray, R_target: np.ndarray,
                n_iter: int = 300,
                tol_pos: float = 3e-3,
                tol_ori: float = 0.05,
-               q_ref: np.ndarray | None = None) -> tuple[np.ndarray, bool]:
+               q_ref: np.ndarray | None = None,
+               T_end: np.ndarray | None = None) -> tuple[np.ndarray, bool]:
     """
     Refinamento numérico IK — abordagem desacoplada iterativa.
 
     Estágio 1: 4 ciclos de (DLS 3-DOF braço + _set_wrist analítico).
     Estágio 2: ajuste fino 6-DOF DLS (100 iter).
     """
+    att = _ik_attach(T_end)
     q = q0.copy().astype(float)
     I3 = np.eye(3)
     I6 = np.eye(6)
@@ -431,17 +445,17 @@ def _ik_refine(p_target: np.ndarray, R_target: np.ndarray,
         lam_arm = 0.06
         for i in range(n_arm):
             lam_i = lam_arm * (0.003/lam_arm) ** (float(i)/n_arm)
-            T = forward_kinematics(q)
+            T = forward_kinematics(q, T_end=att)
             dp = p_target - T[:3, 3]
             if float(np.linalg.norm(dp)) < tol_pos:
                 break
-            J_arm = jacobian(q)[:3, :3]
+            J_arm = jacobian(q, T_end=att)[:3, :3]
             dq3 = J_arm.T @ np.linalg.solve(J_arm @ J_arm.T + lam_i*lam_i*I3, dp)
             q[:3] = np.clip(q[:3] + lr*dq3, JOINT_MIN[:3], JOINT_MAX[:3])
 
-        q = _set_wrist(q, R_target)
+        q = _set_wrist(q, R_target, T_end=att)
 
-        T = forward_kinematics(q)
+        T = forward_kinematics(q, T_end=att)
         dp_c = float(np.linalg.norm(p_target - T[:3, 3]))
         dw_c = float(np.linalg.norm(_rot_error(T[:3, :3], R_target)))
         if dp_c < tol_pos and dw_c < tol_ori:
@@ -450,17 +464,17 @@ def _ik_refine(p_target: np.ndarray, R_target: np.ndarray,
     W_ori = 0.25
     lam_fine = 0.005
     for _ in range(100):
-        T = forward_kinematics(q)
+        T = forward_kinematics(q, T_end=att)
         dp = p_target - T[:3, 3]
         dw_raw = _rot_error(T[:3, :3], R_target)
         if float(np.linalg.norm(dp)) < tol_pos and float(np.linalg.norm(dw_raw)) < tol_ori:
             return q, True
         dw = W_ori * dw_raw
-        J = jacobian(q).copy(); J[3:, :] *= W_ori
+        J = jacobian(q, T_end=att).copy(); J[3:, :] *= W_ori
         dq = J.T @ np.linalg.solve(J @ J.T + lam_fine*lam_fine*I6, np.concatenate([dp, dw]))
         q = np.clip(q + lr*dq, JOINT_MIN, JOINT_MAX)
 
-    T_f = forward_kinematics(q)
+    T_f = forward_kinematics(q, T_end=att)
     dp_f = float(np.linalg.norm(p_target - T_f[:3, 3]))
     dw_f = float(np.linalg.norm(_rot_error(T_f[:3, :3], R_target)))
     return q, dp_f < 8e-3 and dw_f < 0.25
@@ -468,7 +482,8 @@ def _ik_refine(p_target: np.ndarray, R_target: np.ndarray,
 
 def _ik_candidates(p_tcp: np.ndarray, R_tcp: np.ndarray,
                     q_seed: np.ndarray | None,
-                    elbow_up: bool = True) -> list[np.ndarray]:
+                    elbow_up: bool = True,
+                    T_end: np.ndarray | None = None) -> list[np.ndarray]:
     """Gera candidatos de palpite inicial varrendo q1 ±40° e ambos os cotovelos."""
     candidates: list[np.ndarray] = []
     q1_naive = math.atan2(p_tcp[1], p_tcp[0])
@@ -476,12 +491,14 @@ def _ik_candidates(p_tcp: np.ndarray, R_tcp: np.ndarray,
     secondary = False if elbow_up else True
 
     for dq1 in (-0.7, -0.4, -0.2, 0.0, 0.2, 0.4, 0.7):
-        candidates.append(_geometric_guess(p_tcp, R_tcp, primary,   q1_force=q1_naive+dq1))
-    candidates.append(_geometric_guess(p_tcp, R_tcp, primary))
+        candidates.append(_geometric_guess(
+            p_tcp, R_tcp, primary, q1_force=q1_naive+dq1, T_end=T_end))
+    candidates.append(_geometric_guess(p_tcp, R_tcp, primary, T_end=T_end))
 
     for dq1 in (-0.7, -0.4, -0.2, 0.0, 0.2, 0.4, 0.7):
-        candidates.append(_geometric_guess(p_tcp, R_tcp, secondary, q1_force=q1_naive+dq1))
-    candidates.append(_geometric_guess(p_tcp, R_tcp, secondary))
+        candidates.append(_geometric_guess(
+            p_tcp, R_tcp, secondary, q1_force=q1_naive+dq1, T_end=T_end))
+    candidates.append(_geometric_guess(p_tcp, R_tcp, secondary, T_end=T_end))
 
     if q_seed is not None:
         candidates.insert(0, np.asarray(q_seed, dtype=float))
@@ -493,7 +510,8 @@ def inverse_kinematics(
         p_tcp: np.ndarray,
         approach_vec: np.ndarray,
         q_seed: np.ndarray | None = None,
-        elbow_up: bool = True) -> tuple[np.ndarray, bool]:
+        elbow_up: bool = True,
+        T_end: np.ndarray | None = None) -> tuple[np.ndarray, bool]:
     """
     IK completa do CR10 — retorna ângulos URDF (prontos para enviar ao Gazebo).
 
@@ -502,21 +520,25 @@ def inverse_kinematics(
         approach_vec: direção de abordagem unitária (TCP z-axis)
         q_seed:       palpite inicial opcional em convenção URDF
         elbow_up:     preferência de configuração de cotovelo
+        T_end:        transform flange→TCP do efetuador; None = mão COVVI
+                      (T_HAND_ATTACH); use T_TOUCH_TOOL_ATTACH no modo
+                      palpação — corrige o seed geométrico do wrist center.
 
     Returns:
         (q, converged): ângulos URDF (6,) rad e flag de convergência
     """
+    att = _ik_attach(T_end)
     R_tcp = approach_to_Rtcp(np.asarray(approach_vec))
     p_tcp = np.asarray(p_tcp, dtype=float)
 
-    candidates = _ik_candidates(p_tcp, R_tcp, q_seed, elbow_up)
+    candidates = _ik_candidates(p_tcp, R_tcp, q_seed, elbow_up, T_end=att)
 
     best_q, best_err, best_ok = candidates[0].copy(), 1e9, False
 
     for cand in candidates:
         q_cand = np.clip(cand, JOINT_MIN, JOINT_MAX)
-        q, ok = _ik_refine(p_tcp, R_tcp, q_cand)
-        T = forward_kinematics(q)
+        q, ok = _ik_refine(p_tcp, R_tcp, q_cand, T_end=att)
+        T = forward_kinematics(q, T_end=att)
         err = float(np.linalg.norm(p_tcp - T[:3, 3]))
         if err < best_err:
             best_err = err; best_q = q; best_ok = ok

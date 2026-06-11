@@ -36,8 +36,10 @@ setup(
             'palpation_gui     = touch_pack.palpation_gui:main',
             'tactile_explorer  = touch_pack.tactile_explorer:main',
             'palpation_logger  = touch_pack.palpation_logger:main',
+            'palpation_report  = touch_pack.palpation_report:main',
             'real_pose_sync    = touch_pack.real_pose_sync:main',
             'force_receiver    = touch_pack.force_receiver_node:main',
+            'mirror_node       = touch_pack.mirror_node:main',
         ],
     },
 )

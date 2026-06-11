@@ -1,24 +1,32 @@
 """
 palpation_logger.py — Nó ROS 2 que grava cada execução de palpação em disco.
 
-Lê três tópicos:
-  sub /palpation/start    std_msgs/String   JSON com os parâmetros (force_n,
-                                              speed_mms, distance_mm, etc.)
-                                              Marca o início de um "run".
-  sub /palpation/status   std_msgs/String   JSON {phase, ...} — usado para
-                                              detectar transições de fase e
-                                              encerrar o run em DONE/ABORTED.
-  sub /ft_sensor/wrench   geometry_msgs/WrenchStamped — amostras de força.
+Lê quatro tópicos:
+  sub /palpation/start     touch_pack_msgs/PalpationStart — parâmetros do
+                                               experimento; marca o início de
+                                               um "run".
+  sub /palpation/status    touch_pack_msgs/PalpationStatus — fase e ciclo
+                                               atuais; encerra o run em
+                                               DONE/ABORTED.
+  sub /load_cell/force_net std_msgs/Float32  força tare-compensada (N,
+                                               compressão positiva) — é o sinal
+                                               CANÔNICO do experimento e o
+                                               gatilho de amostragem (~50 Hz).
+  sub /joint_states        sensor_msgs/JointState — juntas do braço; a pose do
+                                               TCP é calculada via FK
+                                               (kinematics + T_TOUCH_TOOL_ATTACH).
 
-Saída:
-  ~/touch_pack_runs/<timestamp>__<phase>.csv  (um arquivo por run)
-  ~/touch_pack_runs/<timestamp>__params.json   (parâmetros do start)
+Saída (em ~/touch_pack_runs/):
+  <timestamp>__samples.csv   uma linha por amostra de força:
+      t_rel_s, cycle, phase, force_net_n, q1..q6, tcp_x, tcp_y, tcp_z
+  <timestamp>__params.json   parâmetros do start
+  <timestamp>__summary.json  métricas pós-run (gerado pelo palpation_report)
+  <timestamp>__plot.png      força×tempo por fase (se matplotlib disponível)
 
-Cada linha do CSV: t_rel_s, phase, fx, fy, fz, tx, ty, tz.
-
-Encerramento: o run fecha automaticamente quando recebe status DONE ou
-ABORTED, ou após 5 min de inatividade do /ft_sensor/wrench (timeout de
-segurança caso o explorer caia e nunca emita DONE).
+Encerramento: o run fecha quando recebe status DONE ou ABORTED, ou após
+5 min sem amostras de força (timeout de segurança caso o explorer caia).
+Ao fechar um run com amostras, o relatório é gerado automaticamente em
+background (ver palpation_report.generate_report).
 """
 from __future__ import annotations
 
@@ -31,20 +39,29 @@ import time
 from datetime import datetime
 from typing import IO
 
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
     QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy,
 )
 
-from std_msgs.msg import String
-from geometry_msgs.msg import WrenchStamped
+from std_msgs.msg import Float32
+from sensor_msgs.msg import JointState
+from rosidl_runtime_py.convert import message_to_ordereddict
+from touch_pack_msgs.msg import PalpationStart, PalpationStatus
+
+from .kinematics import forward_kinematics, T_TOUCH_TOOL_ATTACH
+from .constants import ARM_JOINTS as _ARM_JOINTS, RUNS_DIR as OUTPUT_DIR
 
 
 log = logging.getLogger('touch_pack.palpation_logger')
 
-OUTPUT_DIR = os.path.expanduser('~/touch_pack_runs')
-RUN_IDLE_TIMEOUT_S = 300.0   # 5 min sem wrench → fecha run "perdido"
+RUN_IDLE_TIMEOUT_S = 300.0   # 5 min sem força → fecha run "perdido"
+
+CSV_HEADER = ['t_rel_s', 'cycle', 'phase', 'force_net_n',
+              'q1', 'q2', 'q3', 'q4', 'q5', 'q6',
+              'tcp_x', 'tcp_y', 'tcp_z']
 
 _QOS_COMMAND = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
@@ -69,15 +86,21 @@ class PalpationLogger(Node):
         self._run_path: str | None = None
         self._run_t0: float | None = None
         self._phase: str = 'IDLE'
-        self._last_wrench_t: float = 0.0
+        self._cycle: int = 0
+        self._last_sample_t: float = 0.0
         self._sample_count: int = 0
+        # Últimas juntas do braço (rad, ordem _ARM_JOINTS); None até o
+        # primeiro /joint_states.
+        self._q: np.ndarray | None = None
 
         self.create_subscription(
-            String, '/palpation/start', self._cb_start, _QOS_COMMAND)
+            PalpationStart, '/palpation/start', self._cb_start, _QOS_COMMAND)
         self.create_subscription(
-            String, '/palpation/status', self._cb_status, 10)
+            PalpationStatus, '/palpation/status', self._cb_status, 10)
         self.create_subscription(
-            WrenchStamped, '/ft_sensor/wrench', self._cb_wrench, _QOS_SENSOR)
+            Float32, '/load_cell/force_net', self._cb_force, _QOS_SENSOR)
+        self.create_subscription(
+            JointState, '/joint_states', self._cb_joints, 50)
 
         # Watchdog @1 Hz para fechar runs órfãos.
         self.create_timer(1.0, self._watchdog)
@@ -86,14 +109,15 @@ class PalpationLogger(Node):
             f'palpation_logger ativo — gravando em {OUTPUT_DIR}/')
 
     # ── Callbacks ────────────────────────────────────────────────────
-    def _cb_start(self, msg: String) -> None:
-        """Início de um novo run: cria CSV e dump dos parâmetros em JSON."""
+    def _cb_start(self, msg: PalpationStart) -> None:
+        """Início de um novo run: cria CSV e dump dos parâmetros em JSON.
+        O msg tipado vira dict (mesmas chaves dos campos) para o
+        __params.json — o palpation_report lê 'force_n' etc. de lá."""
         try:
-            params = json.loads(msg.data)
-            if not isinstance(params, dict):
-                params = {'raw': msg.data}
-        except json.JSONDecodeError:
-            params = {'raw': msg.data}
+            params = dict(message_to_ordereddict(msg))
+            params['home_deg'] = list(params.get('home_deg', []))
+        except Exception:
+            params = {}
 
         with self._lock:
             self._close_run_locked('superseded')
@@ -104,8 +128,7 @@ class PalpationLogger(Node):
             try:
                 fh = open(csv_path, 'w', newline='')
                 writer = csv.writer(fh)
-                writer.writerow(['t_rel_s', 'phase',
-                                 'fx', 'fy', 'fz', 'tx', 'ty', 'tz'])
+                writer.writerow(CSV_HEADER)
                 with open(json_path, 'w') as pf:
                     json.dump(params, pf, indent=2, sort_keys=True)
             except OSError as exc:
@@ -118,39 +141,55 @@ class PalpationLogger(Node):
             self._csv_writer = writer
             self._run_path = csv_path
             self._run_t0 = time.time()
-            self._last_wrench_t = self._run_t0
+            self._last_sample_t = self._run_t0
             self._sample_count = 0
             self._phase = 'IDLE'
+            self._cycle = 0
             self.get_logger().info(
                 f'Run iniciado → {os.path.basename(csv_path)}')
 
-    def _cb_status(self, msg: String) -> None:
-        try:
-            data = json.loads(msg.data)
-            phase = str(data.get('phase', 'IDLE'))
-        except (json.JSONDecodeError, AttributeError):
-            return
+    def _cb_status(self, msg: PalpationStatus) -> None:
         with self._lock:
-            self._phase = phase
-            if phase in ('DONE', 'ABORTED') and self._csv_fh is not None:
-                self._close_run_locked(phase)
+            self._phase = msg.phase
+            self._cycle = int(msg.cycle)
+            if msg.phase in ('DONE', 'ABORTED') and self._csv_fh is not None:
+                self._close_run_locked(msg.phase)
 
-    def _cb_wrench(self, msg: WrenchStamped) -> None:
+    def _cb_joints(self, msg: JointState) -> None:
+        idx = {n: i for i, n in enumerate(msg.name)}
+        if not all(j in idx for j in _ARM_JOINTS):
+            return   # mensagem só com juntas da mão
+        q = np.array([float(msg.position[idx[j]]) for j in _ARM_JOINTS])
+        with self._lock:
+            self._q = q
+
+    def _cb_force(self, msg: Float32) -> None:
+        """Uma amostra por leitura de força (~50 Hz) — sinal canônico."""
         now = time.time()
         with self._lock:
-            self._last_wrench_t = now
+            self._last_sample_t = now
             if self._csv_writer is None or self._run_t0 is None:
                 return
+            q = self._q
+            if q is not None:
+                try:
+                    tcp = forward_kinematics(
+                        q, T_end=T_TOUCH_TOOL_ATTACH)[:3, 3]
+                    tcp_cols = [f'{v:.5f}' for v in tcp]
+                except Exception:
+                    tcp_cols = ['', '', '']
+                q_cols = [f'{v:.5f}' for v in q]
+            else:
+                q_cols = [''] * 6
+                tcp_cols = [''] * 3
             try:
                 self._csv_writer.writerow([
                     f'{now - self._run_t0:.4f}',
+                    self._cycle,
                     self._phase,
-                    f'{msg.wrench.force.x:.4f}',
-                    f'{msg.wrench.force.y:.4f}',
-                    f'{msg.wrench.force.z:.4f}',
-                    f'{msg.wrench.torque.x:.4f}',
-                    f'{msg.wrench.torque.y:.4f}',
-                    f'{msg.wrench.torque.z:.4f}',
+                    f'{float(msg.data):.4f}',
+                    *q_cols,
+                    *tcp_cols,
                 ])
                 self._sample_count += 1
                 # Flush a cada 50 amostras (~1 s @ 50 Hz) para não perder
@@ -164,10 +203,10 @@ class PalpationLogger(Node):
         with self._lock:
             if self._csv_fh is None or self._run_t0 is None:
                 return
-            if time.time() - self._last_wrench_t > RUN_IDLE_TIMEOUT_S:
+            if time.time() - self._last_sample_t > RUN_IDLE_TIMEOUT_S:
                 self.get_logger().warn(
-                    f'Run sem wrench há {RUN_IDLE_TIMEOUT_S:.0f}s — '
-                    'encerrando por timeout.')
+                    f'Run sem amostras de força há {RUN_IDLE_TIMEOUT_S:.0f}s '
+                    '— encerrando por timeout.')
                 self._close_run_locked('timeout')
 
     # ── Encerramento ─────────────────────────────────────────────────
@@ -182,14 +221,32 @@ class PalpationLogger(Node):
             pass
         duration = (time.time() - self._run_t0
                      if self._run_t0 else 0.0)
+        run_path = self._run_path
+        n_samples = self._sample_count
         self.get_logger().info(
-            f'Run encerrado ({reason}): {self._sample_count} amostras '
-            f'em {duration:.1f}s → {os.path.basename(self._run_path or "?")}')
+            f'Run encerrado ({reason}): {n_samples} amostras '
+            f'em {duration:.1f}s → {os.path.basename(run_path or "?")}')
         self._csv_fh = None
         self._csv_writer = None
         self._run_path = None
         self._run_t0 = None
         self._sample_count = 0
+        # Relatório pós-run (summary JSON + gráfico) em background — só
+        # para runs concluídos com dados; 'superseded' é um run substituído.
+        if run_path and n_samples > 0 and reason != 'superseded':
+            threading.Thread(
+                target=self._generate_report, args=(run_path,),
+                daemon=True, name='palpation-report').start()
+
+    def _generate_report(self, csv_path: str) -> None:
+        try:
+            from .palpation_report import generate_report
+            summary = generate_report(csv_path)
+            self.get_logger().info(
+                'Relatório gerado: '
+                f'{os.path.basename(summary.get("summary_path", "?"))}')
+        except Exception as exc:   # nunca derruba o logger
+            self.get_logger().warn(f'Falha ao gerar relatório: {exc}')
 
     def close(self) -> None:
         with self._lock:
