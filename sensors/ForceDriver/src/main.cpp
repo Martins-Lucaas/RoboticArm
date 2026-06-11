@@ -22,13 +22,47 @@ WiFiUDP udp;
 // ADC — célula de carga via amplificador no GPIO 34
 // ======================================================
 #define ADC_PIN       34
-#define OVERSAMPLE_N  16
+#define OVERSAMPLE_N  64
+#define TRIM_N        16   // descarta as 16 menores e 16 maiores leituras
 
 // ======================================================
-// FILTRO EXPONENCIAL
+// FILTRO — 3 estágios contra spikes do ADC (pioram com
+// WiFi ativo) e ruído de fundo:
+//   1. média aparada das 64 leituras (remove outliers
+//      dentro da rajada de oversampling)
+//   2. mediana de 5 amostras de força (elimina spikes
+//      isolados por completo, sem atrasar degraus reais)
+//   3. EMA em cascata dupla (rolloff de 2ª ordem,
+//      fc ≈ 0.6 Hz @ 50 Hz)
 // ======================================================
+const float ALPHA = 0.12f;
+
+static float ema_stage1     = 0.0f;
 static float force_filtered = 0.0f;
-const float  ALPHA          = 0.15f;
+
+#define MEDIAN_N 5
+static float median_buf[MEDIAN_N] = {0};
+static int   median_idx           = 0;
+
+static float median5(const float* buf)
+{
+    float s[MEDIAN_N];
+    memcpy(s, buf, sizeof(s));
+    for (int i = 1; i < MEDIAN_N; ++i) {
+        float v = s[i];
+        int j = i - 1;
+        while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; --j; }
+        s[j + 1] = v;
+    }
+    return s[MEDIAN_N / 2];
+}
+
+static void filter_reset(float value)
+{
+    ema_stage1     = value;
+    force_filtered = value;
+    for (int i = 0; i < MEDIAN_N; ++i) median_buf[i] = value;
+}
 
 // ======================================================
 // DIVISOR DE TENSÃO DO AMPLIFICADOR
@@ -149,12 +183,20 @@ void loop()
     if (now - last_sample_ms < SAMPLE_INTERVAL_MS) return;
     last_sample_ms += SAMPLE_INTERVAL_MS;
 
-    // Oversampling
-    uint32_t adc_acc = 0;
+    // Oversampling com média aparada: ordena as leituras e
+    // descarta os TRIM_N extremos de cada lado antes da média
+    uint16_t samples[OVERSAMPLE_N];
     for (int i = 0; i < OVERSAMPLE_N; ++i) {
-        adc_acc += analogRead(ADC_PIN);
+        uint16_t v = (uint16_t)analogRead(ADC_PIN);
+        int j = i - 1;
+        while (j >= 0 && samples[j] > v) { samples[j + 1] = samples[j]; --j; }
+        samples[j + 1] = v;
     }
-    float v_adc    = (adc_acc / (float)OVERSAMPLE_N * 3.3f) / 4095.0f;
+    uint32_t adc_acc = 0;
+    for (int i = TRIM_N; i < OVERSAMPLE_N - TRIM_N; ++i) {
+        adc_acc += samples[i];
+    }
+    float v_adc    = (adc_acc / (float)(OVERSAMPLE_N - 2 * TRIM_N) * 3.3f) / 4095.0f;
     float v_sensor = v_adc * ((R1 + R2) / R2);
 
     // Comandos seriais — lidos após leitura do ADC para
@@ -163,12 +205,12 @@ void loop()
         char cmd = (char)Serial.read();
         if (cmd == 'T' || cmd == 't') {
             v_zero = v_sensor;
-            force_filtered = 0.0f;
+            filter_reset(0.0f);
             save_tare(v_zero);
             Serial.printf("Tara definida: v_zero = %.4f V\n", v_zero);
         } else if (cmd == 'R' || cmd == 'r') {
             v_zero = 0.0f;
-            force_filtered = 0.0f;
+            filter_reset(0.0f);
             save_tare(v_zero);
             Serial.println("Tara resetada para 0.0 V");
         }
@@ -176,7 +218,15 @@ void loop()
 
     // Força com sinal: positivo = tração, negativo = compressão
     float force = (v_sensor - v_zero) / CALIB_SLOPE;
-    force_filtered = ALPHA * force + (1.0f - ALPHA) * force_filtered;
+
+    // Estágio 2: mediana de 5 — spikes isolados não passam
+    median_buf[median_idx] = force;
+    median_idx = (median_idx + 1) % MEDIAN_N;
+    float force_med = median5(median_buf);
+
+    // Estágio 3: EMA em cascata dupla (passa-baixa de 2ª ordem)
+    ema_stage1     = ALPHA * force_med  + (1.0f - ALPHA) * ema_stage1;
+    force_filtered = ALPHA * ema_stage1 + (1.0f - ALPHA) * force_filtered;
 
     packet.v_sensor       = v_sensor;
     packet.force_filtered = force_filtered;
