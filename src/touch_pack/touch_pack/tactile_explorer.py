@@ -209,6 +209,10 @@ class TactileExplorer(Node):
         self._kd = float(self.get_parameter('kd').value)
         self._target_slide_mm: float = 50.0
         self._slide_speed_mms: float = 10.0
+        # Modo do experimento: 'SLIDE' (deslizamento) ou 'TOUCH' (toque).
+        # Em TOUCH pula-se a fase SLIDING — apenas descida com força
+        # controlada (HOLD) e recuo, repetido `_repeats` vezes (toques).
+        self._mode: str = 'SLIDE'
         self._slide_dir_vec: np.ndarray = np.array([0.0, 1.0])
         self._approach_dir: np.ndarray | None = None
         self._user_home_q: np.ndarray | None = None
@@ -313,6 +317,8 @@ class TactileExplorer(Node):
             self._kd = float(msg.kd)
             self._target_slide_mm = float(msg.slide_dist_mm)
             self._slide_speed_mms = float(msg.speed_mms)
+            mode = str(msg.mode).upper().strip()
+            self._mode = mode if mode in ('SLIDE', 'TOUCH') else 'SLIDE'
             if msg.approach_speed_mms > 0.0:
                 v_max = max(1.0, float(msg.approach_speed_mms))
                 v_min = max(0.5, v_max * 0.2)
@@ -1402,13 +1408,16 @@ class TactileExplorer(Node):
         try:
             with self._params_lock:
                 repeats = int(self._repeats)
+                mode = self._mode
             self._cycles_total = repeats
+            # Em TOUCH, cada "ciclo" é um toque (descida → hold → recuo).
+            label = 'TOQUE' if mode == 'TOUCH' else 'CICLO'
 
             for cycle in range(1, repeats + 1):
                 self._cycle = cycle
                 if repeats > 1:
                     self.get_logger().info(
-                        f'[CICLO] experimento {cycle}/{repeats}')
+                        f'[{label}] {cycle}/{repeats}')
 
                 if not self._phase_goto_home():
                     self._set_phase('ABORTED'); return
@@ -1425,11 +1434,14 @@ class TactileExplorer(Node):
                 if out != 'ok':
                     self._set_phase('ABORTED'); return
 
-                out = self._phase_sliding()
-                if out in ('force', 'error', 'stale'):
-                    self._abort_to_home(); return
-                if out != 'ok':
-                    self._set_phase('ABORTED'); return
+                # Modo TOUCH: só toca a mesa com força controlada (DESCENDING
+                # + HOLD) e recua — sem deslizamento lateral.
+                if mode != 'TOUCH':
+                    out = self._phase_sliding()
+                    if out in ('force', 'error', 'stale'):
+                        self._abort_to_home(); return
+                    if out != 'ok':
+                        self._set_phase('ABORTED'); return
 
                 if cycle < repeats:
                     # Entre ciclos: só recua da superfície — o próximo

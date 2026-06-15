@@ -41,7 +41,11 @@ Implementada em `grasp_ml_pack/kinematics.py` — convenção **URDF nativa** (n
 
 ### Cinemática direta do braço — `forward_kinematics(q)`
 
-Compõe 6 transformações origem URDF e aplica `T_HAND_ATTACH` (translação +115 mm em Z do Link6) para chegar ao TCP da palma.
+Compõe 6 transformações origem URDF e aplica `T_HAND_ATTACH` para chegar ao
+TCP (ponto de convergência dos fingertips). Translação **170.46 mm** em Z do
+Link6 = acoplador da prótese **55.46 mm** + **115 mm** palma→TCP; a mão
+acopla com `Rx(+90°)` (URDF), de modo que a direção dos dedos coincide com
+`+Link6_z` (eixo de aproximação top-down).
 
 | Junta | xyz (m) | rpy (rad) |
 |---|---|---|
@@ -67,14 +71,43 @@ JOINT_MAX = [+180°,   80°, +135°,   80°, +135°, +360°]
 
 ### Cinemática da mão — `hand_fk(hand_state)`
 
-Retorna posição 3D de fingertips, MCPs e palm_center em `hand_base_link`. Usada para alinhar a `grasp_center` com a superfície do objeto antes de enviar o IK do braço.
+Retorna posição 3D de fingertips, MCPs e `palm_center` em `hand_base_link`.
+A `grasp_center_in_hand` usa esses pontos para alinhar o centro de preensão
+com o centro do objeto antes do IK do braço.
+
+**FK real por dedo (via URDF).** Cada dedo usa a **sua** cadeia cinemática
+real (origens, eixos e razões de mimic) extraída de
+`linear_covvi_hand_gazebo.urdf`; a ponta vem do vértice mais distal do STL
+da falange distal. Substitui o antigo modelo 2-link planar aproximado, que
+usava um comprimento de falange **único (45 mm)** para todos os dedos e
+colocava o `grasp_center` ~60 mm fora — causa dos picks que erravam de forma
+grotesca. As cadeias estão pré-computadas em `_FINGER_CHAINS` (geradas
+offline; não editar à mão).
+
+Geometria real extraída do URDF (frame `hand_base_link`):
+
+| Medida | Valor |
+|---|---|
+| Falange proximal (MCP→DIP) | Polegar 60.8 · Indicador 30.0 · Médio 34.0 · Anelar 32.0 · Mínimo 24.0 mm |
+| Centro da mão → base do dedo (‖MCP‖) | ~95 mm (dedos longos) · 51.9 mm (polegar) |
+| Dedo-a-dedo (MCPs adjacentes) | ~20 mm · Polegar–Indicador 77.5 mm |
+| Acoplador Link6→mão | 55.46 mm + `Rx(90°)` |
+
+Validação numérica (FK braço + mão, malha fechada): o `grasp_center` cai no
+centro do objeto com **~2 mm** (era ~60 mm) para frasco e ampola.
 
 ### Verificar IK
 
 ```bash
-ros2 run grasp_ml_pack test_kin
-# Esperado: PASS ✓ com erro < 1 mm em todos os waypoints
+# Round-trip rápido FK→IK (Python):
+python3 -c "from grasp_ml_pack.kinematics import forward_kinematics, inverse_kinematics; \
+import numpy as np; q=np.array([.3,-.3,-1.3,-1.4,.4,.1]); T=forward_kinematics(q); \
+qs,ok=inverse_kinematics(T[:3,3],T[:3,2],q_seed=q); print('ok',ok)"
 ```
+
+> Nota: o entry point `test_kin` (`scripts/test_kinematics.py`) está
+> desatualizado (importa `DH_CR10`, removido no refactor para convenção
+> URDF) e falha — usar o round-trip acima até o script ser corrigido.
 
 ---
 
@@ -97,6 +130,27 @@ ros2 run grasp_ml_pack test_kin
 **PerfectGrasp:** ramp de 0.06 rad / 100 ms; detecta contato por `lag = commanded − actual > 0.04 rad` por 2 ticks; congela o dedo no contato. Evita ejeção do objeto.
 
 **Cage check** (`cage_check.py`): valida fingertip_z, r_tip vs AABB do objeto. Não-fatal — loga warn se inválido, o PerfectGrasp ainda executa.
+
+### Alvo de pick (IK dinâmica + colisão)
+
+O `grasp_executor` resolve as poses **na posição real do objeto** lida de
+`/gazebo/model_states` (`_solve_grasp_poses_at`); os alvos de TCP
+(`PICK_TCP_WORLD` em `poses.py`) são computados a partir do `grasp_center`
+real da mão. As poses cacheadas em `poses.py` servem de **semente** e
+**fallback** (regenerar com `GRASP_RECOMPUTE_POSES=1` +
+`recompute_and_print_poses`).
+
+O PICK é resolvido **com checagem de colisão tolerando apenas `belt_surface`**
+(a laje fina do topo da esteira onde o objeto repousa — não é obstáculo real
+para o punho que precisa pegá-lo); a estrutura sólida `belt_frame` continua
+verificada. Sem solução segura, o executor cai na pose cacheada conhecida-boa
+em vez de executar um ramo IK ruim.
+
+> **Tubo (grasp lateral):** com a geometria corrigida, o único ramo que
+> atinge o centro do tubo mergulha o flange ~2 mm no `belt_frame`, então o
+> tubo opera no **fallback seguro** (pose cacheada). Ajustar a folga/altura
+> do approach lateral e validar no Gazebo antes de regenerar a pose do tubo.
+> Frasco e ampola (top-down) usam o IK dinâmico corrigido normalmente.
 
 ---
 
@@ -142,9 +196,8 @@ ros2 run grasp_ml_pack pipeline
 # GUIs
 ros2 run grasp_ml_pack gui_control      # GUI padrão: esteira + grasp
 ros2 run grasp_ml_pack manual_control   # sliders por junta + grips ECI
-ros2 run grasp_ml_pack teach_pendant    # jog + waypoint recorder
 
-# Cinemática (teste unitário)
+# Cinemática (teste unitário — atualmente quebrado, ver "Verificar IK")
 ros2 run grasp_ml_pack test_kin
 ```
 

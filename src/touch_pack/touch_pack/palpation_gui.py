@@ -124,11 +124,13 @@ try:
         ROWS as TOUCH_ROWS, COLS as TOUCH_COLS, NUM_TAXELS as TOUCH_TAXELS,
     )
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.animation import FuncAnimation
     _TOUCH_PLOT_OK = True
 except Exception:  # pragma: no cover
     TouchSensorSource = None
     TouchFigure = None
     FigureCanvasTkAgg = None
+    FuncAnimation = None
     TOUCH_ROWS = TOUCH_COLS = 4
     TOUCH_TAXELS = 16
     _TOUCH_PLOT_OK = False
@@ -441,6 +443,8 @@ class PalpationGUI(Node):
         self._touch_source = None      # TouchSensorSource | None
         self._touch_figure = None      # TouchFigure | None
         self._touch_canvas = None      # FigureCanvasTkAgg | None
+        self._touch_anim = None        # FuncAnimation | None (blit)
+        self._touch_anim_running = False
         self._touch_serial_ok = False
         self._sensors_tab_frame: tk.Frame | None = None
         self._sensors_after: str | None = None
@@ -596,10 +600,22 @@ class PalpationGUI(Node):
                 self._touch_canvas.get_tk_widget().pack(
                     fill='both', expand=True)
                 self._touch_canvas.draw()
+                # Animação com blit=True: redesenha SÓ os artistas que mudam
+                # (mesma técnica do plotter standalone), em vez do redesenho
+                # completo via draw_idle — corrige o travamento e o raster
+                # que não deslizava suave. Inicia pausada; o loop de refresh
+                # a retoma só quando a aba Sensores está visível.
+                self._touch_anim = FuncAnimation(
+                    self._touch_figure.fig,
+                    self._touch_figure.update,
+                    init_func=self._touch_figure.init_blit,
+                    interval=50, blit=True, cache_frame_data=False)
+                self._touch_anim_running = True
             except Exception as exc:
                 log.warning('[TOUCH] falha ao embutir figura: %s', exc)
                 self._touch_figure = None
                 self._touch_canvas = None
+                self._touch_anim = None
                 tk.Label(plot_holder,
                          text=f'Figura indisponível: {exc}',
                          font=FONT_LBL, bg=PANEL, fg=TEXT_DIM).pack(
@@ -641,25 +657,34 @@ class PalpationGUI(Node):
         self._sens_force_spark.pack(fill='x', pady=(4, 2))
 
     def _refresh_sensors_tab(self) -> None:
-        """Loop de redesenho da aba Sensores. Para poupar CPU, só atualiza a
-        figura matplotlib (cara) quando a aba está de fato visível."""
+        """Loop da aba Sensores. A figura do toque é desenhada pela
+        FuncAnimation (blit); aqui só a pausamos/retomamos conforme a aba
+        esteja visível (poupa CPU) e atualizamos os números da célula."""
         try:
             nb = getattr(self, '_nb', None)
             frame = self._sensors_tab_frame
             visible = (nb is not None and frame is not None
                        and str(nb.select()) == str(frame))
+            self._set_touch_anim(visible)
             if visible:
-                if (self._touch_figure is not None
-                        and self._touch_canvas is not None):
-                    try:
-                        self._touch_figure.update()
-                        self._touch_canvas.draw_idle()
-                    except Exception as exc:
-                        log.debug('touch figure update falhou: %s', exc)
                 self._update_sensors_panel()
         finally:
             self._sensors_after = self.root.after(
                 80, self._refresh_sensors_tab)
+
+    def _set_touch_anim(self, run: bool) -> None:
+        """Liga/desliga a animação blit do touch sensor (idempotente)."""
+        anim = getattr(self, '_touch_anim', None)
+        if anim is None or run == self._touch_anim_running:
+            return
+        try:
+            if run:
+                anim.resume()
+            else:
+                anim.pause()
+            self._touch_anim_running = run
+        except Exception as exc:
+            log.debug('touch anim toggle falhou: %s', exc)
 
     def _update_sensors_panel(self) -> None:
         """Atualiza os números da célula de carga + sparkline na aba Sensores."""
@@ -1124,21 +1149,20 @@ class PalpationGUI(Node):
             value=str(sv.get('slide_dir', '+Y')))
         self.repeats_var    = tk.IntVar(value=int(_f('repeats',
                                                      REPEAT_DEFAULT)))
+        # Modo de palpação: 'SLIDE' (deslizamento) | 'TOUCH' (toque).
+        _mode0 = str(sv.get('mode', 'SLIDE')).upper()
+        self.mode_var = tk.StringVar(
+            value=_mode0 if _mode0 in ('SLIDE', 'TOUCH') else 'SLIDE')
         # Estabilização do HOLD (defaults espelham o explorer).
         self.hold_tol_var     = tk.DoubleVar(value=_f('hold_tol', 0.15))
         self.hold_stable_var  = tk.DoubleVar(value=_f('hold_stable', 1.0))
         self.hold_timeout_var = tk.DoubleVar(value=_f('hold_timeout', 12.0))
 
-        # Parâmetros essenciais — sempre visíveis.
-        self._param_row(params_card, label='Velocidade de Deslizamento',
-                         unit='mm/s', var=self.speed_var,
-                         vmin=SPEED_MIN, vmax=SPEED_MAX, step=1.0,
-                         hint='Referências do artigo: 5, 10, 15 mm/s')
-        self._param_row(params_card, label='Distância de Deslizamento',
-                         unit='mm', var=self.slide_dist_var,
-                         vmin=SLIDE_DIST_MIN, vmax=SLIDE_DIST_MAX, step=5.0,
-                         hint='Comprimento do trajeto lateral. '
-                              'Máximo de segurança: 300 mm.')
+        # Seletor de modo (Toque / Deslizamento) — define quais parâmetros
+        # ficam visíveis abaixo.
+        self._build_palp_mode_selector(params_card)
+
+        # Parâmetros essenciais — sempre visíveis (válidos em ambos os modos).
         self._param_row(params_card, label='Força Alvo (Setpoint do PID)',
                          unit='N', var=self.force_sp_var,
                          vmin=FORCE_SP_MIN, vmax=FORCE_SP_MAX, step=1,
@@ -1147,18 +1171,40 @@ class PalpationGUI(Node):
                               'HOLD e no deslizamento. Apenas valores '
                               'inteiros (1–10 N). Medição cancelada se '
                               'exceder 15 N.')
-        self._param_row(params_card, label='Repetições do Experimento',
+        self._row_repeats = self._param_row(
+                         params_card, label='Repetições do Experimento',
                          unit='×', var=self.repeats_var,
                          vmin=REPEAT_MIN, vmax=REPEAT_MAX, step=1,
                          integer=True,
                          hint='Quantos ciclos completos (descida → '
                               'deslizamento → recuo) executar em sequência '
                               'automaticamente. A fase mostra o ciclo atual.')
+        # Referência ao label de repetições (relabel dinâmico por modo).
+        self._repeats_lbl = self._row_repeats.winfo_children()[0].winfo_children()[0]
 
-        self._build_slide_dir_selector(params_card)
+        # Bloco de parâmetros exclusivos do deslizamento — mostrado/ocultado
+        # como uma unidade conforme o modo (preserva a ordem ao reaparecer).
+        self._slide_group = tk.Frame(params_card, bg=PANEL)
+        self._param_row(self._slide_group, label='Velocidade de Deslizamento',
+                         unit='mm/s', var=self.speed_var,
+                         vmin=SPEED_MIN, vmax=SPEED_MAX, step=1.0,
+                         hint='Referências do artigo: 5, 10, 15 mm/s')
+        self._param_row(self._slide_group, label='Distância de Deslizamento',
+                         unit='mm', var=self.slide_dist_var,
+                         vmin=SLIDE_DIST_MIN, vmax=SLIDE_DIST_MAX, step=5.0,
+                         hint='Comprimento do trajeto lateral. '
+                              'Máximo de segurança: 300 mm.')
+        self._build_slide_dir_selector(self._slide_group)
 
         # Parâmetros avançados — recolhidos por padrão (segurança + PID).
         adv = self._collapsible(params_card, 'Parâmetros avançados')
+        # Âncora para reempacotar o bloco de deslizamento antes dos avançados.
+        # _collapsible devolve o frame interno; o irmão de _slide_group em
+        # params_card é o wrapper externo (adv.master).
+        self._adv_frame = adv.master
+
+        # Aplica visibilidade inicial conforme o modo carregado.
+        self._on_palp_mode(self.mode_var.get())
         self._param_row(adv, label='Profundidade Máxima de Descida',
                          unit='mm', var=self.depth_var,
                          vmin=DEPTH_MIN, vmax=DEPTH_MAX, step=0.5,
@@ -1225,7 +1271,9 @@ class PalpationGUI(Node):
             cursor='hand2')
         self.pause_btn.pack(fill='x', pady=(0, 6))
         self.start_btn = tk.Button(
-            btn_wrap, text='▶  Iniciar Palpação',
+            btn_wrap, text=('▶  Iniciar Toque'
+                            if self.mode_var.get() == 'TOUCH'
+                            else '▶  Iniciar Palpação'),
             command=self._on_start, bg=PRIMARY, fg='white',
             activebackground=PRIMARY_HV, activeforeground='white',
             font=FONT_HEAD, relief='flat', bd=0, padx=18, pady=12,
@@ -4101,6 +4149,7 @@ class PalpationGUI(Node):
                    padx=(0 if d == '+X' else 4, 0))
             self._slide_dir_btns[d] = b
         self._on_slide_dir(self.slide_dir_var.get())
+        return row
 
     def _on_slide_dir(self, d: str) -> None:
         if d not in ('+X', '-X', '+Y', '-Y'):
@@ -4111,6 +4160,76 @@ class PalpationGUI(Node):
                 b.config(bg=PRIMARY, fg='white')
             else:
                 b.config(bg=BTN_NEUTRAL, fg=TEXT)
+
+    def _build_palp_mode_selector(self, parent) -> None:
+        """Segmented control (2 botões mutex) para o modo de palpação.
+
+        Toque         : desce até a força alvo, mantém (HOLD) e recua —
+                        repetido N vezes, sem deslizamento lateral.
+        Deslizamento  : ciclo completo (descida → hold → deslizamento → recuo).
+        """
+        row = tk.Frame(parent, bg=PANEL); row.pack(fill='x', pady=(2, 6))
+        top = tk.Frame(row, bg=PANEL); top.pack(fill='x')
+        mode_lbl = tk.Label(top, text='Modo de Palpação', font=FONT_LBL,
+                            bg=PANEL, fg=TEXT, anchor='w')
+        mode_lbl.pack(side='left')
+        info = tk.Label(top, text='ⓘ', font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM)
+        info.pack(side='left', padx=(5, 0))
+        _hint = ('Toque: encosta na mesa com força controlada e volta à home '
+                 '(quantidade selecionável). Deslizamento: ciclo completo com '
+                 'arrasto lateral.')
+        _Tooltip(mode_lbl, _hint)
+        _Tooltip(info, _hint)
+        btns = tk.Frame(row, bg=PANEL); btns.pack(fill='x', pady=(4, 2))
+        self._palp_mode_btns: dict[str, tk.Button] = {}
+        for key, txt in (('TOUCH', 'Toque'), ('SLIDE', 'Deslizamento')):
+            b = tk.Button(btns, text=txt,
+                          command=lambda k=key: self._on_palp_mode(k),
+                          bg=BTN_NEUTRAL, fg=TEXT, font=FONT_LBL,
+                          activebackground=PRIMARY_HV,
+                          activeforeground='white',
+                          relief='flat', bd=0, padx=14, pady=6,
+                          cursor='hand2')
+            b.pack(side='left', fill='x', expand=True,
+                   padx=(0 if key == 'TOUCH' else 4, 0))
+            self._palp_mode_btns[key] = b
+
+    def _on_palp_mode(self, mode: str) -> None:
+        """Aplica o modo: destaca o botão, mostra/esconde os parâmetros de
+        deslizamento e ajusta o rótulo de repetições/toques."""
+        if mode not in ('TOUCH', 'SLIDE'):
+            mode = 'SLIDE'
+        self.mode_var.set(mode)
+        for k, b in self._palp_mode_btns.items():
+            if k == mode:
+                b.config(bg=PRIMARY, fg='white')
+            else:
+                b.config(bg=BTN_NEUTRAL, fg=TEXT)
+
+        # Bloco exclusivo do deslizamento — oculto no modo Toque. Reempacota
+        # antes dos avançados para preservar a ordem ao reaparecer.
+        grp = getattr(self, '_slide_group', None)
+        if grp is not None:
+            if mode == 'SLIDE':
+                adv = getattr(self, '_adv_frame', None)
+                if adv is not None:
+                    grp.pack(fill='x', before=adv)
+                else:
+                    grp.pack(fill='x')
+            else:
+                grp.pack_forget()
+
+        # Rótulo de repetições muda de sentido conforme o modo.
+        lbl = getattr(self, '_repeats_lbl', None)
+        if lbl is not None:
+            lbl.config(text='Quantidade de Toques' if mode == 'TOUCH'
+                       else 'Repetições do Experimento')
+
+        # Texto do botão principal acompanha o modo.
+        btn = getattr(self, 'start_btn', None)
+        if btn is not None:
+            btn.config(text='▶  Iniciar Toque' if mode == 'TOUCH'
+                       else '▶  Iniciar Palpação')
 
     def _param_row(self, parent, *, label, unit, var,
                     vmin, vmax, step, hint='', integer=False):
@@ -4161,6 +4280,7 @@ class PalpationGUI(Node):
                    orient='horizontal',
                    style='Tactile.Horizontal.TScale'
                    ).pack(fill='x', pady=(2, 0))
+        return row
 
     # ──────────────────────────────────────────────────────────────────
     # MÃO COVVI — conexão / ECI / PWR
@@ -4711,8 +4831,8 @@ class PalpationGUI(Node):
 
     # ── Heartbeat + reconexão automática (braço CR10) ────────────────
     def _start_robot_heartbeat(self) -> None:
-        """Inicia thread daemon que sonda `RobotMode()` a cada 2 s.
-        Após 3 falhas consecutivas, dispara o worker de reconexão."""
+        """Inicia thread daemon que sonda `RobotMode()` a 5 Hz (200 ms).
+        Após MAX_FAILURES (40 ≈ 8 s) consecutivas, dispara a reconexão."""
         thr = self._robot_heartbeat_thread
         if thr is not None and thr.is_alive():
             return
@@ -5058,7 +5178,7 @@ class PalpationGUI(Node):
             self.fy_lbl.config(text=f'{lc_bruto:+6.2f} N')
 
         phase_color = {
-            'IDLE': TEXT_MUTED, 'DESCENDING': WARN,
+            'IDLE': TEXT_MUTED, 'HOME': PRIMARY, 'DESCENDING': WARN,
             'HOLD': OK, 'SLIDING': PRIMARY, 'RETRACT': TEXT_MUTED,
             'DONE': OK, 'ABORTED': DANGER,
         }.get(phase, TEXT)
@@ -5317,6 +5437,7 @@ class PalpationGUI(Node):
             'slide_dir': self.slide_dir_var.get(),
             'hold_tol': float(hold_tol), 'hold_stable': float(hold_stable),
             'hold_timeout': float(hold_timeout),
+            'mode': self.mode_var.get(),
         })
         payload = {
             'speed_mms':          float(speed),
@@ -5336,6 +5457,7 @@ class PalpationGUI(Node):
             'hold_tol_n':         float(hold_tol),
             'hold_stable_s':      float(hold_stable),
             'hold_timeout_s':     float(hold_timeout),
+            'mode':               self.mode_var.get(),
             # Home customizada: explorer leva o braço PARA CÁ antes
             # de descer. Em graus URDF, ordem joint1..joint6.
             'home_deg': [float(self._arm_home_deg[j]) for j in ARM_JOINTS],
@@ -5413,6 +5535,7 @@ class PalpationGUI(Node):
         msg.hold_tol_n         = float(payload['hold_tol_n'])
         msg.hold_stable_s      = float(payload['hold_stable_s'])
         msg.hold_timeout_s     = float(payload['hold_timeout_s'])
+        msg.mode               = str(payload.get('mode', 'SLIDE'))
         self._start_pub.publish(msg)
         # Quando a mão real está conectada via ECI, aciona o grip FINGER
         # (Index estendido) automaticamente, já que o tactile_explorer
@@ -5422,18 +5545,31 @@ class PalpationGUI(Node):
         # (SetCurrentGrip usa velocidade interna do firmware; SetDigitPosn permite controle).
         if self._eci_enabled:
             self._schedule_eci_posn(HAND_POINT_DEG)
-        rep_txt = (f'{payload["repeats"]}× | '
-                   if payload.get('repeats', 1) > 1 else '')
-        self._set_status(
-            f'/palpation/start — {rep_txt}'
-            f'v={payload["speed_mms"]:.1f} mm/s, '
-            f'F={payload["force_n"]:.2f} N, '
-            f'dir={payload["slide_dir"]} '
-            f'@ {payload["approach_speed_mms"]:.0f} mm/s | '
-            f'vel junta {payload["speed_factor_pct"]:.0f}% | '
-            f'PID Kp={payload["kp"]:.4g} Ki={payload["ki"]:.4g} '
-            f'Kd={payload["kd"]:.4g}.',
-            OK)
+        is_touch = str(payload.get('mode', 'SLIDE')) == 'TOUCH'
+        if is_touch:
+            rep_txt = (f'{payload["repeats"]} toques | '
+                       if payload.get('repeats', 1) > 1 else '1 toque | ')
+            self._set_status(
+                f'/palpation/start — TOQUE | {rep_txt}'
+                f'F={payload["force_n"]:.2f} N '
+                f'@ {payload["approach_speed_mms"]:.0f} mm/s | '
+                f'vel junta {payload["speed_factor_pct"]:.0f}% | '
+                f'PID Kp={payload["kp"]:.4g} Ki={payload["ki"]:.4g} '
+                f'Kd={payload["kd"]:.4g}.',
+                OK)
+        else:
+            rep_txt = (f'{payload["repeats"]}× | '
+                       if payload.get('repeats', 1) > 1 else '')
+            self._set_status(
+                f'/palpation/start — {rep_txt}'
+                f'v={payload["speed_mms"]:.1f} mm/s, '
+                f'F={payload["force_n"]:.2f} N, '
+                f'dir={payload["slide_dir"]} '
+                f'@ {payload["approach_speed_mms"]:.0f} mm/s | '
+                f'vel junta {payload["speed_factor_pct"]:.0f}% | '
+                f'PID Kp={payload["kp"]:.4g} Ki={payload["ki"]:.4g} '
+                f'Kd={payload["kd"]:.4g}.',
+                OK)
 
     def _set_status(self, text: str, color: str = TEXT_MUTED):
         self.status_var.set(text)
@@ -5471,6 +5607,16 @@ class PalpationGUI(Node):
             except Exception:
                 pass
             self._sensors_after = None
+        # Para a animação (blit) do touch sensor ANTES de destruir a janela —
+        # senão o timer Tk dela pode disparar durante/após o destroy() e
+        # tentar desenhar num canvas morto (traceback no fechamento).
+        anim = getattr(self, '_touch_anim', None)
+        if anim is not None:
+            try:
+                anim.event_source.stop()
+            except Exception:
+                pass
+            self._touch_anim_running = False
         # Encerra a thread de leitura serial do touch sensor.
         if self._touch_source is not None:
             try:

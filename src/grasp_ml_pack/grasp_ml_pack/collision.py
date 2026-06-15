@@ -144,7 +144,8 @@ def arm_clears_world(q: np.ndarray,
 def pose_is_safe(q: np.ndarray,
                  margin_arm: float = 0.010,
                  margin_wrist: float = 0.005,
-                 allow_object: str | None = None
+                 allow_object: str | None = None,
+                 skip: set | None = None
                  ) -> tuple[bool, str]:
     """Valida uma pose IK contra TODOS os obstáculos do mundo:
 
@@ -155,17 +156,21 @@ def pose_is_safe(q: np.ndarray,
         precisa chegar perto dos objetos).
       • `allow_object`: nome do objeto picável que a mão pode tocar
         (e.g. 'frasco' no instante do pick). Ignora apenas esse objeto.
+      • `skip`: nomes de obstáculos a ignorar. Use {'belt_surface'} no
+        instante do PICK: o objeto repousa sobre a laje do topo da esteira
+        (z≈0.80–0.806 m), então o flange forçosamente chega a esse nível
+        para pegá-lo — `belt_surface` não é obstáculo real ali. A estrutura
+        sólida da esteira (`belt_frame`) continua verificada.
     """
-    # Subset 1: links 1-3 vs obstáculos volumosos (não ignoramos nada
-    # exceto se allow_object aplicar — mas objetos picáveis estão na
-    # esteira, não obstáculos)
+    skip = skip or set()
+    # Subset 1: links 1-3 vs obstáculos volumosos.
     ok, msg = arm_clears_world(q, links=(1, 2, 3),
-                                margin=margin_arm)
+                                margin=margin_arm, skip=skip)
     if not ok:
         return False, msg
-    # Subset 2: links 4-6 — margem menor
+    # Subset 2: links 4-6 — margem menor.
     ok, msg = arm_clears_world(q, links=(4, 5, 6),
-                                margin=margin_wrist)
+                                margin=margin_wrist, skip=skip)
     if not ok:
         return False, msg
     return True, 'OK'

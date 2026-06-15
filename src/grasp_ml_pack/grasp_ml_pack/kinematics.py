@@ -589,102 +589,127 @@ HAND_LOWER: dict[str, float] = {
 
 
 # ──────────────────────────────────────────────────────────────────────
-# FK 3D completa da mão COVVI
+# FK 3D real da mão COVVI — cadeias cinemáticas extraídas do URDF
 # ──────────────────────────────────────────────────────────────────────
-# Origens dos MCPs em hand_base_link, extraídas direto do URDF
-# (joints `*_proximal_j_input_joint`).
+# Antes a ponta de cada dedo era um modelo 2-link planar aproximado, com
+# comprimento de falange ÚNICO (45 mm) para TODOS os dedos — o que punha o
+# grasp_center no lugar errado e fazia o pick errar grotescamente.
+#
+# Agora cada dedo usa a SUA cadeia real (origens, eixos e razões de mimic)
+# lida de `linear_covvi_hand_gazebo.urdf`; a ponta é o vértice mais distal
+# do STL da falange distal transformado pela pose da cadeia. Resultado:
+# posição real e DIFERENCIADA por dedo (Thumb/Index/Middle/Ring/Little) em
+# qualquer config de driver. Comprimentos proximais reais (MCP→DIP):
+# Thumb 60.8 · Index 30.0 · Middle 34.0 · Ring 32.0 · Little 24.0 mm.
+#
+# Gerado offline a partir do URDF — NÃO editar à mão. Cada dedo:
+#   steps = lista de (T_pre[R(9)|t(3)], axis(3), mult, offset, driver)
+#   post  = T fixo final [R(9)|t(3)]
+#   tip   = vértice da ponta no frame da falange distal (m)
+_FINGER_CHAINS: dict[str, dict] = {
+  'Thumb': dict(
+    steps=[
+      ((1,0,0,0,1,2.10734e-08,0,-2.10734e-08,1,0.0242385,0.0229191,0.0125509), (-1.00391e-08,-1,1.8778e-08), 1.5333962, 2.1073424e-08, 'Rotate'),
+      ((1,0,0,0,1,2.10734e-08,0,-2.10734e-08,1,0.0217141,-0.0012565,-0.00214335), (0.148668,-0.130526,0.980235), 0.72022189, -1.6653e-16, 'Thumb'),
+      ((1,0,0,0,1,-4.996e-16,0,4.996e-16,1,0.0401327,0.0456062,-0.000204094), (0.148668,-0.130526,0.980235), 1.0668602, -3.3307e-16, 'Thumb'),
+    ],
+    post=(1,0,0,0,1,-3.3307e-16,0,3.3307e-16,1,-0.0860853,-0.0672688,-0.0102035),
+    tip=(0.105748,0.0897826,0.00704584),
+  ),
+  'Index': dict(
+    steps=[
+      ((1,0,0,0,1,1.49012e-08,0,-1.49012e-08,1,0.0231018,0.0913578,-0.014758), (0.993581,-0.0523073,-0.100299), 1.5160434, 1.4901161e-08, 'Index'),
+      ((1,0,0,0,1,3.59746e-08,0,-3.59746e-08,1,0.00101104,0.0298981,-0.00227873), (0.993581,-0.0523073,-0.100299), 1.3357411, 2.1073424e-08, 'Index'),
+    ],
+    post=(1,0,0,0,1,2.10734e-08,0,-2.10734e-08,1,-0.0241129,-0.121256,0.0170367),
+    tip=(0.0237377,0.156362,0.00204216),
+  ),
+  'Middle': dict(
+    steps=[
+      ((1,0,0,0,1,-5.5511e-16,0,5.5511e-16,1,0.00335578,0.0943765,-0.0155403), (0.991069,1.80633e-09,-0.133353), 1.5160437, -5.5511e-16, 'Middle'),
+      ((1,0,0,0,1,2.10734e-08,0,-2.10734e-08,1,-0.000205559,0.0339783,-0.00119819), (0.991069,-1.68948e-09,-0.133353), 1.3498601, 2.1073424e-08, 'Middle'),
+    ],
+    post=(1,0,0,0,1,2.10734e-08,0,-2.10734e-08,1,-0.00315022,-0.128355,0.0167384),
+    tip=(0.00566271,0.163452,0.00137744),
+  ),
+  'Ring': dict(
+    steps=[
+      ((1,0,0,0,1,-2.2204e-16,0,2.2204e-16,1,-0.0162024,0.0943769,-0.0108908), (0.990465,0.0348995,-0.133272), 1.5160433, -2.2204e-16, 'Ring'),
+      ((1,0,0,0,1,-5.5511e-16,0,5.5511e-16,1,-0.00141989,0.0318991,-0.00210517), (0.990465,0.0348995,-0.133272), 1.3487832, -3.3307e-16, 'Ring'),
+    ],
+    post=(1,0,0,0,1,-3.3307e-16,0,3.3307e-16,1,0.0176223,-0.126276,0.012996),
+    tip=(-0.0171145,0.161383,0.00411456),
+  ),
+  'Little': dict(
+    steps=[
+      ((1,0,0,0,1,-2.2204e-16,0,2.2204e-16,1,-0.0329171,0.0843286,-0.00394581), (0.978611,0.104422,-0.177246), 1.5160435, -2.2204e-16, 'Little'),
+      ((1,0,0,0,1,1.49012e-08,0,-1.49012e-08,1,-0.0031159,0.0235562,-0.00337618), (0.978611,0.104422,-0.177246), 1.3166415, 1.4901161e-08, 'Little'),
+    ],
+    post=(1,0,0,0,1,1.49012e-08,0,-1.49012e-08,1,0.036033,-0.107885,0.00732199),
+    tip=(-0.0313647,0.134236,0.00641898),
+  ),
+}
+
+# MCP (pivô proximal) por dedo — origens dos *_proximal_j_input_joint do
+# URDF, em hand_base_link. Verificado: bate exatamente com os pivôs do URDF.
+# Usado para palm_center e cage_check.
 _HAND_MCP: dict[str, tuple] = {
+    'Thumb':  (+0.04595, +0.02166, +0.01041),
     'Index':  (+0.02310, +0.09136, -0.01476),
     'Middle': (+0.00336, +0.09438, -0.01554),
     'Ring':   (-0.01620, +0.09438, -0.01089),
     'Little': (-0.03292, +0.08433, -0.00395),
-    # thumb_proximal_j_input em thumb_chassis (rotacionado por Rotate)
-    # — não diretamente em hand_base_link, ver _thumb_tip_hand abaixo.
 }
 
-# Thumb chassis pivot (Rotate joint) — URDF: parent=base_link.
-_THUMB_CHASSIS_PIVOT = np.array([0.02424, 0.02292, 0.01255])
-_THUMB_CHASSIS_AXIS  = np.array([0.0, -1.0, 0.0])     # rotação ≈ -hand_y
-_THUMB_CHASSIS_MULT  = 1.53339618                      # mimic Rotate
 
-# Em thumb_chassis (frame após Rotate): origem do MCP do polegar.
-_THUMB_MCP_IN_CHASSIS = np.array([0.04595, 0.02166, 0.01041])
-# Eixo de curl do thumb_proximal no frame thumb_chassis.
-_THUMB_PROX_AXIS = np.array([0.14867, -0.13053, 0.98024])
+def _T_from12(m) -> np.ndarray:
+    """Reconstrói T 4×4 de uma lista [R(9 row-major) | t(3)]."""
+    T = np.eye(4)
+    T[:3, :3] = np.array(m[:9], dtype=float).reshape(3, 3)
+    T[:3,  3] = np.array(m[9:], dtype=float)
+    return T
 
 
-def _rotate_axis_angle(v: np.ndarray, axis: np.ndarray, theta: float) -> np.ndarray:
-    """Fórmula de Rodrigues — rotaciona v em torno de axis por theta (rad)."""
-    k = axis / (np.linalg.norm(axis) + 1e-12)
+def _axis_rot(axis, theta: float) -> np.ndarray:
+    """Rotação 4×4 em torno de `axis` por `theta` (Rodrigues)."""
+    k = np.asarray(axis, dtype=float)
+    k = k / (np.linalg.norm(k) + 1e-12)
     c, s = math.cos(theta), math.sin(theta)
-    return v * c + np.cross(k, v) * s + k * (k @ v) * (1.0 - c)
+    K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    T = np.eye(4)
+    T[:3, :3] = np.eye(3) + s * K + (1.0 - c) * (K @ K)
+    return T
 
 
-def _finger_tip_in_hand_long(finger: str, primary: float) -> np.ndarray:
-    """Ponta dos 4 dedos longos (Index/Middle/Ring/Little) em hand_base_link.
-
-    Modelo planar 2-link: o dedo nasce no MCP e estende ao longo de +hand_y
-    quando aberto; curl move o tip em +hand_z (em direção à palma).
-    """
-    mx, my, mz = _HAND_MCP[finger]
-    tip = finger_fk(primary, k_p=_K_P_FINGER, k_d=_K_D_FINGER)
-    fx, _fy, fz = float(tip[0]), 0.0, float(tip[2])
-    return np.array([mx, my + fx, mz + fz])
-
-
-def _thumb_tip_in_hand(thumb_primary: float, rotate_primary: float) -> np.ndarray:
-    """Ponta do polegar em hand_base_link, considerando o Rotate (que gira
-    o chassis do polegar) e em seguida o curl do thumb_proximal/distal.
-
-    Aproximações: o curl 3D do polegar é tratado como planar 2-link no
-    plano do chassis, alinhado com `_THUMB_PROX_AXIS` (referência URDF).
-    """
-    # 1) Curl planar do polegar relativo ao MCP, no plano do chassis.
-    tip_planar = finger_fk(thumb_primary, k_p=_K_P_THUMB, k_d=_K_D_FINGER)
-    fx, _, fz = float(tip_planar[0]), 0.0, float(tip_planar[2])
-    # No frame chassis, o MCP está em _THUMB_MCP_IN_CHASSIS; o dedo
-    # estende ao longo de +y_chassis e curla em +z_chassis (aproximação).
-    tip_in_chassis = _THUMB_MCP_IN_CHASSIS + np.array([0.0, fx, fz])
-
-    # 2) Rotaciona o resultado pelo ângulo Rotate em torno do pivô do chassis.
-    theta = _THUMB_CHASSIS_MULT * rotate_primary
-    v = tip_in_chassis - _THUMB_CHASSIS_PIVOT
-    v_rot = _rotate_axis_angle(v, _THUMB_CHASSIS_AXIS, theta)
-    return _THUMB_CHASSIS_PIVOT + v_rot
+def _finger_tip_in_hand(finger: str, drivers: dict) -> np.ndarray:
+    """Ponta REAL do dedo em hand_base_link via a cadeia URDF do dedo."""
+    ch = _FINGER_CHAINS[finger]
+    T = np.eye(4)
+    for (M, axis, mult, off, drv) in ch['steps']:
+        q = mult * float(drivers.get(drv, 0.0)) + off
+        T = T @ _T_from12(M) @ _axis_rot(axis, q)
+    T = T @ _T_from12(ch['post'])
+    return T[:3, :3] @ np.asarray(ch['tip'], dtype=float) + T[:3, 3]
 
 
 def hand_fk(hand_state: dict) -> dict[str, np.ndarray]:
-    """FK completa da mão COVVI para um estado de juntas.
+    """FK real da mão COVVI para um estado de juntas.
 
     Args:
-        hand_state: dict com chaves 'Thumb','Index','Middle','Ring','Little'
-                    em rad (ângulo do driver, 0=aberto), opcionalmente 'Rotate'.
+        hand_state: {'Thumb','Index','Middle','Ring','Little','Rotate'} em rad
+                    (ângulo do driver, 0 = aberto). Chaves ausentes = 0.
 
     Returns:
-        Dict com:
-          fingertip positions: 'tip_<finger>' → (3,) em hand_base_link
-          MCP positions:        'mcp_<finger>' → (3,) em hand_base_link
-          'palm_center':        (3,) — centroide dos MCPs (ponto da palma)
-        Todos em metros, frame hand_base_link.
+        Dict com 'tip_<finger>' (ponta real via cadeia URDF), 'mcp_<finger>'
+        (pivô proximal) e 'palm_center' (centróide dos MCPs). Todos (3,) em
+        metros no frame hand_base_link.
     """
     out: dict[str, np.ndarray] = {}
-    rotate = float(hand_state.get('Rotate', 0.0))
-
-    for finger in ('Index', 'Middle', 'Ring', 'Little'):
-        primary = float(hand_state.get(finger, 0.0))
-        out['mcp_' + finger] = np.array(_HAND_MCP[finger])
-        out['tip_' + finger] = _finger_tip_in_hand_long(finger, primary)
-
-    thumb_primary = float(hand_state.get('Thumb', 0.0))
-    # MCP do polegar em hand_base_link já considera o Rotate (girar pivô).
-    v_mcp = _THUMB_MCP_IN_CHASSIS - _THUMB_CHASSIS_PIVOT
-    theta = _THUMB_CHASSIS_MULT * rotate
-    out['mcp_Thumb'] = (_THUMB_CHASSIS_PIVOT
-                        + _rotate_axis_angle(v_mcp, _THUMB_CHASSIS_AXIS, theta))
-    out['tip_Thumb'] = _thumb_tip_in_hand(thumb_primary, rotate)
-
+    for finger in ('Thumb', 'Index', 'Middle', 'Ring', 'Little'):
+        out['tip_' + finger] = _finger_tip_in_hand(finger, hand_state)
+        out['mcp_' + finger] = np.array(_HAND_MCP[finger], dtype=float)
     out['palm_center'] = np.mean(
-        [out[f'mcp_{f}'] for f in ('Thumb', 'Index', 'Middle', 'Ring', 'Little')],
+        [out['mcp_' + f] for f in ('Thumb', 'Index', 'Middle', 'Ring', 'Little')],
         axis=0)
     return out
 

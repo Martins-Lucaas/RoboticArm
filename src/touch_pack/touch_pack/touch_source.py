@@ -302,8 +302,29 @@ class TouchFigure:
         except Exception:
             pass
 
+        # Artistas que mudam a cada frame — com blit=True o matplotlib
+        # redesenha SOMENTE estes (não a figura inteira), o que elimina o
+        # travamento e faz o raster deslizar suave. Os textos do heatmap
+        # precisam entrar aqui, senão não são redesenhados sob o blit.
+        self.blit_artists = [
+            self.im_volt,
+            self.scatter_RA,
+            self.scatter_SA,
+            self.scatter_POST,
+            self.line_I_final,
+        ] + [t for row in self.texts_volt for t in row]
+
     # ──────────────────────────────────────────────────────────────────
-    def update(self) -> None:
+    def init_blit(self) -> list:
+        """Estado inicial usado pelo blit para capturar o fundo limpo."""
+        self.scatter_RA.set_offsets(np.empty((0, 2)))
+        self.scatter_SA.set_offsets(np.empty((0, 2)))
+        self.scatter_POST.set_offsets(np.empty((0, 2)))
+        self.line_I_final.set_data(self.x_fixed, [0.0] * WINDOW_SIZE)
+        return self.blit_artists
+
+    # ──────────────────────────────────────────────────────────────────
+    def update(self, *_frame) -> list:
         snap = self.source.snapshot()
         t_now = snap["t_now"]
         x_lo = max(0.0, t_now - RASTER_WINDOW)
@@ -337,3 +358,5 @@ class TouchFigure:
 
         # I_final.
         self.line_I_final.set_data(self.x_fixed, snap["i_final"])
+
+        return self.blit_artists

@@ -62,4 +62,26 @@ POSES_FILE            = os.path.join(CONFIG_DIR, 'poses.json')
 PALPATION_PARAMS_FILE = os.path.join(CONFIG_DIR, 'palpation_params.json')
 
 # ── Saída dos runs ───────────────────────────────────────────────────────────
-RUNS_DIR = os.path.expanduser('~/touch_pack_runs')
+# Os dados (CSV de runs e do stream força+toque) são gravados em
+# <raiz_do_repo>/sensors/Data. A raiz é localizada subindo a partir deste
+# arquivo até achar um diretório que contenha `sensors/` — funciona tanto
+# rodando do código-fonte (src/...) quanto do espaço instalado (install/...),
+# ambos sob a raiz do repositório. Override explícito: TOUCH_PACK_DATA_DIR.
+def _resolve_runs_dir() -> str:
+    env = os.environ.get('TOUCH_PACK_DATA_DIR')
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    d = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(10):
+        if os.path.isdir(os.path.join(d, 'sensors')):
+            return os.path.join(d, 'sensors', 'Data')
+        parent = os.path.dirname(d)
+        if parent == d:        # chegou na raiz do filesystem
+            break
+        d = parent
+    # Fallback: repo não encontrado (pacote instalado fora da árvore) —
+    # mantém o comportamento antigo para não perder dados.
+    return os.path.expanduser('~/touch_pack_runs')
+
+
+RUNS_DIR = _resolve_runs_dir()

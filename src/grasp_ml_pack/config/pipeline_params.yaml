@@ -35,22 +35,23 @@ grasp_executor:
     pick_x: 0.75
     pick_y: 0.00
 
-    # Altura do TCP (75 mm abaixo do flange Link6) no momento do grasp.
-    # world frame; belt_top = 0.806 m.
+    # CENTRO Z DO OBJETO (não o TCP!) na pose canônica em (0.75, 0).
+    # world frame; belt_top = 0.806 m. = belt_top + half_height.
     #
-    # Após a recalibração de `T_HAND_ATTACH` (kinematics.py), o TCP fica
-    # 75 mm abaixo do Link6, ou seja, no meio da palma+dedos. Os dedos
-    # estendidos fazem contato real com o objeto, e o flange Link6 fica
-    # ~5–10 mm acima do topo do objeto.
-    # Fórmula: pick_z = belt_top + obj_height − 0.030
-    #          (≈ obj_top − 30 mm para que TCP fique na cintura do objeto)
+    # ATENÇÃO (semântica): este parâmetro é usado como `ref_obj.z` em
+    # grasp_executor._solve_grasp_poses_at — os deltas palma↔objeto são
+    # PICK_TCP_WORLD − ref_obj. Portanto DEVE casar com o centro do objeto
+    # usado para calibrar PICK_TCP_WORLD em poses.py (cz=0.851/0.866/0.844),
+    # senão todas as poses de grasp ficam deslocadas em Z (a ponta mergulha
+    # alguns mm a mais no objeto/correia). Antes este YAML guardava a altura
+    # do TCP (obj_top−30mm) — semântica obsoleta que reintroduzia esse erro.
     #
-    # frasco (h=90mm):  0.806 + 0.090 − 0.030 = 0.866
-    pick_z_frasco: 0.866
-    # tubo   (h=120mm): 0.806 + 0.120 − 0.030 = 0.896
-    pick_z_tubo:   0.896
-    # ampola (h=75mm):  0.806 + 0.075 − 0.030 = 0.851
-    pick_z_ampola: 0.851
+    # frasco (h=90mm):  belt 0.806 + half 0.045 = 0.851
+    pick_z_frasco: 0.851
+    # tubo   (h=120mm): belt 0.806 + half 0.060 = 0.866
+    pick_z_tubo:   0.866
+    # ampola (h=75mm):  belt 0.806 + half 0.0375 = 0.844
+    pick_z_ampola: 0.844
 
     # ── Posições das caixas de destino (world frame) ─────────────────────
     # box_z é a altura de referência do centro da caixa.

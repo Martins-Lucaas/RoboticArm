@@ -5,9 +5,9 @@ Máquina de estados por ciclo (acionado via serviço /cell/execute_grasp):
   IDLE → PICK → LIFT → PLACE → HOME
 
 Grips determinísticos (sem ML):
-  ball   → palm_grip    → Box 1
-  cup    → claw_grip    → Box 2
-  pencil → fingertip_grip → Box 3
+  frasco → palm_grip      → Box 1
+  tubo   → claw_grip      → Box 2
+  ampola → fingertip_grip → Box 3
 
 Serviços expostos (não bloqueiam a GUI):
   /cell/execute_grasp  (std_srvs/Trigger) → inicia ciclo completo em thread
@@ -508,6 +508,12 @@ class GraspExecutorNode(Node):
         # coordenadas hardcoded e segue o objeto se ele moveu.
         self._world_obj_pos: np.ndarray | None = None
         self._world_obj_lock = threading.Lock()
+        # Serializa o check-and-set de _busy entre os serviços (executados
+        # concorrentemente sob ReentrantCallbackGroup + MultiThreadedExecutor).
+        # Sem ele, duas chamadas quase simultâneas podiam ambas passar pelo
+        # teste `if self._busy` e iniciar dois ciclos. Mesmo padrão do
+        # conveyor_controller.
+        self._busy_lock      = threading.Lock()
         self._busy           = False
         self._status_msg     = 'IDLE'
 
@@ -595,11 +601,6 @@ class GraspExecutorNode(Node):
 
     # ──────────────────────────────────────────────────────────────────
     def _cb_execute(self, _request, response: Trigger.Response):
-        if self._busy:
-            response.success = False
-            response.message = 'Executor ocupado — aguarde o ciclo atual terminar.'
-            return response
-
         obj_class = self._last_detection
         if obj_class is None or obj_class not in _OBJECT_MAP:
             response.success = False
@@ -609,7 +610,12 @@ class GraspExecutorNode(Node):
                 'Verifique a esteira antes de agarrar.')
             return response
 
-        self._busy = True
+        with self._busy_lock:
+            if self._busy:
+                response.success = False
+                response.message = 'Executor ocupado — aguarde o ciclo atual terminar.'
+                return response
+            self._busy = True
         threading.Thread(
             target=self._run_cycle, args=(obj_class,), daemon=True).start()
 
@@ -618,11 +624,12 @@ class GraspExecutorNode(Node):
         return response
 
     def _cb_home(self, _request, response: Trigger.Response):
-        if self._busy:
-            response.success = False
-            response.message = 'Executor ocupado.'
-            return response
-        self._busy = True
+        with self._busy_lock:
+            if self._busy:
+                response.success = False
+                response.message = 'Executor ocupado.'
+                return response
+            self._busy = True
         threading.Thread(target=self._do_home, daemon=True).start()
         response.success = True
         response.message = 'Indo para home.'
@@ -642,11 +649,6 @@ class GraspExecutorNode(Node):
           tubo   → claw_grip      → preensão em garra para tubo de ensaio
           ampola → fingertip_grip → preensão de pinça fina para ampola
         """
-        if self._busy:
-            response.success = False
-            response.message = 'Executor ocupado.'
-            return response
-
         obj = self._last_detection
         if obj is None or obj not in _OBJECT_MAP:
             response.success = False
@@ -654,13 +656,19 @@ class GraspExecutorNode(Node):
                                 f'(detectado: {obj!r}).')
             return response
 
+        with self._busy_lock:
+            if self._busy:
+                response.success = False
+                response.message = 'Executor ocupado.'
+                return response
+            self._busy = True
+
         grip_type, _, obj_diam = _OBJECT_MAP[obj]
         cfg_grasp  = hand_ik(grip_type, obj_diam)
         cfg_closed = _close_extra(cfg_grasp)
 
         # Executa em thread para não bloquear o serviço
         def _do():
-            self._busy = True
             try:
                 self._status_msg = f'CLOSE_HAND:{obj}({grip_type})'
                 self.get_logger().info(
@@ -705,13 +713,14 @@ class GraspExecutorNode(Node):
 
     def _cb_open_hand(self, _request, response: Trigger.Response):
         """Abre completamente a mão (cfg `open`)."""
-        if self._busy:
-            response.success = False
-            response.message = 'Executor ocupado.'
-            return response
+        with self._busy_lock:
+            if self._busy:
+                response.success = False
+                response.message = 'Executor ocupado.'
+                return response
+            self._busy = True
 
         def _do():
-            self._busy = True
             try:
                 self._status_msg = 'OPEN_HAND'
                 self.get_logger().info('[MANUAL] Abrindo mão')
@@ -771,8 +780,14 @@ class GraspExecutorNode(Node):
         d_appr = solve_pose_R(tcp_appr, R, d_pre,    check_collision=False)
         if d_appr is None:
             return (None, None, None)
-        d_pick = solve_pose_R(tcp_pick, R, d_appr,   check_collision=False,
-                                allow_object=obj_class)
+        # PICK com checagem de colisão (tolerando só `belt_surface`, onde o
+        # objeto repousa): seleciona o ramo IK correto e evita o flip que
+        # mergulha no pedestal/esteira. Sem solução segura → None → o
+        # chamador cai nas poses cacheadas (ramo conhecido-bom).
+        d_pick = solve_pose_R(tcp_pick, R, d_appr, check_collision=True,
+                                allow_object=obj_class,
+                                collision_margin=0.003,
+                                skip_obstacles={'belt_surface'})
         if d_pick is None:
             return (None, None, None)
 

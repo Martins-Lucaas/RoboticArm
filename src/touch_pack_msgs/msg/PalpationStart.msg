@@ -19,3 +19,9 @@ float64[6] home_deg         # home do braço em graus, ordem joint1..joint6
 float32 hold_tol_n          # tolerância absoluta da banda (N)
 float32 hold_stable_s       # janela contínua dentro da banda (s)
 float32 hold_timeout_s      # teto de espera pela estabilização (s)
+
+# Modo de palpação:
+#   'SLIDE' = deslizamento (descida → hold → deslizamento lateral → recuo)
+#   'TOUCH' = toque (descida → hold com força controlada → recuo, sem deslizar)
+# Vazio = 'SLIDE' (compatibilidade). Em TOUCH, `repeats` = quantidade de toques.
+string mode

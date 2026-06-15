@@ -631,7 +631,8 @@ def solve_pose(p_world, q_seed_deg, approach_vec=(0.0, 0.0, -1.0)):
 def solve_pose_R(p_world, R_tcp, q_seed_deg, *,
                   check_collision: bool = True,
                   allow_object: str | None = None,
-                  collision_margin: float = 0.005):
+                  collision_margin: float = 0.005,
+                  skip_obstacles: set | None = None):
     """Resolve IK com R_tcp 3x3 explícito (orientação completa do TCP).
 
     Args:
@@ -697,7 +698,8 @@ def solve_pose_R(p_world, R_tcp, q_seed_deg, *,
         safe = True
         if check_collision:
             safe, _ = pose_is_safe(q, margin_arm=collision_margin + 0.005,
-                                     margin_wrist=collision_margin)
+                                     margin_wrist=collision_margin,
+                                     skip=skip_obstacles)
 
         score = (err_p + 0.10 * err_o
                  + 0.02 * seed_dev
@@ -755,10 +757,14 @@ def compute_targets():
                         or appr[obj])
             # Pick: a mão TOCA o objeto picável (frasco/ampola/tubo),
             # mas nenhum link deve tocar a esteira/caixas/parede.
+            # PICK: o objeto repousa na laje do topo da esteira, então o
+            # flange necessariamente alcança esse nível — toleramos
+            # `belt_surface` (não a estrutura sólida `belt_frame`).
             pick[obj] = (solve_pose_R(PICK_TCP_WORLD[obj], R, appr[obj],
                                         check_collision=True,
                                         allow_object=obj,
-                                        collision_margin=0.003)
+                                        collision_margin=0.003,
+                                        skip_obstacles={'belt_surface'})
                          or solve_pose_R(PICK_TCP_WORLD[obj], R, appr[obj],
                                           check_collision=False)
                          or appr[obj])
@@ -781,27 +787,34 @@ def compute_targets():
 # ── Cache hardcoded de poses (resolvido off-line por compute_targets) ─
 # Para evitar 10s de IK em cada import. Re-gerar com:
 #   from grasp_ml_pack.poses import recompute_and_print_poses
+# NOTA: frasco/ampola regenerados com a FK real da mão COVVI (corrigem o
+# erro de posicionamento do grasp_center de ~60 mm → ~2 mm). O pick tolera
+# `belt_surface` (laje do topo onde o objeto repousa). tubo MANTIDO no ramo
+# IK conhecido-bom (q2≈-20°): com o alvo corrigido, o único ramo que atinge
+# o grasp_center mergulha o flange na estrutura sólida `belt_frame` (~2 mm),
+# então o caminho dinâmico do executor cai com segurança nesta pose cacheada.
+# Revisar a folga lateral do tubo no Gazebo antes de regenerá-lo.
 _CACHED_PRE_APPROACH_POSES_DEG = {
-    'frasco': {'joint1':  20.1807, 'joint2':   4.8264, 'joint3':  -90.9614,
-               'joint4': -93.8643, 'joint5': -69.8199, 'joint6':  -0.0019},
-    'ampola': {'joint1':  21.1325, 'joint2':   7.0897, 'joint3': -103.1330,
-               'joint4': -83.9564, 'joint5': -68.8684, 'joint6':  -0.0016},
+    'frasco': {'joint1':  21.2071, 'joint2':   8.3155, 'joint3': -100.0195,
+               'joint4': -88.2957, 'joint5': -68.7932, 'joint6':  -0.0001},
+    'ampola': {'joint1':  19.8765, 'joint2':  12.6962, 'joint3': -101.1162,
+               'joint4': -91.5796, 'joint5': -70.1238, 'joint6':  -0.0001},
     'tubo':   {'joint1': -15.6463, 'joint2': -27.1959, 'joint3':  -76.0081,
                'joint4': -76.7960, 'joint5': 164.3537, 'joint6':  90.0000},
 }
 _CACHED_APPROACH_POSES_DEG = {
-    'frasco': {'joint1':  20.1807, 'joint2':   4.3877, 'joint3': -102.7067,
-               'joint4': -81.6804, 'joint5': -69.8200, 'joint6':  -0.0018},
-    'ampola': {'joint1':  21.1662, 'joint2':   5.9337, 'joint3': -109.2948,
-               'joint4': -76.6381, 'joint5': -68.8343, 'joint6':  -0.0020},
+    'frasco': {'joint1':  21.2090, 'joint2':   6.7135, 'joint3': -110.9968,
+               'joint4': -75.7163, 'joint5': -68.7912, 'joint6':  -0.0002},
+    'ampola': {'joint1':  19.8808, 'joint2':  11.7286, 'joint3': -112.4787,
+               'joint4': -79.2495, 'joint5': -70.1196, 'joint6':  -0.0001},
     'tubo':   {'joint1':  -7.2996, 'joint2': -22.6308, 'joint3':  -82.9599,
                'joint4': -74.4093, 'joint5': 172.7004, 'joint6':  90.0000},
 }
 _CACHED_PICK_POSES_DEG = {
-    'frasco': {'joint1':  20.2332, 'joint2':   3.2250, 'joint3': -107.8114,
-               'joint4': -75.4123, 'joint5': -69.7669, 'joint6':  -0.0023},
-    'ampola': {'joint1':  21.1326, 'joint2':   4.5673, 'joint3': -113.2245,
-               'joint4': -71.3422, 'joint5': -68.8682, 'joint6':  -0.0019},
+    'frasco': {'joint1':  21.2084, 'joint2':   4.8444, 'joint3': -115.6019,
+               'joint4': -69.2421, 'joint5': -68.7920, 'joint6':  -0.0001},
+    'ampola': {'joint1':  19.8810, 'joint2':  10.2150, 'joint3': -117.5355,
+               'joint4': -72.6792, 'joint5': -70.1194, 'joint6':  -0.0001},
     'tubo':   {'joint1':  -2.4605, 'joint2': -20.3732, 'joint3':  -85.9378,
                'joint4': -73.6890, 'joint5': 177.5395, 'joint6':  90.0000},
 }

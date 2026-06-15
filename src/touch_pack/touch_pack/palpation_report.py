@@ -37,7 +37,10 @@ import os
 import statistics
 import sys
 
-OUTPUT_DIR = os.path.expanduser('~/touch_pack_runs')
+try:
+    from .constants import RUNS_DIR as OUTPUT_DIR
+except ImportError:                       # execução standalone fora do pacote
+    from constants import RUNS_DIR as OUTPUT_DIR
 
 # Fases com controle/medição de força — as únicas resumidas por ciclo.
 _FORCE_PHASES = ('DESCENDING', 'HOLD', 'SLIDING')

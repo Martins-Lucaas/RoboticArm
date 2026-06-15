@@ -25,6 +25,7 @@ Componente do **Trabalho de Conclusão de Curso (TCC) em Engenharia Biomédica**
 | Mão | **COVVI Hand** | 5 dedos + 31 juntas (6 primárias + 25 mimic), interface ECI Ethernet |
 | Câmera | RGB Gazebo | 848×480, FoV 70°, montada atrás da esteira |
 | Célula de carga | ESP32 + sensor uniaxial | UDP broadcast 8080, 8 bytes por pacote (`float v_sensor, float force`) |
+| Sensor de toque | STM32 + matriz 4×4 | USB-CDC 115200 baud; modelo neuromórfico de Izhikevich (spikes RA/SA + I_final). Retransmissão opcional por UDP 8081 |
 
 ---
 
@@ -118,7 +119,7 @@ chega pelo submódulo. Não é preciso clonar nada além do passo 1.
 |---|---|---|
 | **`grasp_ml_pack`** | Célula de manufatura: esteira, detecção de objetos, pick-and-place com COVVI | [→ grasp_ml_pack/README.md](src/grasp_ml_pack/README.md) |
 | **`hand_pack`** | URDF combinado CR10 + COVVI, GUIs da mão, helpers de launch | [→ hand_pack/README.md](src/hand_pack/README.md) |
-| **`touch_pack`** | Célula de palpação tátil: protocolo Gupta 2021, GUI, logging, célula de carga ESP32 | [→ touch_pack/README.md](src/touch_pack/README.md) |
+| **`touch_pack`** | Célula de palpação tátil: protocolo Gupta 2021 (modos Toque/Deslizamento), GUI, logging, célula de carga ESP32 + sensor de toque STM32 (Izhikevich) | [→ touch_pack/README.md](src/touch_pack/README.md) |
 | **`cra_description`** | URDF/Xacro do braço Dobot CR10 (extraído do repositório oficial Dobot) | [→ cra_description/README.md](src/cra_description/README.md) |
 
 ### Como rodar (cada pacote principal)
@@ -145,18 +146,18 @@ ros2 launch grasp_ml_pack conveyor_cell.launch.py use_yolo:=true autonomous:=tru
 ```
 
 #### 2. Célula de palpação tátil — `touch_pack`
-Protocolo Gupta 2021: controle de força/deslizamento + GUI + logging + célula de carga.
+Protocolo Gupta 2021: controle de força + GUI + logging + célula de carga + sensor de toque STM32.
+Dois modos na GUI: **Toque** (encosta com força controlada e volta — quantidade de toques selecionável) e **Deslizamento** (ciclo completo com arrasto lateral). Dados gravados em `sensors/Data/`.
 
 ```bash
 ros2 launch touch_pack tactile_cell.launch.py
 ```
 | Argumento | Valores | Padrão | Efeito |
 |---|---|---|---|
-| `end_effector` | `hand` / `touch_tool` | `hand` | `hand` → controle da mão COVVI; `touch_tool` → ponta de palpação + célula de carga |
+| `end_effector` | `hand` / `touch_tool` | `hand` | `hand` → controle da mão COVVI; `touch_tool` → ponta de palpação + célula de carga (libera a aba Palpação) |
 | `control_mode` | `sim_only` / `mirror` / `real_from_sim` | `sim_only` | espelhamento/comando do CR10 real |
 | `robot_ip` | IP | `192.168.5.2` | IP do controlador CR10 real |
-| `robot_dry_run` | `true` / `false` | `true` | `true` não abre sockets do robô real |
-| `no_gui` | `true` / `false` | `false` | sobe sem a GUI de palpação |
+| `no_gui` | `true` / `false` | `false` | sobe sem a GUI (usa `mirror_node` em MIRROR) |
 
 ```bash
 # Palpação com a ponta tátil (modo Palpação liberado + leitura da célula de carga na GUI):
@@ -198,6 +199,7 @@ python src/grasp_ml_pack/scripts/tune_rotate.py        # ajuste de orientação 
 - **Mão COVVI:** pela GUI (`touch_pack`/`grasp_ml_pack`), informe o IP e clique **Conectar** → **ECI ON** → **PWR ON**. Internamente sobe `ros2 run covvi_hand_driver server <IP>`.
 - **CR10:** ajuste `robot_ip` e use `control_mode:=mirror` (espelha o real no sim) ou `real_from_sim`. Para o *drag teach*, coloque o controlador em **modo REMOTE** no teach pendant.
 - **Célula de carga (ESP32):** firmware em `sensors/ForceDriver/`; transmite por UDP broadcast na porta 8080.
+- **Sensor de toque (STM32):** conecta por USB (115200 baud) — a GUI lê a serial direto na aba **Sensores**; sem serial local, retransmita por UDP na porta 8081 (`touch_receiver`).
 
 ---
 
@@ -212,7 +214,10 @@ RoboticArm/
 │   ├── cra_description/     URDF do CR10 (fonte: DOBOT_6Axis_ROS2_V4 — já incluso)
 │   └── eci_ros/             submódulo → COVVI eci_ros (covvi_interfaces + covvi_hand_driver)
 ├── images/                  screenshots e mídia
-├── sensors/ForceDriver/     firmware ESP32 da célula de carga
+├── sensors/
+│   ├── ForceDriver/         firmware ESP32 da célula de carga (UDP 8080)
+│   ├── Touch_sensor/        plotter/firmware do sensor de toque STM32 (4×4, Izhikevich)
+│   └── Data/                dados gravados (runs CSV/JSON + stream força+toque)
 └── build/, install/, log/   artefatos do colcon (gerados)
 ```
 
