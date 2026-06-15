@@ -27,6 +27,7 @@ Comunicação ROS:
 from __future__ import annotations
 
 import collections
+import csv
 import json
 import logging
 import math
@@ -82,7 +83,7 @@ from .constants import (
     FORCE_ABORT_LIMIT_N as _FORCE_ABORT_LIMIT_N,
     FORCE_SETPOINT_MAX_N,
     HOME_POSE_FILE, ROBOT_CONFIG_FILE, LC_CALIB_FILE, POSES_FILE,
-    PALPATION_PARAMS_FILE,
+    PALPATION_PARAMS_FILE, RUNS_DIR,
 )
 
 # Driver TCP/IP do CR10 real (cabeada via 192.168.5.1 / LAN1).
@@ -112,6 +113,25 @@ from .ui_helpers import (
     FONT_MONO, FONT_MONO_S,
     _shade, _Tooltip, _hdr_btn,
 )
+
+# Fonte serial do touch sensor + figura matplotlib reaproveitável. A GUI lê
+# a serial do STM32 diretamente (mesmo PC) e embute os quatro gráficos do
+# touch_sensor.py na aba "Sensores". Guardado: sem matplotlib/pyserial a GUI
+# segue funcionando (cai para a subscrição /touch_sensor/value).
+try:
+    from .touch_source import (
+        TouchSensorSource, TouchFigure,
+        ROWS as TOUCH_ROWS, COLS as TOUCH_COLS, NUM_TAXELS as TOUCH_TAXELS,
+    )
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    _TOUCH_PLOT_OK = True
+except Exception:  # pragma: no cover
+    TouchSensorSource = None
+    TouchFigure = None
+    FigureCanvasTkAgg = None
+    TOUCH_ROWS = TOUCH_COLS = 4
+    TOUCH_TAXELS = 16
+    _TOUCH_PLOT_OK = False
 
 log = logging.getLogger('touch_pack.palpation_gui')
 
@@ -239,6 +259,13 @@ class PalpationGUI(Node):
         # Publicado em _cb_lc_voltage a cada pacote UDP da ESP32 (~50 Hz).
         self._lc_force_net_pub = self.create_publisher(
             Float32, '/load_cell/force_net', QOS_SENSOR)
+        # Quando a GUI lê a serial do STM32 diretamente (mesmo PC), ela
+        # REPUBLICA o I_final em /touch_sensor/value — assumindo o papel do
+        # touch_sensor.py/touch_receiver para o explorer, o logger e o
+        # force_sync. Se a serial não abrir, ninguém publica por aqui e a GUI
+        # cai para a subscrição (um touch_receiver externo, se houver).
+        self._touch_value_pub = self.create_publisher(
+            Float32, '/touch_sensor/value', QOS_SENSOR)
 
         # ─── Publishers para comando direto (aba Controle Manual) ────
         # Os joint_trajectory_controllers expõem um tópico direto
@@ -407,6 +434,26 @@ class PalpationGUI(Node):
         self._touch_value: float = 0.0
         self._touch_last_ts: float = 0.0
         self._touch_rx_proc: subprocess.Popen | None = None
+        # ─── Fonte serial do touch sensor + figura embutida (aba Sensores) ─
+        # Porta da serial do STM32: '' (default) → auto-detect (/dev/ttyACMx).
+        self._touch_port = str(self.declare_parameter(
+            'touch_serial_port', '').value).strip()
+        self._touch_source = None      # TouchSensorSource | None
+        self._touch_figure = None      # TouchFigure | None
+        self._touch_canvas = None      # FigureCanvasTkAgg | None
+        self._touch_serial_ok = False
+        self._sensors_tab_frame: tk.Frame | None = None
+        self._sensors_after: str | None = None
+        # Throttle da publicação /touch_sensor/value (STM32 emite ~1 kHz).
+        self._touch_pub_period = 1.0 / 100.0   # 100 Hz
+        self._touch_pub_last = 0.0
+        # ─── Gravação do stream sincronizado (botão na aba Palpação) ──────
+        self._rec_fh = None
+        self._rec_writer = None
+        self._rec_t0: float = 0.0
+        self._rec_path: str | None = None
+        self._rec_count: int = 0
+        self._rec_after: str | None = None
         # palpation_logger spawnado pela GUI quando ela roda standalone
         # (fora do launch) — sem ele nenhum run é gravado em ~/touch_pack_runs.
         self._logger_proc: subprocess.Popen | None = None
@@ -441,6 +488,15 @@ class PalpationGUI(Node):
         self._drag_btn = None
         self._load_poses_data()
 
+        # ─── Fonte serial do touch sensor ────────────────────────────
+        # Instanciada ANTES de _build_ui porque a aba Sensores constrói a
+        # TouchFigure a partir dela; o start() (abre a serial) vem depois,
+        # já com a janela montada.
+        if _TOUCH_PLOT_OK:
+            self._touch_source = TouchSensorSource(
+                port=(self._touch_port or None),
+                on_sample=self._on_touch_sample)
+
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
         self.root.withdraw()
@@ -459,6 +515,343 @@ class PalpationGUI(Node):
         self._mirror_poll_thread.start()
 
         self.root.after(100, self._refresh_status_panel)
+        # Abre a serial do STM32 (best-effort) e dispara o loop de redesenho
+        # da figura embutida na aba Sensores.
+        self._start_touch_source()
+        self.root.after(200, self._refresh_sensors_tab)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Touch sensor — fonte serial + publicação ROS
+    # ──────────────────────────────────────────────────────────────────
+    def _start_touch_source(self) -> None:
+        """Abre a serial do STM32 e passa a publicar /touch_sensor/value.
+
+        Best-effort: sem matplotlib/pyserial ou sem STM32, a GUI segue no
+        modo degradado (sparkline via subscrição; figura mostra zeros)."""
+        if not _TOUCH_PLOT_OK or self._touch_source is None:
+            log.info('[TOUCH] matplotlib/pyserial ausentes — figura desabilitada')
+            return
+        ok = self._touch_source.start()
+        self._touch_serial_ok = ok
+        if ok:
+            log.info('[TOUCH] serial aberta em %s — publicando '
+                     '/touch_sensor/value', self._touch_source.port)
+        else:
+            log.warning('[TOUCH] serial indisponível (%s) — usando '
+                        '/touch_sensor/value de receptor externo, se houver',
+                        self._touch_source.error)
+
+    def _on_touch_sample(self, i_final: float) -> None:
+        """Callback da thread serial: republica I_final em ROS e atualiza o
+        estado interno (sparkline + painéis), sem tocar em widgets Tk.
+
+        O STM32 emite TOTAL a ~1 kHz; publicar nessa taxa satura o DDS e o
+        executor (e a auto-inscrição da própria GUI) sem benefício — todos os
+        consumidores (force_sync, logger, sparkline) operam a ≤50 Hz. Aqui
+        limitamos a publicação/atualização a TOUCH_PUB_HZ. Os gráficos do
+        toque (heatmap/raster) NÃO dependem disto: leem o estado completo da
+        fonte em alta taxa diretamente."""
+        now = time.monotonic()
+        if now - self._touch_pub_last < self._touch_pub_period:
+            return
+        self._touch_pub_last = now
+        try:
+            msg = Float32(); msg.data = float(i_final)
+            self._touch_value_pub.publish(msg)
+        except Exception:
+            pass
+        with self._lock:
+            self._touch_value = float(i_final)
+            self._touch_last_ts = time.time()
+
+    # ── Aba "Sensores": todos os plots lado a lado ────────────────────
+    def _build_sensors_tab(self, root: tk.Frame) -> None:
+        """Dashboard: os quatro gráficos do touch sensor (heatmap, raster
+        RA/SA, I_final, neurônio pós) embutidos via matplotlib, lado a lado
+        com a leitura ao vivo da célula de carga."""
+        body = tk.Frame(root, bg=BG)
+        body.pack(fill='both', expand=True, padx=8, pady=8)
+
+        # ── Esquerda: figura do touch sensor ──────────────────────────
+        left = tk.Frame(body, bg=BG)
+        left.pack(side='left', fill='both', expand=True, padx=(0, 8))
+
+        hdr = tk.Frame(left, bg=BG); hdr.pack(fill='x')
+        tk.Label(hdr, text='Sensor de Toque (STM32) — Izhikevich',
+                 font=FONT_HEAD, bg=BG, fg=TEXT).pack(side='left')
+        self._sens_touch_status_lbl = tk.Label(
+            hdr, text='', font=FONT_SMALL, bg=BG, fg=TEXT_DIM)
+        self._sens_touch_status_lbl.pack(side='right')
+
+        plot_holder = tk.Frame(left, bg=PANEL, highlightthickness=1,
+                               highlightbackground=BORDER)
+        plot_holder.pack(fill='both', expand=True, pady=(6, 0))
+        if (_TOUCH_PLOT_OK and self._touch_source is not None
+                and TouchFigure is not None):
+            try:
+                self._touch_figure = TouchFigure(
+                    self._touch_source, facecolor=PANEL)
+                self._touch_canvas = FigureCanvasTkAgg(
+                    self._touch_figure.fig, master=plot_holder)
+                self._touch_canvas.get_tk_widget().pack(
+                    fill='both', expand=True)
+                self._touch_canvas.draw()
+            except Exception as exc:
+                log.warning('[TOUCH] falha ao embutir figura: %s', exc)
+                self._touch_figure = None
+                self._touch_canvas = None
+                tk.Label(plot_holder,
+                         text=f'Figura indisponível: {exc}',
+                         font=FONT_LBL, bg=PANEL, fg=TEXT_DIM).pack(
+                    expand=True, pady=40)
+        else:
+            tk.Label(plot_holder,
+                     text='matplotlib/pyserial ausentes — '
+                          'instale para ver os gráficos do toque.',
+                     font=FONT_LBL, bg=PANEL, fg=TEXT_DIM).pack(
+                expand=True, pady=40)
+
+        # ── Direita: célula de carga ao vivo ──────────────────────────
+        right = tk.Frame(body, bg=BG, width=270)
+        right.pack(side='right', fill='y')
+        right.pack_propagate(False)
+
+        card = self._card(right, 'Célula de Carga — ao vivo')
+        tk.Label(card, text='Força de Compressão (tare)', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(4, 0))
+        self._sens_force_lbl = tk.Label(
+            card, text='—   N', font=FONT_BIG, bg=PANEL, fg=TEXT_DIM)
+        self._sens_force_lbl.pack(anchor='w', pady=(2, 2))
+        self._sens_status_lbl = tk.Label(
+            card, text='aguardando /load_cell/force_net',
+            font=FONT_SMALL, bg=PANEL, fg=TEXT_DIM)
+        self._sens_status_lbl.pack(anchor='w')
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=8)
+        self._sens_raw_lbl   = self._kv(card, 'LC bruto',  '—  N')
+        self._sens_volt_lbl  = self._kv(card, 'Tensão LC', '—  V')
+        self._sens_touch_lbl = self._kv(card, 'Toque I_final', '—')
+
+        tk.Frame(card, bg=BORDER, height=1).pack(fill='x', pady=8)
+        tk.Label(card, text='Força — últimos 30 s', font=FONT_SMALL,
+                 bg=PANEL, fg=TEXT_MUTED, anchor='w').pack(fill='x')
+        self._sens_force_spark = tk.Canvas(
+            card, height=80, bg=PANEL, highlightthickness=1,
+            highlightbackground=BORDER)
+        self._sens_force_spark.pack(fill='x', pady=(4, 2))
+
+    def _refresh_sensors_tab(self) -> None:
+        """Loop de redesenho da aba Sensores. Para poupar CPU, só atualiza a
+        figura matplotlib (cara) quando a aba está de fato visível."""
+        try:
+            nb = getattr(self, '_nb', None)
+            frame = self._sensors_tab_frame
+            visible = (nb is not None and frame is not None
+                       and str(nb.select()) == str(frame))
+            if visible:
+                if (self._touch_figure is not None
+                        and self._touch_canvas is not None):
+                    try:
+                        self._touch_figure.update()
+                        self._touch_canvas.draw_idle()
+                    except Exception as exc:
+                        log.debug('touch figure update falhou: %s', exc)
+                self._update_sensors_panel()
+        finally:
+            self._sensors_after = self.root.after(
+                80, self._refresh_sensors_tab)
+
+    def _update_sensors_panel(self) -> None:
+        """Atualiza os números da célula de carga + sparkline na aba Sensores."""
+        with self._lock:
+            f_net     = self._lc_force_net
+            lc_ts     = self._lc_force_net_ts
+            lc_v      = self._lc_voltage
+            lc_slope  = self._lc_calib_slope
+            lc_ic     = self._lc_calib_intercept
+            lc_cal    = self._lc_calibrated
+            touch_val = self._touch_value
+            touch_ts  = self._touch_last_ts
+
+        has_data = lc_ts > 0.0 and (time.time() - lc_ts) < 3.0
+        if has_data:
+            if f_net > _FORCE_ABORT_LIMIT_N * 0.9:
+                color, status = DANGER, f'próximo do limite ({_FORCE_ABORT_LIMIT_N:.0f} N)'
+            elif f_net >= 0.2:
+                color, status = OK, 'em contato'
+            else:
+                color, status = TEXT_MUTED, 'sem contato'
+            self._sens_force_lbl.config(text=f'{f_net:+6.2f}  N', fg=color)
+            self._sens_status_lbl.config(text=status, fg=color)
+            lc_bruto = ((lc_v - lc_ic) / lc_slope
+                        if lc_cal and abs(lc_slope) > 1e-9 else 0.0)
+            self._sens_raw_lbl.config(text=f'{lc_bruto:+6.2f} N')
+            self._sens_volt_lbl.config(text=f'{lc_v:.4f} V')
+        else:
+            self._sens_force_lbl.config(text='—   N', fg=TEXT_DIM)
+            self._sens_status_lbl.config(
+                text='aguardando /load_cell/force_net', fg=TEXT_DIM)
+            self._sens_raw_lbl.config(text='—  N')
+            self._sens_volt_lbl.config(text='—  V')
+
+        touch_fresh = touch_ts > 0.0 and (time.time() - touch_ts) < 3.0
+        self._sens_touch_lbl.config(
+            text=f'{touch_val:+.3f}' if touch_fresh else '—')
+
+        if self._touch_serial_ok and self._touch_source is not None:
+            self._sens_touch_status_lbl.config(
+                text=f'serial {self._touch_source.port}', fg=OK)
+        elif touch_fresh:
+            self._sens_touch_status_lbl.config(
+                text='via /touch_sensor/value', fg=OK)
+        else:
+            self._sens_touch_status_lbl.config(
+                text='sem sinal do toque', fg=TEXT_DIM)
+
+        self._draw_force_spark(self._sens_force_spark)
+
+    def _draw_force_spark(self, cv: tk.Canvas) -> None:
+        """Desenha self._spark_data (força, 30 s) num canvas dado — usado pela
+        aba Sensores. self._spark_data é alimentado em _refresh_status_panel."""
+        if cv is None:
+            return
+        try:
+            w = cv.winfo_width(); h = cv.winfo_height()
+            cv.delete('all')
+        except tk.TclError:
+            return
+        if w <= 10 or h <= 10:
+            return
+        now = time.time()
+        window = 30.0
+        pts = [(t, f) for t, f in self._spark_data if now - t <= window]
+        forces = [f for _, f in pts]
+        f_hi = max([1.0] + forces)
+        f_lo = min([0.0] + forces)
+        rng = max(f_hi - f_lo, 0.5)
+
+        def xy(t: float, f: float) -> tuple[float, float]:
+            x = w - (now - t) / window * w
+            y = (h - 4) - (f - f_lo) / rng * (h - 8)
+            return x, y
+
+        y_zero = xy(now, 0.0)[1]
+        cv.create_line(0, y_zero, w, y_zero, fill=BORDER)
+        if len(pts) >= 2:
+            coords: list[float] = []
+            for t, f in pts:
+                coords.extend(xy(t, f))
+            cv.create_line(*coords, fill=PRIMARY, width=2)
+
+    # ── Gravação do stream sincronizado força + toque (CSV) ───────────
+    _REC_HEADER = (['t_rel_s', 't_unix', 'force_net_n', 'load_cell_raw_n',
+                    'load_cell_voltage_v', 'touch_i_final']
+                   + [f'v{r}{c}' for r in range(TOUCH_ROWS)
+                      for c in range(TOUCH_COLS)])
+    _REC_PERIOD_MS = 20      # 50 Hz
+
+    def _toggle_recording(self) -> None:
+        if self._rec_fh is not None:
+            self._stop_recording()
+        else:
+            self._start_recording()
+
+    def _start_recording(self) -> None:
+        try:
+            os.makedirs(RUNS_DIR, exist_ok=True)
+            ts = time.strftime('%Y%m%d_%H%M%S')
+            path = os.path.join(RUNS_DIR, f'{ts}__sensors.csv')
+            fh = open(path, 'w', newline='')
+            writer = csv.writer(fh)
+            writer.writerow(self._REC_HEADER)
+        except OSError as exc:
+            self._set_rec_status(f'falha ao abrir CSV: {exc}', DANGER)
+            return
+        self._rec_fh = fh
+        self._rec_writer = writer
+        self._rec_path = path
+        self._rec_t0 = time.time()
+        self._rec_count = 0
+        self.rec_btn.config(text='■ Parar gravação', bg=DANGER, fg='white')
+        self._set_rec_status(f'gravando → {os.path.basename(path)}', OK)
+        self._rec_after = self.root.after(
+            self._REC_PERIOD_MS, self._recording_tick)
+
+    def _recording_tick(self) -> None:
+        if self._rec_fh is None or self._rec_writer is None:
+            return
+        now = time.time()
+        # Snapshot único = força e toque carimbados no MESMO instante.
+        with self._lock:
+            f_net    = self._lc_force_net
+            lc_v     = self._lc_voltage
+            lc_slope = self._lc_calib_slope
+            lc_ic    = self._lc_calib_intercept
+            lc_cal   = self._lc_calibrated
+            touch_v  = self._touch_value
+        lc_bruto = ((lc_v - lc_ic) / lc_slope
+                    if lc_cal and abs(lc_slope) > 1e-9 else 0.0)
+        if self._touch_source is not None and self._touch_serial_ok:
+            snap = self._touch_source.snapshot()
+            volt = snap['volt']
+            i_final = snap['latest_i_final']
+            volt_cols = [f'{volt[r, c]:.4f}'
+                         for r in range(TOUCH_ROWS) for c in range(TOUCH_COLS)]
+        else:
+            i_final = touch_v
+            volt_cols = [''] * TOUCH_TAXELS
+        try:
+            self._rec_writer.writerow([
+                f'{now - self._rec_t0:.4f}', f'{now:.4f}',
+                f'{f_net:.4f}', f'{lc_bruto:.4f}', f'{lc_v:.5f}',
+                f'{i_final:.4f}', *volt_cols,
+            ])
+            self._rec_count += 1
+            if self._rec_count % 50 == 0:
+                self._rec_fh.flush()
+        except (ValueError, OSError) as exc:
+            log.warning('falha ao gravar amostra sincronizada: %s', exc)
+        if self._rec_count % 25 == 0:
+            self._set_rec_status(
+                f'gravando {self._rec_count} amostras → '
+                f'{os.path.basename(self._rec_path or "?")}', OK)
+        self._rec_after = self.root.after(
+            self._REC_PERIOD_MS, self._recording_tick)
+
+    def _stop_recording(self) -> None:
+        if self._rec_after is not None:
+            try:
+                self.root.after_cancel(self._rec_after)
+            except Exception:
+                pass
+            self._rec_after = None
+        fh = self._rec_fh
+        path = self._rec_path
+        n = self._rec_count
+        self._rec_fh = None
+        self._rec_writer = None
+        self._rec_path = None
+        if fh is not None:
+            try:
+                fh.flush(); fh.close()
+            except OSError:
+                pass
+        try:
+            self.rec_btn.config(
+                text='●  Salvar dados (força+toque)', bg=BTN_NEUTRAL, fg=TEXT)
+            self._set_rec_status(
+                f'salvo: {n} amostras em {os.path.basename(path or "?")}',
+                TEXT_MUTED)
+        except tk.TclError:
+            pass
+
+    def _set_rec_status(self, text: str, color: str) -> None:
+        lbl = getattr(self, 'rec_status_lbl', None)
+        if lbl is not None:
+            try:
+                lbl.config(text=text, fg=color)
+            except tk.TclError:
+                pass
 
     # ──────────────────────────────────────────────────────────────────
     # UI construction
@@ -605,14 +998,18 @@ class PalpationGUI(Node):
         nb = ttk.Notebook(self.root, style='Tactile.TNotebook')
         nb.pack(fill='both', expand=True, padx=18, pady=18)
 
-        tab_palp  = tk.Frame(nb, bg=BG)
-        tab_man   = tk.Frame(nb, bg=BG)
-        tab_lc    = tk.Frame(nb, bg=BG)
-        tab_poses = tk.Frame(nb, bg=BG)
-        nb.add(tab_palp,  text='Palpação')
-        nb.add(tab_man,   text='Controle Manual')
-        nb.add(tab_lc,    text='Célula de Carga')
-        nb.add(tab_poses, text='Poses & Movimentos')
+        tab_palp    = tk.Frame(nb, bg=BG)
+        tab_man     = tk.Frame(nb, bg=BG)
+        tab_lc      = tk.Frame(nb, bg=BG)
+        tab_poses   = tk.Frame(nb, bg=BG)
+        tab_sensors = tk.Frame(nb, bg=BG)
+        nb.add(tab_palp,    text='Palpação')
+        nb.add(tab_man,     text='Controle Manual')
+        nb.add(tab_lc,      text='Célula de Carga')
+        nb.add(tab_poses,   text='Poses & Movimentos')
+        # Aba adicionada por último → não desloca os índices usados pelo gate
+        # (Palpação=0) nem o foco em Controle Manual (1).
+        nb.add(tab_sensors, text='Sensores')
 
         # ttk.Progressbar foi removida (causava segfault com Canvas embed).
         # _scrollable agora é seguro para todas as abas.
@@ -620,6 +1017,10 @@ class PalpationGUI(Node):
         self._build_manual_tab(self._scrollable(tab_man))
         self._build_loadcell_tab(tab_lc)   # sub-abas são scrolláveis internamente
         self._build_poses_tab(tab_poses)   # layout próprio — sem _scrollable externo
+        # Aba Sensores: layout próprio (NÃO usar _scrollable — embutir um
+        # canvas matplotlib dentro de um tk.Canvas scrollável é instável).
+        self._build_sensors_tab(tab_sensors)
+        self._sensors_tab_frame = tab_sensors
 
         # ── Gate do modo Palpação por end_effector ────────────────────────
         # REGRA (até o usuário pedir o contrário): a aba/modo Palpação só fica
@@ -830,6 +1231,22 @@ class PalpationGUI(Node):
             font=FONT_HEAD, relief='flat', bd=0, padx=18, pady=12,
             cursor='hand2')
         self.start_btn.pack(fill='x')
+
+        # ── Botão pequeno: grava força + toque sincronizados em CSV ───────
+        # Independe de "Iniciar Palpação": amostra a 50 Hz um snapshot único
+        # (mesmo timestamp) da célula de carga e do touch sensor.
+        rec_row = tk.Frame(btn_wrap, bg=BG)
+        rec_row.pack(fill='x', pady=(6, 0))
+        self.rec_btn = tk.Button(
+            rec_row, text='●  Salvar dados (força+toque)',
+            command=self._toggle_recording, bg=BTN_NEUTRAL, fg=TEXT,
+            activebackground=_shade(BTN_NEUTRAL, -0.08), activeforeground=TEXT,
+            font=FONT_SMALL, relief='flat', bd=0, padx=8, pady=4,
+            cursor='hand2')
+        self.rec_btn.pack(side='left')
+        self.rec_status_lbl = tk.Label(
+            rec_row, text='', font=FONT_SMALL, bg=BG, fg=TEXT_DIM)
+        self.rec_status_lbl.pack(side='left', padx=(8, 0))
 
         fb_card = self._card(col_right,
                               'Célula de Carga — Força de Contato (N)')
@@ -2351,7 +2768,13 @@ class PalpationGUI(Node):
             self._lc_force_net_ts = time.time()
 
     def _cb_touch_value(self, msg: Float32) -> None:
-        """Recebe /touch_sensor/value (touch_receiver_node, UDP 8081)."""
+        """Recebe /touch_sensor/value de um receptor EXTERNO (touch_receiver,
+        UDP 8081). Quando a GUI lê a serial diretamente, ela é a própria
+        publicadora — ignoramos o eco para não processar o loopback nem
+        sobrescrever o valor já atualizado (a taxa limitada) em
+        _on_touch_sample."""
+        if self._touch_source is not None and self._touch_source.connected:
+            return
         with self._lock:
             self._touch_value = float(msg.data)
             self._touch_last_ts = time.time()
@@ -4670,12 +5093,15 @@ class PalpationGUI(Node):
         if touch_fresh:
             self._touch_spark_data.append((time.time(), touch_val))
             self.touch_value_lbl.config(text=f'{touch_val:+.3f}', fg=TEXT)
-            self.touch_status_lbl.config(text='recebendo (UDP 8081)', fg=OK)
+            if self._touch_serial_ok and self._touch_source is not None:
+                src_txt = f'serial {self._touch_source.port}'
+            else:
+                src_txt = 'via /touch_sensor/value'
+            self.touch_status_lbl.config(text=f'recebendo ({src_txt})', fg=OK)
         else:
             self.touch_value_lbl.config(text='—', fg=TEXT_DIM)
             self.touch_status_lbl.config(
-                text='aguardando /touch_sensor/value '
-                     '(rode touch_sensor.py no PC do STM32)',
+                text='aguardando toque (conecte o STM32 ou um receptor UDP)',
                 fg=TEXT_DIM)
         self._draw_touch_spark()
 
@@ -5033,6 +5459,24 @@ class PalpationGUI(Node):
 
     def _on_close(self):
         self._stop_event.set()
+        # Fecha a gravação CSV em andamento (flush + close) e o loop da aba.
+        if self._rec_fh is not None:
+            try:
+                self._stop_recording()
+            except Exception:
+                pass
+        if self._sensors_after is not None:
+            try:
+                self.root.after_cancel(self._sensors_after)
+            except Exception:
+                pass
+            self._sensors_after = None
+        # Encerra a thread de leitura serial do touch sensor.
+        if self._touch_source is not None:
+            try:
+                self._touch_source.stop()
+            except Exception:
+                pass
         # Parar heartbeat e cancelar reconexão antes de fechar sockets.
         self._stop_robot_heartbeat()
         self._robot_reconnecting = False
