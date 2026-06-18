@@ -84,6 +84,7 @@ from .constants import (
     FORCE_SETPOINT_MAX_N,
     HOME_POSE_FILE, ROBOT_CONFIG_FILE, LC_CALIB_FILE, POSES_FILE,
     PALPATION_PARAMS_FILE, RUNS_DIR,
+    LC_FW_VOLTAGE_SCALE,
 )
 
 # Driver TCP/IP do CR10 real (cabeada via 192.168.5.1 / LAN1).
@@ -411,14 +412,22 @@ class PalpationGUI(Node):
         self._lc_voltage: float          = 0.0
         self._lc_voltage_buf: collections.deque = collections.deque(maxlen=50)
         self._lc_last_ts: float          = 0.0
-        # Calibração padrão (embutida — válida para qualquer computador).
-        # Sobrescrita por ~/.config/touch_pack/load_cell_calib.json se existir.
-        self._lc_calibrated: bool        = True
-        self._lc_calib_slope: float      = -0.05168849978673397
-        self._lc_calib_intercept: float  = 2.755812025215324
-        self._lc_calib_n_pts: int        = 5
+        # SEM calibração embutida: a GUI parte de NÃO-CALIBRADA e só publica
+        # /load_cell/force_net depois de carregar
+        # ~/.config/touch_pack/load_cell_calib.json (ou rodar o wizard).
+        # Antes havia uma calibração hardcoded com _calibrated=True — numa
+        # máquina sem o JSON a GUI publicava força (e avaliava o limite de
+        # 15 N) sobre constantes velhas, sem ninguém ter calibrado de fato.
+        self._lc_calibrated: bool        = False
+        self._lc_calib_slope: float      = 0.0
+        self._lc_calib_intercept: float  = 0.0
+        self._lc_calib_n_pts: int        = 0
         self._lc_calib_points: list      = []
-        self._lc_zero_voltage: float | None = 2.769853086471558
+        self._lc_zero_voltage: float | None = None
+        # Escala de firmware com que a calibração vigente foi feita (#5): se
+        # não bater com LC_FW_VOLTAGE_SCALE, o hardware/firmware mudou e a
+        # calibração salva está inválida — sinalizado em _load_lc_calib.
+        self._lc_calib_scale_mismatch: bool = False
         self._load_lc_calib()
         # Tare: tensão capturada com o sensor descarregado; subtrai o offset
         # residual que faz o zero não bater após a calibração.
@@ -695,12 +704,15 @@ class PalpationGUI(Node):
             lc_slope  = self._lc_calib_slope
             lc_ic     = self._lc_calib_intercept
             lc_cal    = self._lc_calibrated
+            lc_scale_bad = self._lc_calib_scale_mismatch
             touch_val = self._touch_value
             touch_ts  = self._touch_last_ts
 
         has_data = lc_ts > 0.0 and (time.time() - lc_ts) < 3.0
         if has_data:
-            if f_net > _FORCE_ABORT_LIMIT_N * 0.9:
+            if lc_scale_bad:
+                color, status = DANGER, 'calibração inválida (firmware mudou) — recalibre'
+            elif f_net > _FORCE_ABORT_LIMIT_N * 0.9:
                 color, status = DANGER, f'próximo do limite ({_FORCE_ABORT_LIMIT_N:.0f} N)'
             elif f_net >= 0.2:
                 color, status = OK, 'em contato'
@@ -2843,16 +2855,28 @@ class PalpationGUI(Node):
                 (float(p['mass_kg']), float(p['v_sensor']))
                 for p in data.get('points', [])
             ]
+            # #5: assinatura da escala de firmware com que esta calibração foi
+            # feita. Calibrações antigas (sem o campo) não disparam o aviso.
+            scale_raw = data.get('voltage_scale')
+            mismatch  = (scale_raw is not None
+                         and abs(float(scale_raw) - LC_FW_VOLTAGE_SCALE) > 1e-6)
             with self._lock:
                 self._lc_calib_slope     = slope
                 self._lc_calib_intercept = intercept
                 self._lc_calibrated      = True
                 self._lc_calib_n_pts     = n_pts
+                self._lc_calib_scale_mismatch = mismatch
             self._lc_calib_points  = points
             self._lc_zero_voltage  = zero_v
             self.get_logger().info(
                 f'Calibração LC: slope={slope:.4f} intercept={intercept:.6f} '
                 f'zero={zero_v}  ({n_pts} pts)')
+            if mismatch:
+                self.get_logger().warn(
+                    f'Calibração LC feita com escala de firmware '
+                    f'{float(scale_raw):.4f}, mas o firmware atual usa '
+                    f'{LC_FW_VOLTAGE_SCALE:.4f} — RECALIBRE: slope/intercept '
+                    f'estão inválidos.')
         except Exception as exc:
             self.get_logger().warn(f'Falha ao ler calibração LC: {exc}')
 
@@ -2862,6 +2886,9 @@ class PalpationGUI(Node):
             'slope':        slope,
             'intercept':    intercept,
             'zero_voltage': zero_voltage,
+            # #5: carimba a escala de firmware vigente — recalibrar invalida
+            # automaticamente o aviso de mismatch ao recarregar.
+            'voltage_scale': LC_FW_VOLTAGE_SCALE,
             'n_points':     len(self._lc_calib_points),
             'points': [
                 {'mass_kg': m,
@@ -2969,6 +2996,7 @@ class PalpationGUI(Node):
             self._lc_calib_intercept = intercept
             self._lc_calibrated      = True
             self._lc_calib_n_pts     = len(self._lc_calib_points)
+            self._lc_calib_scale_mismatch = False  # recalibrado c/ firmware atual
 
         self._save_lc_calib(slope, intercept, zero_v)
 

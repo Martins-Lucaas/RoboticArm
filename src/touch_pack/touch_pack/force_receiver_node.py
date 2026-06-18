@@ -10,9 +10,13 @@ Tópicos publicados:
 A calibração é lida de ~/.config/touch_pack/load_cell_calib.json
 e recarregada automaticamente a cada 10 s (após a GUI salvar nova calib).
 
-Payload UDP (little-endian, 8 bytes):
-  float v_sensor       — tensão reconstruída após divisor (V)
-  float force_filtered — força com calibração padrão da ESP32 (N)
+Payload UDP (little-endian, 8 bytes — LOAD_CELL_PAYLOAD_FMT '<If'):
+  uint32 seq     — contador incremental da ESP32; o salto do seq revela
+                   pacotes perdidos na rede (logado periodicamente).
+  float  v_sensor — tensão do sensor já filtrada na ESP32 (V).
+                   A conversão tensão→força e a calibração são feitas
+                   AQUI, a partir de load_cell_calib.json — nada é
+                   hardcoded na ESP.
 """
 
 import json
@@ -28,10 +32,10 @@ from std_msgs.msg import Float32, Bool
 from .constants import (
     LOAD_CELL_UDP_PORT as UDP_PORT,
     LC_CALIB_FILE as CALIB_FILE,
+    LOAD_CELL_PAYLOAD_FMT as PAYLOAD_FMT,
 )
 
-PAYLOAD_FMT = '<ff'
-PAYLOAD_SZ  = struct.calcsize(PAYLOAD_FMT)   # 8 bytes
+PAYLOAD_SZ  = struct.calcsize(PAYLOAD_FMT)   # 8 bytes: uint32 seq + float v
 
 QOS_SENSOR = QoSProfile(
     reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -52,6 +56,12 @@ class ForceReceiverNode(Node):
         self._intercept:  float = 0.0017
         self._calibrated: bool  = False
         self._lock = threading.Lock()
+
+        # Detecção de perda de pacotes via seq da ESP32.
+        self._last_seq:  int | None = None
+        self._lost_pkts: int = 0
+        self._rx_pkts:   int = 0
+        self.create_timer(10.0, self._report_packet_loss)
 
         self._load_calib()
         self.create_timer(10.0, self._load_calib)
@@ -121,7 +131,8 @@ class ForceReceiverNode(Node):
             if len(raw) < PAYLOAD_SZ:
                 continue
 
-            v_sensor, _ = struct.unpack(PAYLOAD_FMT, raw[:PAYLOAD_SZ])
+            (seq, v_sensor) = struct.unpack(PAYLOAD_FMT, raw[:PAYLOAD_SZ])
+            self._track_seq(seq)
 
             v_msg = Float32(); v_msg.data = float(v_sensor)
             self._voltage_pub.publish(v_msg)
@@ -138,6 +149,34 @@ class ForceReceiverNode(Node):
                 self._force_pub.publish(f_msg)
 
         sock.close()
+
+    # ──────────────────────────────────────────────────────────────────
+    def _track_seq(self, seq: int) -> None:
+        """Contabiliza pacotes perdidos pelo salto do seq (uint32, com wrap).
+
+        Roda na thread UDP; os contadores são lidos/zerados pelo timer em
+        outra thread, então mexe neles sob o mesmo lock."""
+        with self._lock:
+            self._rx_pkts += 1
+            if self._last_seq is not None:
+                gap = (seq - self._last_seq) & 0xFFFFFFFF
+                # gap == 0: pacote repetido/fora de ordem — não é perda.
+                if gap > 1:
+                    self._lost_pkts += gap - 1
+            self._last_seq = seq
+
+    def _report_packet_loss(self) -> None:
+        with self._lock:
+            rx, lost = self._rx_pkts, self._lost_pkts
+            self._rx_pkts = 0
+            self._lost_pkts = 0
+        if rx == 0 or lost == 0:
+            return
+        total = rx + lost
+        pct = 100.0 * lost / total if total else 0.0
+        self.get_logger().warn(
+            f'Perda de pacotes UDP: {lost}/{total} '
+            f'({pct:.1f}%) nos últimos 10 s')
 
     # ──────────────────────────────────────────────────────────────────
     def destroy_node(self):

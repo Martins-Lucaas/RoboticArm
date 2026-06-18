@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <EEPROM.h>
 
 // ======================================================
 // WIFI — rede local do laboratório
@@ -25,20 +24,17 @@ WiFiUDP udp;
 #define OVERSAMPLE_N  64
 #define TRIM_N        16   // descarta as 16 menores e 16 maiores leituras
 
-// ======================================================
-// FILTRO — 3 estágios contra spikes do ADC (pioram com
-// WiFi ativo) e ruído de fundo:
-//   1. média aparada das 64 leituras (remove outliers
-//      dentro da rajada de oversampling)
-//   2. mediana de 5 amostras de força (elimina spikes
-//      isolados por completo, sem atrasar degraus reais)
-//   3. EMA em cascata dupla (rolloff de 2ª ordem,
-//      fc ≈ 0.6 Hz @ 50 Hz)
-// ======================================================
-const float ALPHA = 0.12f;
+// EMA dupla. α é definido em AMOSTRAS, então o fc em Hz escala com a taxa
+// de amostragem — ao subir de 50→100 Hz, α cai de 0.20→0.10 para MANTER
+// fc ≈ 1.1 Hz (cascata). α=0.10 @ 100 Hz → fc ≈ 1.08 Hz, atraso de grupo
+// ~180 ms. Observação: dobrar a taxa NÃO reduz a latência — esta é fixada
+// por fc, não por fs; mais taxa só dá mais pontos por segundo. Se quiser
+// MENOS latência (custe ruído), suba α em vez de manter a banda.
+const float ALPHA = 0.10f;
 
 static float ema_stage1     = 0.0f;
-static float force_filtered = 0.0f;
+static float volt_filtered  = 0.0f;
+static bool  filter_seeded  = false;
 
 #define MEDIAN_N 5
 static float median_buf[MEDIAN_N] = {0};
@@ -57,80 +53,41 @@ static float median5(const float* buf)
     return s[MEDIAN_N / 2];
 }
 
-static void filter_reset(float value)
+// Inicializa todos os estágios na primeira leitura para que o
+// filtro não precise convergir a partir de zero.
+static void filter_seed(float value)
 {
-    ema_stage1     = value;
-    force_filtered = value;
+    ema_stage1    = value;
+    volt_filtered = value;
     for (int i = 0; i < MEDIAN_N; ++i) median_buf[i] = value;
+    filter_seeded = true;
 }
 
 // ======================================================
-// DIVISOR DE TENSÃO DO AMPLIFICADOR
+// DIVISOR DE TENSÃO + GANHO DO AMPLIFICADOR
 // ======================================================
 const float R1 = 220000.0f;
-const float R2 =  98600.0f;
+const float R2 =  100000.0f;
 
 // ======================================================
-// CALIBRAÇÃO — slope calibrado em tração, válido para
-// compressão pelo princípio de simetria da ponte de
-// Wheatstone: mesma sensibilidade V/N nos dois sentidos.
-//
-// Positivo = tração  |  Negativo = compressão
-// F = (v_sensor - v_zero) / SLOPE
+// TEMPORIZAÇÃO — 100 Hz não-bloqueante
 // ======================================================
-const float CALIB_SLOPE = 0.4490f;
-
-// ======================================================
-// TARA — zero de referência dinâmico
-// Persiste no EEPROM (endereço 0, 4 bytes float).
-// Comando serial: 'T' → captura tara com sensor em repouso
-//                 'R' → reseta tara para 0.0 V
-// ======================================================
-#define EEPROM_SIZE        4
-#define EEPROM_ADDR_VZERO  0
-
-static float v_zero = 0.0f;
-
-static void load_tare()
-{
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(EEPROM_ADDR_VZERO, v_zero);
-    // valor inválido (NaN ou fora de faixa física) → começa em 0
-    if (isnan(v_zero) || v_zero < 0.0f || v_zero > 15.0f) v_zero = 0.0f;
-    EEPROM.end();
-    Serial.printf("Tara carregada: v_zero = %.4f V\n", v_zero);
-}
-
-static void save_tare(float v)
-{
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(EEPROM_ADDR_VZERO, v);
-    EEPROM.commit();
-    EEPROM.end();
-}
-
-// ======================================================
-// TEMPORIZAÇÃO — 50 Hz não-bloqueante
-// ======================================================
-#define SAMPLE_INTERVAL_MS 20
+#define SAMPLE_INTERVAL_MS 10
 static uint32_t last_sample_ms = 0;
 
-// ======================================================
-// PAYLOAD UDP (little-endian, 8 bytes)
-//   v_sensor      : tensão real do sensor (V)
-//   force_filtered: força com sinal — positivo=tração,
-//                   negativo=compressão (N)
-// ======================================================
 struct __attribute__((packed)) Payload {
-    float v_sensor;
-    float force_filtered;
+    uint32_t seq;
+    float    v_sensor;
 };
 
-static Payload packet;
+static Payload  packet;
+static uint32_t tx_seq = 0;
 
-// ======================================================
-// WIFI — conexão / reconexão
-// ======================================================
+const uint32_t WIFI_RETRY_MS = 3000;
+static uint32_t last_wifi_retry_ms = 0;
+
+// Conexão inicial — só roda no setup(). Bloquear no boot é aceitável (não
+// há amostragem ainda); na operação a reconexão é feita por wifi_kick().
 static void wifi_connect()
 {
     WiFi.mode(WIFI_STA);
@@ -150,8 +107,19 @@ static void wifi_connect()
         Serial.print("IP ESP32: ");
         Serial.println(WiFi.localIP());
     } else {
-        Serial.println("\nTimeout WiFi — tentando no próximo ciclo.");
+        Serial.println("\nTimeout WiFi — reconectando em background.");
     }
+    last_wifi_retry_ms = millis();
+}
+
+// Reconexão não-bloqueante: dispara um begin() throttled e retorna na hora.
+static void wifi_kick()
+{
+    uint32_t now = millis();
+    if (now - last_wifi_retry_ms < WIFI_RETRY_MS) return;
+    last_wifi_retry_ms = now;
+    Serial.println("[WARN] WiFi desconectado — tentando reconectar...");
+    WiFi.begin(ssid, password);
 }
 
 // ======================================================
@@ -161,80 +129,65 @@ void setup()
 {
     Serial.begin(115200);
     analogReadResolution(12);
-    load_tare();
     wifi_connect();
     last_sample_ms = millis();
-    Serial.println("Comandos: T = tarar | R = resetar tara");
+    Serial.println("ESP: enviando apenas tensão (V) — calibração na GUI.");
 }
 
 // ======================================================
-// LOOP — 50 Hz não-bloqueante
+// LOOP — 100 Hz não-bloqueante
 // ======================================================
 void loop()
 {
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[WARN] WiFi desconectado — reconectando...");
-        wifi_connect();
-        last_sample_ms = millis();
+        wifi_kick();                 // não-bloqueante: tenta e segue
+        last_sample_ms = millis();   // evita rajada ao religar
         return;
     }
 
     uint32_t now = millis();
     if (now - last_sample_ms < SAMPLE_INTERVAL_MS) return;
-    last_sample_ms += SAMPLE_INTERVAL_MS;
+    if (now - last_sample_ms > 4 * SAMPLE_INTERVAL_MS) {
+        last_sample_ms = now;
+    } else {
+        last_sample_ms += SAMPLE_INTERVAL_MS;
+    }
 
-    // Oversampling com média aparada: ordena as leituras e
-    // descarta os TRIM_N extremos de cada lado antes da média
-    uint16_t samples[OVERSAMPLE_N];
+    // Oversampling com média aparada: ordena as leituras e descarta os
+    // TRIM_N extremos de cada lado antes da média. analogReadMilliVolts()
+    // já entrega mV calibrados pela curva de fábrica (eFuse), linearizando
+    // a não-linearidade do ADC do ESP32 — não é só 3.3/4095.
+    uint16_t samples[OVERSAMPLE_N];   // mV (0..~3300), cabe em uint16
     for (int i = 0; i < OVERSAMPLE_N; ++i) {
-        uint16_t v = (uint16_t)analogRead(ADC_PIN);
+        uint16_t v = (uint16_t)analogReadMilliVolts(ADC_PIN);
         int j = i - 1;
         while (j >= 0 && samples[j] > v) { samples[j + 1] = samples[j]; --j; }
         samples[j + 1] = v;
     }
-    uint32_t adc_acc = 0;
+    uint32_t mv_acc = 0;
     for (int i = TRIM_N; i < OVERSAMPLE_N - TRIM_N; ++i) {
-        adc_acc += samples[i];
+        mv_acc += samples[i];
     }
-    float v_adc    = (adc_acc / (float)(OVERSAMPLE_N - 2 * TRIM_N) * 3.3f) / 4095.0f;
+    float v_adc    = (mv_acc / (float)(OVERSAMPLE_N - 2 * TRIM_N)) / 1000.0f;
     float v_sensor = v_adc * ((R1 + R2) / R2);
 
-    // Comandos seriais — lidos após leitura do ADC para
-    // que 'T' capture a tensão recém-medida
-    if (Serial.available()) {
-        char cmd = (char)Serial.read();
-        if (cmd == 'T' || cmd == 't') {
-            v_zero = v_sensor;
-            filter_reset(0.0f);
-            save_tare(v_zero);
-            Serial.printf("Tara definida: v_zero = %.4f V\n", v_zero);
-        } else if (cmd == 'R' || cmd == 'r') {
-            v_zero = 0.0f;
-            filter_reset(0.0f);
-            save_tare(v_zero);
-            Serial.println("Tara resetada para 0.0 V");
-        }
-    }
-
-    // Força com sinal: positivo = tração, negativo = compressão
-    float force = (v_sensor - v_zero) / CALIB_SLOPE;
+    if (!filter_seeded) filter_seed(v_sensor);
 
     // Estágio 2: mediana de 5 — spikes isolados não passam
-    median_buf[median_idx] = force;
+    median_buf[median_idx] = v_sensor;
     median_idx = (median_idx + 1) % MEDIAN_N;
-    float force_med = median5(median_buf);
+    float v_med = median5(median_buf);
 
     // Estágio 3: EMA em cascata dupla (passa-baixa de 2ª ordem)
-    ema_stage1     = ALPHA * force_med  + (1.0f - ALPHA) * ema_stage1;
-    force_filtered = ALPHA * ema_stage1 + (1.0f - ALPHA) * force_filtered;
+    ema_stage1    = ALPHA * v_med      + (1.0f - ALPHA) * ema_stage1;
+    volt_filtered = ALPHA * ema_stage1 + (1.0f - ALPHA) * volt_filtered;
 
-    packet.v_sensor       = v_sensor;
-    packet.force_filtered = force_filtered;
+    packet.seq      = tx_seq++;
+    packet.v_sensor = volt_filtered;
 
     udp.beginPacket(DEST_IP, UDP_PORT);
     udp.write(reinterpret_cast<const uint8_t*>(&packet), sizeof(Payload));
     udp.endPacket();
 
-    Serial.printf("v_sensor: %.4f V | v_zero: %.4f V | Força: %+.3f N\n",
-                  v_sensor, v_zero, force_filtered);
+    Serial.printf("v_sensor (filtrada): %.4f V\n", volt_filtered);
 }

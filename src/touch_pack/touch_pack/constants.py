@@ -38,6 +38,18 @@ FORCE_SETPOINT_MAX_N = 10.0
 
 # ── Célula de carga (ESP32 via UDP) ──────────────────────────────────────────
 LOAD_CELL_UDP_PORT = 8080
+# Payload (little-endian, 8 bytes): uint32 seq + float v_sensor (tensão V).
+# Espelhado em sensors/ForceDriver/src/main.cpp (struct Payload). O seq
+# permite ao force_receiver detectar pacotes perdidos (simétrico ao touch).
+LOAD_CELL_PAYLOAD_FMT = '<If'
+
+# Escala AFIM tensão_ADC→v_sensor aplicada no firmware da ESP32. ESPELHO de
+# sensors/ForceDriver/src/main.cpp: ((R1+R2)/R2) * AMP_GAIN, com
+# R1=220000, R2=98600, AMP_GAIN=10. Serve de ASSINATURA da configuração de
+# hardware: a GUI grava este valor no load_cell_calib.json ao calibrar e
+# avisa quando a calibração vigente foi feita com outra escala (firmware
+# alterado → slope/intercept salvos ficam inválidos silenciosamente).
+LC_FW_VOLTAGE_SCALE = ((220000.0 + 98600.0) / 98600.0) * 10.0
 
 # ── Touch sensor (STM32 → PC plotter → UDP) ──────────────────────────────────
 # Porta DIFERENTE da célula de carga: o force_receiver aceita qualquer
@@ -49,7 +61,7 @@ TOUCH_SENSOR_UDP_PORT = 8081
 TOUCH_PAYLOAD_FMT = '<If'
 
 # Idade máxima de uma amostra para entrar no par sincronizado (s).
-# A célula amostra a 50 Hz (20 ms); 0.25 s = ~12 amostras perdidas antes
+# A célula amostra a 100 Hz (10 ms); 0.25 s = ~25 amostras perdidas antes
 # de considerarmos a fonte morta.
 SYNC_MAX_AGE_S = 0.25
 

@@ -3,12 +3,12 @@ force_sync_node.py — Pareia em tempo real a célula de carga (ESP32, UDP 8080)
 com o touch sensor (STM32 → PC plotter, UDP 8081).
 
 Tópico publicado:
-  /touch_sync/data   touch_pack_msgs/SyncedTouch   par sincronizado, 50 Hz
+  /touch_sync/data   touch_pack_msgs/SyncedTouch   par sincronizado, 100 Hz
 
 Estratégia de sincronização: as duas fontes publicam Float32 sem stamp,
 mas ambas chegam por UDP e são carimbadas AQUI, no mesmo relógio do PC
 do ROS — os instantes de chegada são diretamente comparáveis (latência
-de LAN ≪ período de 20 ms da célula). Um timer a 50 Hz emite o par
+de LAN ≪ período de 10 ms da célula). Um timer a 100 Hz emite o par
 somente quando as duas amostras são frescas (< SYNC_MAX_AGE_S); as
 idades vão na mensagem para auditoria posterior.
 """
@@ -27,7 +27,10 @@ from touch_pack_msgs.msg import SyncedTouch
 
 from .constants import SYNC_MAX_AGE_S
 
-SYNC_RATE_HZ = 50.0     # mesma taxa da célula de carga (SAMPLE_INTERVAL_MS 20)
+SYNC_RATE_HZ = 100.0    # mesma taxa da célula de carga (SAMPLE_INTERVAL_MS 10)
+# NOTA: o par só é tão fresco quanto a fonte MAIS LENTA. Se o STM32 do toque
+# emitir TOTAL/Ifinal abaixo de 100 Hz, o valor de toque é repetido (segura
+# a última amostra dentro de SYNC_MAX_AGE_S) — sobe a taxa, não a informação.
 
 QOS_SENSOR = QoSProfile(
     reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -65,7 +68,14 @@ class ForceSyncNode(Node):
         self._touch:     Optional[Sample] = None
         self._was_synced = False
 
-        self.create_subscription(Float32, '/load_cell/force',
+        # Usa /load_cell/force_net (tare-compensada, +compressão) — a MESMA
+        # grandeza que o explorer (PID + limite de 15 N) e o display da GUI
+        # consomem. Antes assinava /load_cell/force, referenciada ao zero da
+        # CALIBRAÇÃO (semanas atrás); o dataset gravado divergia da força
+        # efetivamente controlada pela deriva entre zero de calibração e
+        # tare do dia. Requer GUI aberta + Tare feito para publicar; sem
+        # isso o par fica 'sem amostra fresca' (warn), o que é correto.
+        self.create_subscription(Float32, '/load_cell/force_net',
                                  self._on_load_cell, QOS_SENSOR)
         self.create_subscription(Float32, '/touch_sensor/value',
                                  self._on_touch, QOS_SENSOR)
@@ -74,7 +84,7 @@ class ForceSyncNode(Node):
         self.create_timer(1.0 / SYNC_RATE_HZ, self._on_timer)
 
         self.get_logger().info(
-            f'ForceSync: /load_cell/force + /touch_sensor/value → '
+            f'ForceSync: /load_cell/force_net + /touch_sensor/value → '
             f'/touch_sync/data @ {SYNC_RATE_HZ:.0f} Hz '
             f'(idade máx. {SYNC_MAX_AGE_S * 1e3:.0f} ms)')
 
