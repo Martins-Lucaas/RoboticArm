@@ -17,11 +17,19 @@ Este módulo NÃO depende de ROS nem de Tkinter:
 from __future__ import annotations
 
 import re
+import socket
+import struct
 import threading
 from collections import deque
 from typing import Callable, Optional
 
 import numpy as np
+
+from .constants import (
+    TOUCH_SENSOR_UDP_PORT,
+    TOUCH_PAYLOAD_FMT,
+    TOUCH_UDP_BROADCAST_IP,
+)
 
 try:
     import serial
@@ -64,11 +72,21 @@ class TouchSensorSource:
     """Leitor serial do touch sensor com estado compartilhado thread-safe."""
 
     def __init__(self, port: Optional[str] = None,
-                 on_sample: Optional[Callable[[float], None]] = None):
+                 on_sample: Optional[Callable[[float], None]] = None,
+                 udp_broadcast: bool = True,
+                 udp_ip: str = TOUCH_UDP_BROADCAST_IP,
+                 udp_port: int = TOUCH_SENSOR_UDP_PORT):
         # port=None → auto-detect no start().
         self._port_req = port
         self.port: Optional[str] = None
         self._on_sample = on_sample
+
+        # Reemissão UDP do I_final a cada TOTAL — papel do plotter original.
+        # O destino é o touch_receiver_node (broadcast :8081, formato '<If').
+        self._udp_broadcast = udp_broadcast
+        self._udp_addr = (udp_ip, udp_port)
+        self._udp_sock: Optional[socket.socket] = None
+        self._tx_seq = 0
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -80,12 +98,17 @@ class TouchSensorSource:
         self.error: Optional[str] = None
 
         # Estado compartilhado (protegido por self._lock).
+        # Spikes em deques (não listas): a poda da janela é feita pela FRENTE,
+        # O(1) por descarte, na própria thread serial — ver _note_time. Antes
+        # a poda era O(N) DENTRO do snapshot(), na thread da GUI, e travava o
+        # desenho sob carga (muitos spikes).
         self.voltage_matrix = np.zeros((ROWS, COLS))
-        self.spike_times_RA = [[] for _ in range(NUM_TAXELS)]
-        self.spike_times_SA = [[] for _ in range(NUM_TAXELS)]
-        self.spike_times_POST: list[float] = []
+        self.spike_times_RA = [deque() for _ in range(NUM_TAXELS)]
+        self.spike_times_SA = [deque() for _ in range(NUM_TAXELS)]
+        self.spike_times_POST: deque = deque()
         self.I_final_data: deque = deque([0.0] * WINDOW_SIZE, maxlen=WINDOW_SIZE)
         self.current_time = 0.0
+        self._last_evict = 0.0
 
     # ──────────────────────────────────────────────────────────────────
     def start(self) -> bool:
@@ -109,6 +132,15 @@ class TouchSensorSource:
         self.port = port
         self.connected = True
         self.error = None
+        # Socket de broadcast (best-effort): falha de rede aqui NÃO impede a
+        # leitura serial nem a publicação ROS local — só desliga o reenvio UDP.
+        if self._udp_broadcast:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                self._udp_sock = sock
+            except Exception:
+                self._udp_sock = None
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._worker, daemon=True, name="touch-serial")
@@ -124,6 +156,12 @@ class TouchSensorSource:
                 self._ser.close()
             except Exception:
                 pass
+        if self._udp_sock is not None:
+            try:
+                self._udp_sock.close()
+            except Exception:
+                pass
+            self._udp_sock = None
         self.connected = False
 
     # ──────────────────────────────────────────────────────────────────
@@ -146,34 +184,90 @@ class TouchSensorSource:
             self._buffer = lines[-1]
 
             for line in lines[:-1]:
-                self._parse_line(line.strip())
+                # Uma linha malformada NUNCA pode derrubar a thread de leitura:
+                # se _parse_line lançar, o parsing pararia e o display ficaria
+                # congelado no último frame até resetar a página. Engole o erro
+                # da linha individual e segue lendo a serial.
+                try:
+                    self._parse_line(line.strip())
+                except Exception:
+                    pass
+
+    def _note_time(self, t: float) -> None:
+        """Avança ``current_time`` para o timestamp mais recente e detecta
+        reset/wrap do ``micros()`` do STM32. Chamado SEMPRE sob ``self._lock``.
+
+        Sem isto, um salto grande para trás (STM32 reiniciado entre testes, ou
+        wrap do contador ~a cada 71 min) faria ``current_time`` despencar e a
+        poda ``current_time - t <= RASTER_WINDOW`` ficar negativa para sempre:
+        os spikes antigos NUNCA seriam descartados, as listas cresceriam sem
+        limite e o desenho iria travando aos poucos. Ao detectar a regressão,
+        limpa os buffers e re-ancora o relógio no novo timestamp.
+
+        Também PODA a janela aqui (≤50 Hz), descartando pela frente os spikes
+        que saíram dos últimos RASTER_WINDOW s. Mantém as listas pequenas o
+        tempo todo, então snapshot() (na thread da GUI) só copia — sem custo
+        O(N) de filtragem por frame, que era a causa dos travamentos."""
+        if t + RASTER_WINDOW < self.current_time:
+            for n in range(NUM_TAXELS):
+                self.spike_times_RA[n].clear()
+                self.spike_times_SA[n].clear()
+            self.spike_times_POST.clear()
+            self.current_time = t
+            self._last_evict = t
+            return
+        if t > self.current_time:
+            self.current_time = t
+        # Poda no máximo a ~50 Hz, independente da taxa de linhas da serial.
+        if self.current_time - self._last_evict < 0.02:
+            return
+        self._last_evict = self.current_time
+        cutoff = self.current_time - RASTER_WINDOW
+        for n in range(NUM_TAXELS):
+            ra = self.spike_times_RA[n]
+            while ra and ra[0] < cutoff:
+                ra.popleft()
+            sa = self.spike_times_SA[n]
+            while sa and sa[0] < cutoff:
+                sa.popleft()
+        post = self.spike_times_POST
+        while post and post[0] < cutoff:
+            post.popleft()
 
     def _parse_line(self, line: str) -> None:
         if line.startswith("DATA"):
             m = RE_DATA.search(line)
             if m:
                 idx = int(m.group(1))
+                if not 0 <= idx < NUM_TAXELS:
+                    return
                 adc = int(m.group(2))
                 tstamp = int(m.group(3)) / 1e6
                 row, col = divmod(idx, COLS)
                 with self._lock:
-                    self.current_time = tstamp
+                    self._note_time(tstamp)
                     self.voltage_matrix[row, col] = adc * (VREF / 4095.0)
 
         elif line.startswith("RA"):
             m = RE_IDX_T.search(line)
             if m:
                 idx = int(m.group(1))
+                if not 0 <= idx < NUM_TAXELS:
+                    return
                 tstamp = int(m.group(2)) / 1e6
                 with self._lock:
+                    self._note_time(tstamp)
                     self.spike_times_RA[idx].append(tstamp)
 
         elif line.startswith("SA"):
             m = RE_IDX_T.search(line)
             if m:
                 idx = int(m.group(1))
+                if not 0 <= idx < NUM_TAXELS:
+                    return
                 tstamp = int(m.group(2)) / 1e6
                 with self._lock:
+                    self._note_time(tstamp)
                     self.spike_times_SA[idx].append(tstamp)
 
         elif line.startswith("POST"):
@@ -181,6 +275,7 @@ class TouchSensorSource:
             if m:
                 tstamp = int(m.group(1)) / 1e6
                 with self._lock:
+                    self._note_time(tstamp)
                     self.spike_times_POST.append(tstamp)
 
         elif line.startswith("TOTAL"):
@@ -194,32 +289,42 @@ class TouchSensorSource:
                     return
                 with self._lock:
                     self.I_final_data.append(i_final)
+                # Fora do lock: nem o callback (publish ROS) nem o envio UDP
+                # devem segurar o lock de dados.
+                self._broadcast(i_final)
                 if self._on_sample is not None:
-                    # Fora do lock: o callback (publish ROS) não deve segurar
-                    # o lock de dados.
                     try:
                         self._on_sample(i_final)
                     except Exception:
                         pass
 
+    def _broadcast(self, i_final: float) -> None:
+        """Reemite o I_final por UDP a cada TOTAL (como o plotter original).
+
+        Pacote '<If' = seq + valor, igual ao que o touch_receiver_node espera.
+        Best-effort: qualquer erro de rede é engolido para não derrubar o
+        parsing — UDP é não-confiável por natureza e o seq deixa o receptor
+        detectar perdas."""
+        sock = self._udp_sock
+        if sock is None:
+            return
+        try:
+            packet = struct.pack(TOUCH_PAYLOAD_FMT, self._tx_seq & 0xFFFFFFFF,
+                                 float(i_final))
+            self._tx_seq += 1
+            sock.sendto(packet, self._udp_addr)
+        except Exception:
+            pass
+
     # ──────────────────────────────────────────────────────────────────
     def snapshot(self) -> dict:
-        """Retrato consistente do estado para renderização. Já poda a janela
-        do raster (descarta spikes mais antigos que RASTER_WINDOW) e devolve
-        cópias — o desenho roda fora do lock."""
+        """Retrato consistente do estado para renderização. As listas já vêm
+        podadas à janela pela thread serial (_note_time); aqui só COPIAMOS sob
+        o lock — sem custo O(N) de filtragem na thread da GUI (era o que
+        travava o desenho sob carga). O desenho em si roda fora do lock."""
         with self._lock:
             t_now = self.current_time
             volt = self.voltage_matrix.copy()
-            for n in range(NUM_TAXELS):
-                self.spike_times_RA[n] = [
-                    t for t in self.spike_times_RA[n]
-                    if t_now - t <= RASTER_WINDOW]
-                self.spike_times_SA[n] = [
-                    t for t in self.spike_times_SA[n]
-                    if t_now - t <= RASTER_WINDOW]
-            self.spike_times_POST[:] = [
-                t for t in self.spike_times_POST
-                if t_now - t <= RASTER_WINDOW]
             ra = [list(lst) for lst in self.spike_times_RA]
             sa = [list(lst) for lst in self.spike_times_SA]
             post = list(self.spike_times_POST)
@@ -261,6 +366,11 @@ class TouchFigure:
         self.ax_ifinal, self.ax_post = ax5, ax6
 
         # ── Heatmap ───────────────────────────────────────────────────
+        # interpolation="bicubic": mesmo visual suave do plotter original. É
+        # mais caro que "nearest" (reinterpola o painel), mas sob blit=True só o
+        # artista da imagem é redesenhado, então o custo é aceitável. Troque
+        # para "nearest" se quiser ver o valor REAL de cada taxel (4×4, sem
+        # gradiente inventado) e ganhar desempenho.
         self.im_volt = ax1.imshow(
             np.zeros((ROWS, COLS)), cmap="jet",
             interpolation="bicubic", vmin=0, vmax=VREF)
@@ -327,6 +437,13 @@ class TouchFigure:
     def update(self, *_frame) -> list:
         snap = self.source.snapshot()
         t_now = snap["t_now"]
+        # Janela deslizante de RASTER_WINDOW s: o tempo é mapeado para [0, W]
+        # subtraindo x_lo (= borda esquerda). Mesma MOVIMENTAÇÃO do plotter
+        # original (os spikes correm para a esquerda e somem em 0), mas com
+        # EIXO FIXO — isso é o que permite blit=True (o fundo/ticks não mudam),
+        # mantendo a animação fluida e em tempo real. Mexer no xlim por frame
+        # (eixo absoluto) obrigaria blit=False e foi o que deixou os gráficos
+        # travados/estranhos.
         x_lo = max(0.0, t_now - RASTER_WINDOW)
 
         # Heatmap (rot90 ×2 = mesma orientação do plotter original).

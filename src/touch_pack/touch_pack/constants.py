@@ -43,13 +43,28 @@ LOAD_CELL_UDP_PORT = 8080
 # permite ao force_receiver detectar pacotes perdidos (simétrico ao touch).
 LOAD_CELL_PAYLOAD_FMT = '<If'
 
-# Escala AFIM tensão_ADC→v_sensor aplicada no firmware da ESP32. ESPELHO de
-# sensors/ForceDriver/src/main.cpp: ((R1+R2)/R2) * AMP_GAIN, com
-# R1=220000, R2=98600, AMP_GAIN=10. Serve de ASSINATURA da configuração de
-# hardware: a GUI grava este valor no load_cell_calib.json ao calibrar e
-# avisa quando a calibração vigente foi feita com outra escala (firmware
-# alterado → slope/intercept salvos ficam inválidos silenciosamente).
-LC_FW_VOLTAGE_SCALE = ((220000.0 + 98600.0) / 98600.0) * 10.0
+# Auto-descoberta para enviar a telemetria por UNICAST (broadcast no WiFi não
+# é reconhecido/retransmitido pela 802.11 → ~30% de perda). O force_receiver
+# manda um "hello" periódico para o IP FIXO do ESP nesta porta; o ESP grava o
+# remetente e passa a enviar a telemetria unicast de volta (com fallback a
+# broadcast se nunca receber/ficar obsoleto). Espelhado no firmware.
+LOAD_CELL_ESP_IP        = '192.168.5.105'   # IP estático do ESP (WiFi.config)
+LOAD_CELL_DISCOVERY_PORT = 8090             # porta onde o ESP escuta o hello
+LOAD_CELL_DISCOVERY_MAGIC = b'FRCV'         # tag do hello (ignora tráfego alheio)
+
+# Transformação AFIM tensão_ADC→v_sensor aplicada no firmware da ESP32.
+# ESPELHO EXATO de sensors/ForceDriver/src/main.cpp:
+#     v_sensor = v_adc * V_GAIN - V_OFFSET,   V_GAIN = (R1+R2)/R2
+# com R1=220000, R2=98600 (divisor) e V_OFFSET=0.4544 V. O firmware NÃO
+# multiplica por AMP_GAIN — o ×10 que existia aqui era espúrio.
+# Estes dois valores formam a ASSINATURA da configuração de hardware/firmware:
+# a GUI grava ambos no load_cell_calib.json ao calibrar e avisa quando a
+# calibração vigente foi feita com ganho/offset diferentes (firmware alterado
+# → slope/intercept salvos ficam inválidos silenciosamente).
+LC_FW_R1 = 220000.0
+LC_FW_R2 =  98600.0
+LC_FW_VOLTAGE_SCALE  = (LC_FW_R1 + LC_FW_R2) / LC_FW_R2   # ganho do divisor (≈3.23)
+LC_FW_VOLTAGE_OFFSET = 0.4544                             # V subtraído no firmware
 
 # ── Touch sensor (STM32 → PC plotter → UDP) ──────────────────────────────────
 # Porta DIFERENTE da célula de carga: o force_receiver aceita qualquer
@@ -59,6 +74,12 @@ TOUCH_SENSOR_UDP_PORT = 8081
 # Payload (little-endian, 8 bytes): uint32 seq + float valor.
 # Espelhado em sensors/Touch_sensor/touch_sensor.py (roda fora do ROS).
 TOUCH_PAYLOAD_FMT = '<If'
+# IP de broadcast para o qual o plotter (TouchSensorSource) reemite o I_final
+# por UDP a cada TOTAL — exatamente o papel do plotter original. O receptor é
+# o touch_receiver_node (porta 8081, mesmo formato). É o MESMO broadcast que a
+# ESP32 da célula usa (DEST_IP em sensors/ForceDriver/src/main.cpp); a porta
+# 8081 (≠ 8080) é o que evita misturar os fluxos toque/força.
+TOUCH_UDP_BROADCAST_IP = '192.168.5.255'
 
 # Idade máxima de uma amostra para entrar no par sincronizado (s).
 # A célula amostra a 100 Hz (10 ms); 0.25 s = ~25 amostras perdidas antes

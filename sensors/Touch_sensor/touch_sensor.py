@@ -271,6 +271,31 @@ scatter_POST = ax6.scatter(
 # PARSE DE UMA LINHA (roda na thread de leitura)
 # =========================================================
 
+def note_time(t):
+    """Avança ``current_time`` e detecta reset/wrap do ``micros()`` do STM32.
+
+    Chamada SEMPRE sob ``data_lock``. O plotter é TEMPO REAL: a poda da janela
+    é feita no desenho (``now_t - t <= RASTER_WINDOW``). Sem esta proteção, um
+    salto grande para trás — STM32 reiniciado entre testes, ou wrap do contador
+    (~a cada 71 min) — faria ``current_time`` despencar; aí ``now_t - t`` fica
+    negativo para os spikes antigos, a condição da poda vira sempre verdadeira e
+    eles NUNCA são descartados: as listas cresceriam sem limite e o plotter
+    deixaria de mostrar o tempo real. Ao detectar a regressão, limpamos os
+    buffers e re-ancoramos o relógio no novo timestamp (a persistência de dados
+    é responsabilidade dos modos toque/deslizamento, não destes buffers).
+    """
+    global current_time
+    if t + RASTER_WINDOW < current_time:
+        for n in range(NUM_TAXELS):
+            spike_times_RA[n].clear()
+            spike_times_SA[n].clear()
+        spike_times_POST.clear()
+        current_time = t
+        return
+    if t > current_time:
+        current_time = t
+
+
 def process_line(line):
     """Interpreta uma linha da serial e atualiza o estado compartilhado.
 
@@ -293,7 +318,7 @@ def process_line(line):
             tstamp = int(m.group(3)) / 1e6
             row, col = divmod(idx, COLS)
             with data_lock:
-                current_time = tstamp
+                note_time(tstamp)
                 voltage_matrix[row, col] = adc * (VREF / 4095.0)
                 last_rx_time = time.time()
 
@@ -304,6 +329,7 @@ def process_line(line):
             idx = int(m.group(1))
             tstamp = int(m.group(2)) / 1e6
             with data_lock:
+                note_time(tstamp)
                 spike_times_RA[idx].append(tstamp)
                 last_rx_time = time.time()
 
@@ -314,6 +340,7 @@ def process_line(line):
             idx = int(m.group(1))
             tstamp = int(m.group(2)) / 1e6
             with data_lock:
+                note_time(tstamp)
                 spike_times_SA[idx].append(tstamp)
                 last_rx_time = time.time()
 
@@ -323,6 +350,7 @@ def process_line(line):
         if m:
             tstamp = int(m.group(1)) / 1e6
             with data_lock:
+                note_time(tstamp)
                 spike_times_POST.append(tstamp)
                 last_rx_time = time.time()
 

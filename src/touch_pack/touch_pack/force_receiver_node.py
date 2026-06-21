@@ -33,6 +33,9 @@ from .constants import (
     LOAD_CELL_UDP_PORT as UDP_PORT,
     LC_CALIB_FILE as CALIB_FILE,
     LOAD_CELL_PAYLOAD_FMT as PAYLOAD_FMT,
+    LOAD_CELL_ESP_IP as ESP_IP,
+    LOAD_CELL_DISCOVERY_PORT as DISCOVERY_PORT,
+    LOAD_CELL_DISCOVERY_MAGIC as DISCOVERY_MAGIC,
 )
 
 PAYLOAD_SZ  = struct.calcsize(PAYLOAD_FMT)   # 8 bytes: uint32 seq + float v
@@ -61,7 +64,17 @@ class ForceReceiverNode(Node):
         self._last_seq:  int | None = None
         self._lost_pkts: int = 0
         self._rx_pkts:   int = 0
+        self._seq_resets: int = 0
         self.create_timer(10.0, self._report_packet_loss)
+
+        # Auto-descoberta: anuncia este host ao ESP (IP fixo) para receber a
+        # telemetria por UNICAST em vez de broadcast (que perde ~30% no WiFi).
+        # O ESP grava nosso IP e responde unicast; renovamos a cada 2 s para
+        # que, se o ESP reiniciar (OTA/boot), ele reaprenda o destino. Fallback:
+        # se o hello não chega, o firmware volta sozinho ao broadcast.
+        self._disc_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._send_discovery()
+        self.create_timer(2.0, self._send_discovery)
 
         self._load_calib()
         self.create_timer(10.0, self._load_calib)
@@ -99,6 +112,14 @@ class ForceReceiverNode(Node):
             self.get_logger().warn(f'Falha ao carregar calibração: {exc}')
 
     # ──────────────────────────────────────────────────────────────────
+    def _send_discovery(self) -> None:
+        """Envia o 'hello' ao ESP (IP fixo) para que ele nos mande unicast."""
+        try:
+            self._disc_sock.sendto(DISCOVERY_MAGIC, (ESP_IP, DISCOVERY_PORT))
+        except OSError:
+            pass  # rede fora do ar: o firmware mantém broadcast no fallback
+
+    # ──────────────────────────────────────────────────────────────────
     def _publish_calibrated(self) -> None:
         with self._lock:
             is_cal = self._calibrated
@@ -111,6 +132,13 @@ class ForceReceiverNode(Node):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # múltiplos nós no mesmo PC
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # aceitar broadcasts
+        # Buffer de recepção generoso: a 100 Hz × 8 B o tráfego é minúsculo, mas
+        # se a thread ROS engasgar por alguns ms o datagrama não é descartado
+        # pelo kernel (uma das fontes de "perda" que não é da rede).
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+        except OSError:
+            pass
         sock.settimeout(1.0)
         try:
             sock.bind(('', UDP_PORT))
@@ -151,25 +179,43 @@ class ForceReceiverNode(Node):
         sock.close()
 
     # ──────────────────────────────────────────────────────────────────
-    def _track_seq(self, seq: int) -> None:
-        """Contabiliza pacotes perdidos pelo salto do seq (uint32, com wrap).
+    # Salto de seq acima disto numa janela de 10 s (~1000 pkt a 100 Hz) não é
+    # perda de rede plausível: trata como descontinuidade e re-ancora sem contar.
+    _MAX_PLAUSIBLE_GAP = 5000
 
-        Roda na thread UDP; os contadores são lidos/zerados pelo timer em
-        outra thread, então mexe neles sob o mesmo lock."""
+    def _track_seq(self, seq: int) -> None:
+        """Contabiliza pacotes perdidos pelo salto do seq.
+
+        ``struct.unpack('<I')`` já devolve um int Python 0..2³²-1, então o
+        delta é calculado COM SINAL, sem máscara. Um reset do ESP (seq volta a
+        0 após boot/OTA) dá delta negativo → re-ancora, NÃO conta como perda.
+        O código antigo mascarava com ``& 0xFFFFFFFF`` e o reset virava um salto
+        de ~4 bilhões: era a origem do '100% / 4294714580' espúrio no log.
+
+        Roda na thread UDP; os contadores são lidos/zerados pelo timer em outra
+        thread, então mexe neles sob o mesmo lock."""
         with self._lock:
             self._rx_pkts += 1
             if self._last_seq is not None:
-                gap = (seq - self._last_seq) & 0xFFFFFFFF
-                # gap == 0: pacote repetido/fora de ordem — não é perda.
-                if gap > 1:
-                    self._lost_pkts += gap - 1
+                delta = seq - self._last_seq
+                if delta <= 0:
+                    # Reset (boot/OTA) ou pacote duplicado/fora de ordem.
+                    self._seq_resets += 1
+                elif delta <= self._MAX_PLAUSIBLE_GAP:
+                    self._lost_pkts += delta - 1
+                # delta enorme e positivo: descontinuidade — ignora p/ não inflar.
             self._last_seq = seq
 
     def _report_packet_loss(self) -> None:
         with self._lock:
-            rx, lost = self._rx_pkts, self._lost_pkts
+            rx, lost, resets = self._rx_pkts, self._lost_pkts, self._seq_resets
             self._rx_pkts = 0
             self._lost_pkts = 0
+            self._seq_resets = 0
+        if resets:
+            self.get_logger().info(
+                f'ESP32 reiniciou {resets}× nos últimos 10 s (seq reancorado) — '
+                'provável boot/OTA, não é perda de rede.')
         if rx == 0 or lost == 0:
             return
         total = rx + lost
@@ -181,6 +227,10 @@ class ForceReceiverNode(Node):
     # ──────────────────────────────────────────────────────────────────
     def destroy_node(self):
         self._running = False
+        try:
+            self._disc_sock.close()
+        except Exception:
+            pass
         super().destroy_node()
 
 

@@ -84,7 +84,7 @@ from .constants import (
     FORCE_SETPOINT_MAX_N,
     HOME_POSE_FILE, ROBOT_CONFIG_FILE, LC_CALIB_FILE, POSES_FILE,
     PALPATION_PARAMS_FILE, RUNS_DIR,
-    LC_FW_VOLTAGE_SCALE,
+    LC_FW_VOLTAGE_SCALE, LC_FW_VOLTAGE_OFFSET,
 )
 
 # Driver TCP/IP do CR10 real (cabeada via 192.168.5.1 / LAN1).
@@ -610,15 +610,19 @@ class PalpationGUI(Node):
                     fill='both', expand=True)
                 self._touch_canvas.draw()
                 # Animação com blit=True: redesenha SÓ os artistas que mudam
-                # (mesma técnica do plotter standalone), em vez do redesenho
-                # completo via draw_idle — corrige o travamento e o raster
-                # que não deslizava suave. Inicia pausada; o loop de refresh
-                # a retoma só quando a aba Sensores está visível.
+                # (heatmap, scatters, linha), não a figura inteira. É o que
+                # mantém o raster/I_final/neurônio fluidos e em tempo real —
+                # blit=False (necessário p/ eixo de tempo absoluto) deixava os
+                # três gráficos travados/estranhos. A janela desliza pelo dado
+                # (t-x_lo) sobre eixo FIXO, então o blit funciona. interval=30
+                # (~33 fps, vs 50 do original) p/ exibição o mais real-time
+                # possível. Inicia pausada; o refresh a retoma só na aba
+                # Sensores visível.
                 self._touch_anim = FuncAnimation(
                     self._touch_figure.fig,
                     self._touch_figure.update,
                     init_func=self._touch_figure.init_blit,
-                    interval=50, blit=True, cache_frame_data=False)
+                    interval=30, blit=True, cache_frame_data=False)
                 self._touch_anim_running = True
             except Exception as exc:
                 log.warning('[TOUCH] falha ao embutir figura: %s', exc)
@@ -682,7 +686,7 @@ class PalpationGUI(Node):
                 80, self._refresh_sensors_tab)
 
     def _set_touch_anim(self, run: bool) -> None:
-        """Liga/desliga a animação blit do touch sensor (idempotente)."""
+        """Liga/desliga a animação do touch sensor (idempotente)."""
         anim = getattr(self, '_touch_anim', None)
         if anim is None or run == self._touch_anim_running:
             return
@@ -723,7 +727,7 @@ class PalpationGUI(Node):
             lc_bruto = ((lc_v - lc_ic) / lc_slope
                         if lc_cal and abs(lc_slope) > 1e-9 else 0.0)
             self._sens_raw_lbl.config(text=f'{lc_bruto:+6.2f} N')
-            self._sens_volt_lbl.config(text=f'{lc_v:.4f} V')
+            self._sens_volt_lbl.config(text=f'{lc_v:.6f} V')
         else:
             self._sens_force_lbl.config(text='—   N', fg=TEXT_DIM)
             self._sens_status_lbl.config(
@@ -2569,15 +2573,10 @@ class PalpationGUI(Node):
             font=FONT_LBL, bg=PANEL, fg=WARN)
         self.lc_curr_calib_lbl.pack(anchor='w', pady=(0, 4))
 
-        # Pontos usados na calibração (populados por _restore_lc_calib_ui)
-        self.lc_saved_point_lbls: list[tk.Label] = []
-        for i in range(5):
-            lbl = tk.Label(
-                status_card,
-                text='',
-                font=FONT_MONO_S, bg=PANEL, fg=OK, anchor='w')
-            lbl.pack(fill='x', pady=1)
-            self.lc_saved_point_lbls.append(lbl)
+        # Pontos usados na calibração — quantidade variável, renderizada
+        # dinamicamente por _lc_render_saved_points (não há mais teto de 5).
+        self.lc_saved_points_box = tk.Frame(status_card, bg=PANEL)
+        self.lc_saved_points_box.pack(fill='x')
 
         # ── Passo 1: referência zero (sensor sem nada) ───────────────────
         zero_card = self._card(root, 'Passo 1 — Capturar Zero (sensor sem força)')
@@ -2603,12 +2602,12 @@ class PalpationGUI(Node):
             font=FONT_MONO, bg=PANEL, fg=WARN)
         self.lc_zero_status_lbl.pack(side='left', padx=(14, 0))
 
-        # ── Passo 2: wizard de calibração por tração (5 pesos) ──────────
-        wiz_card = self._card(root, 'Passo 2 — Calibração por Tração (5 Pesos Conhecidos)')
+        # ── Passo 2: wizard de calibração por tração (pesos conhecidos) ──
+        wiz_card = self._card(root, 'Passo 2 — Calibração por Tração (Pesos Conhecidos)')
 
         self.lc_step_lbl = tk.Label(
             wiz_card,
-            text='Passo 1 de 5 — pendure/apoie o primeiro peso e insira a massa',
+            text='Insira a massa e clique Capturar Leitura (mín. 2 pontos)',
             font=FONT_LBL, bg=PANEL, fg=PRIMARY)
         self.lc_step_lbl.pack(anchor='w', pady=(0, 4))
         tk.Label(
@@ -2642,9 +2641,10 @@ class PalpationGUI(Node):
             volt_row, text='—  V', font=FONT_MONO, bg=PANEL, fg=TEXT)
         self.lc_volt_live_lbl.pack(side='right')
 
-        # Botão capturar
+        # Botão capturar — ADICIONA um novo ponto (massa do spinbox + tensão
+        # live). Sem teto: pode adicionar quantos pontos extras quiser.
         self.lc_capture_btn = tk.Button(
-            wiz_card, text='▶  Capturar Leitura',
+            wiz_card, text='▶  Capturar Leitura (adicionar ponto)',
             command=self._lc_calib_capture,
             bg=PRIMARY, fg='white',
             activebackground=PRIMARY_HV, activeforeground='white',
@@ -2654,19 +2654,21 @@ class PalpationGUI(Node):
 
         tk.Frame(wiz_card, bg=BORDER, height=1).pack(fill='x', pady=4)
 
-        # Lista de pontos capturados
+        # Lista de pontos capturados — EDITÁVEL. Cada linha permite alterar a
+        # massa, regravar (⟳) a tensão daquele ponto ou removê-lo (✕). As
+        # linhas são reconstruídas por _lc_refresh_points a partir de
+        # self._lc_calib_points.
         pts_frame = tk.Frame(wiz_card, bg=PANEL)
         pts_frame.pack(fill='x', pady=(6, 6))
-        tk.Label(pts_frame, text='Pontos capturados:', font=FONT_LBL,
+        tk.Label(pts_frame, text='Pontos capturados (editáveis):', font=FONT_LBL,
                  bg=PANEL, fg=TEXT_MUTED).pack(anchor='w', pady=(0, 4))
-        self.lc_point_lbls = []
-        for i in range(5):
-            lbl = tk.Label(
-                pts_frame,
-                text=f'{i + 1}.  — kg  →  — N  →  — V',
-                font=FONT_MONO_S, bg=PANEL, fg=TEXT_DIM, anchor='w')
-            lbl.pack(fill='x', pady=1)
-            self.lc_point_lbls.append(lbl)
+        self.lc_points_container = tk.Frame(pts_frame, bg=PANEL)
+        self.lc_points_container.pack(fill='x')
+        self._lc_point_rows: list[dict] = []
+        self.lc_no_points_lbl = tk.Label(
+            pts_frame, text='Nenhum ponto capturado ainda.',
+            font=FONT_MONO_S, bg=PANEL, fg=TEXT_DIM, anchor='w')
+        self.lc_no_points_lbl.pack(fill='x', pady=1)
 
         tk.Frame(wiz_card, bg=BORDER, height=1).pack(fill='x', pady=6)
 
@@ -2718,29 +2720,15 @@ class PalpationGUI(Node):
             fg=OK)
 
         # Pontos salvos exibidos em verde no card "Calibração Vigente"
-        for i in range(5):
-            if i < len(points):
-                mass_kg, v_sensor = points[i]
-                force_n = mass_kg * 9.80665
-                self.lc_saved_point_lbls[i].config(
-                    text=f'  {i + 1}.  {mass_kg:.3f} kg  →  {force_n:.3f} N'
-                         f'  →  {v_sensor:.4f} V  ✓',
-                    fg=OK)
-            else:
-                self.lc_saved_point_lbls[i].config(text='')
+        self._lc_render_saved_points(points)
 
         # ── Zero capturado ────────────────────────────────────────────
         if zero_v is not None:
             self.lc_zero_status_lbl.config(
                 text=f'V₀ = {zero_v:.4f} V  ✓  (salvo)', fg=OK)
 
-        # ── Pontos do wizard ─────────────────────────────────────────
-        for i, (mass_kg, v_sensor) in enumerate(points[:5]):
-            force_n = mass_kg * 9.80665
-            self.lc_point_lbls[i].config(
-                text=f'{i + 1}.  {mass_kg:.3f} kg  →  {force_n:.3f} N'
-                     f'  →  {v_sensor:.4f} V  ✓',
-                fg=OK)
+        # ── Pontos do wizard (lista editável) ────────────────────────
+        self._lc_refresh_points()
 
         # ── R² recalculado (inclui zero se disponível) ────────────────
         all_forces   = [m * 9.80665 for m, _ in points]
@@ -2760,21 +2748,14 @@ class PalpationGUI(Node):
         self.lc_result_lbl.config(text=result_txt, fg=OK)
 
         # ── Step label e botões ───────────────────────────────────────
-        if n >= 5:
-            self.lc_step_lbl.config(
-                text=f'Calibração carregada do disco — {n} pontos'
-                     '  (use ↺ Reiniciar para refazer)',
-                fg=OK)
-            self.lc_capture_btn.config(state='disabled')
-            self.lc_compute_btn.config(state='normal')
-        else:
-            self.lc_step_lbl.config(
-                text=f'Calibração parcial carregada ({n} de 5 pontos) — '
-                     f'Passo {n + 1}: posicione o próximo peso',
-                fg=WARN)
-            self.lc_capture_btn.config(state='normal')
-            if n >= 2:
-                self.lc_compute_btn.config(state='normal')
+        # _lc_refresh_points já ajustou o estado do botão Calcular conforme o
+        # nº de pontos; aqui só damos o contexto de "carregado do disco" e
+        # garantimos que a captura segue habilitada para editar/adicionar.
+        self.lc_step_lbl.config(
+            text=f'Calibração carregada do disco — {n} ponto(s). Edite a massa, '
+                 'use Regravar ou ✕ para remover; ▶ adiciona pontos extras.',
+            fg=OK)
+        self.lc_capture_btn.config(state='normal')
 
     # ── Tare (zeragem) da célula de carga ────────────────────────────
     def _lc_do_tare(self) -> None:
@@ -2857,9 +2838,15 @@ class PalpationGUI(Node):
             ]
             # #5: assinatura da escala de firmware com que esta calibração foi
             # feita. Calibrações antigas (sem o campo) não disparam o aviso.
-            scale_raw = data.get('voltage_scale')
-            mismatch  = (scale_raw is not None
-                         and abs(float(scale_raw) - LC_FW_VOLTAGE_SCALE) > 1e-6)
+            scale_raw  = data.get('voltage_scale')
+            offset_raw = data.get('voltage_offset')
+            mismatch = bool(
+                (scale_raw is not None
+                 and abs(float(scale_raw) - LC_FW_VOLTAGE_SCALE) > 1e-6)
+                # offset ausente em calibrações antigas → assume o offset
+                # vigente (não dispara aviso só por causa do campo novo).
+                or (offset_raw is not None
+                    and abs(float(offset_raw) - LC_FW_VOLTAGE_OFFSET) > 1e-6))
             with self._lock:
                 self._lc_calib_slope     = slope
                 self._lc_calib_intercept = intercept
@@ -2872,11 +2859,13 @@ class PalpationGUI(Node):
                 f'Calibração LC: slope={slope:.4f} intercept={intercept:.6f} '
                 f'zero={zero_v}  ({n_pts} pts)')
             if mismatch:
+                old_scale  = float(scale_raw)  if scale_raw  is not None else float('nan')
+                old_offset = float(offset_raw) if offset_raw is not None else float('nan')
                 self.get_logger().warn(
-                    f'Calibração LC feita com escala de firmware '
-                    f'{float(scale_raw):.4f}, mas o firmware atual usa '
-                    f'{LC_FW_VOLTAGE_SCALE:.4f} — RECALIBRE: slope/intercept '
-                    f'estão inválidos.')
+                    f'Calibração LC feita com firmware gain={old_scale:.4f} '
+                    f'offset={old_offset:.4f}, mas o firmware atual usa '
+                    f'gain={LC_FW_VOLTAGE_SCALE:.4f} offset={LC_FW_VOLTAGE_OFFSET:.4f} '
+                    f'— RECALIBRE: slope/intercept estão inválidos.')
         except Exception as exc:
             self.get_logger().warn(f'Falha ao ler calibração LC: {exc}')
 
@@ -2886,9 +2875,10 @@ class PalpationGUI(Node):
             'slope':        slope,
             'intercept':    intercept,
             'zero_voltage': zero_voltage,
-            # #5: carimba a escala de firmware vigente — recalibrar invalida
+            # #5: carimba gain+offset do firmware vigente — recalibrar invalida
             # automaticamente o aviso de mismatch ao recarregar.
-            'voltage_scale': LC_FW_VOLTAGE_SCALE,
+            'voltage_scale':  LC_FW_VOLTAGE_SCALE,
+            'voltage_offset': LC_FW_VOLTAGE_OFFSET,
             'n_points':     len(self._lc_calib_points),
             'points': [
                 {'mass_kg': m,
@@ -2924,6 +2914,137 @@ class PalpationGUI(Node):
             text=f'V₀ = {v0:.4f} V  ✓', fg=OK)
         self._set_status(f'Zero capturado: {v0:.4f} V (F = 0 N)', OK)
 
+    def _lc_can_compute(self) -> bool:
+        """Há pontos suficientes para a regressão? polyfit precisa de ≥2
+        pontos TOTAIS — o zero capturado conta como um deles."""
+        n = len(self._lc_calib_points)
+        return n >= 2 or (n >= 1 and self._lc_zero_voltage is not None)
+
+    def _lc_render_saved_points(self, points) -> None:
+        """Repinta o painel 'Calibração Vigente' com a lista (de tamanho
+        variável) de pontos salvos."""
+        for w in self.lc_saved_points_box.winfo_children():
+            w.destroy()
+        for i, (mass_kg, v_sensor) in enumerate(points):
+            force_n = mass_kg * 9.80665
+            tk.Label(
+                self.lc_saved_points_box,
+                text=f'  {i + 1}.  {mass_kg:.3f} kg  →  {force_n:.3f} N'
+                     f'  →  {v_sensor:.4f} V  ✓',
+                font=FONT_MONO_S, bg=PANEL, fg=OK, anchor='w').pack(fill='x', pady=1)
+
+    def _lc_refresh_points(self) -> None:
+        """Reconstrói a lista EDITÁVEL de pontos a partir de
+        self._lc_calib_points. Cada linha traz: massa (spinbox editável),
+        força derivada, tensão, botão Regravar (⟳) e botão Remover (✕)."""
+        for row in self._lc_point_rows:
+            row['frame'].destroy()
+        self._lc_point_rows = []
+
+        pts = self._lc_calib_points
+        if pts:
+            self.lc_no_points_lbl.pack_forget()
+        else:
+            self.lc_no_points_lbl.pack(fill='x', pady=1)
+
+        for i, (mass_kg, v_sensor) in enumerate(pts):
+            row = tk.Frame(self.lc_points_container, bg=PANEL)
+            row.pack(fill='x', pady=1)
+
+            tk.Label(row, text=f'{i + 1}.', font=FONT_MONO_S, bg=PANEL,
+                     fg=TEXT_MUTED, width=3, anchor='w').pack(side='left')
+
+            mass_var = tk.DoubleVar(value=round(mass_kg, 3))
+            tk.Spinbox(
+                row, from_=0.001, to=10.0, increment=0.001,
+                textvariable=mass_var, width=7, font=FONT_MONO_S,
+                justify='right', relief='flat', bd=0,
+                highlightthickness=1, highlightbackground=BORDER,
+                highlightcolor=PRIMARY,
+            ).pack(side='left', padx=(0, 2), ipady=1)
+            tk.Label(row, text='kg', font=FONT_MONO_S, bg=PANEL,
+                     fg=TEXT_MUTED).pack(side='left', padx=(0, 6))
+
+            force_lbl = tk.Label(
+                row, text=f'→ {mass_kg * 9.80665:.3f} N', font=FONT_MONO_S,
+                bg=PANEL, fg=TEXT_DIM, anchor='w')
+            force_lbl.pack(side='left')
+            tk.Label(row, text=f'→ {v_sensor:.4f} V', font=FONT_MONO_S,
+                     bg=PANEL, fg=OK, anchor='w').pack(side='left', padx=(6, 0))
+
+            # ✕ Remover e ⟳ Regravar à direita. lambda com i=i para fixar o
+            # índice (evita o late-binding clássico de closures em loop).
+            tk.Button(
+                row, text='✕', command=lambda i=i: self._lc_delete_point(i),
+                bg=DANGER, fg='white', activebackground=_shade(DANGER, -0.08),
+                activeforeground='white', font=FONT_MONO_S, relief='flat',
+                bd=0, padx=8, pady=1, cursor='hand2',
+            ).pack(side='right', padx=(4, 0))
+            tk.Button(
+                row, text='Regravar',
+                command=lambda i=i: self._lc_recapture(i),
+                bg=BTN_NEUTRAL, fg=TEXT, activebackground=_shade(BTN_NEUTRAL, -0.08),
+                activeforeground=TEXT, font=FONT_MONO_S, relief='flat',
+                bd=0, padx=8, pady=1, cursor='hand2',
+            ).pack(side='right')
+
+            mass_var.trace_add(
+                'write',
+                lambda *_a, i=i, var=mass_var, fl=force_lbl:
+                    self._lc_edit_mass(i, var, fl))
+            self._lc_point_rows.append({'frame': row, 'mass_var': mass_var})
+
+        n = len(pts)
+        if n < 2 and not self._lc_can_compute():
+            self.lc_step_lbl.config(
+                text=f'{n} ponto(s) — mín. 2 (ou 1 + zero) para calcular',
+                fg=PRIMARY)
+        else:
+            self.lc_step_lbl.config(
+                text=f'{n} ponto(s) capturado(s) — pronto para calcular', fg=OK)
+        self.lc_compute_btn.config(
+            state='normal' if self._lc_can_compute() else 'disabled')
+
+    def _lc_edit_mass(self, i: int, var: tk.DoubleVar, force_lbl: tk.Label) -> None:
+        """Edita a massa do ponto i in-place (chamada pelo trace do spinbox).
+        Tolerante a entrada parcial: se ainda não for número válido, ignora."""
+        if not (0 <= i < len(self._lc_calib_points)):
+            return
+        try:
+            mass_kg = float(var.get())
+        except (tk.TclError, ValueError):
+            return
+        if mass_kg <= 0.0:
+            return
+        _old, v = self._lc_calib_points[i]
+        self._lc_calib_points[i] = (mass_kg, v)
+        force_lbl.config(text=f'→ {mass_kg * 9.80665:.3f} N')
+
+    def _lc_recapture(self, i: int) -> None:
+        """Regrava SÓ a tensão do ponto i com a leitura atual do sensor,
+        preservando a massa. Use quando um ponto saiu ruidoso/errado."""
+        if not (0 <= i < len(self._lc_calib_points)):
+            return
+        with self._lock:
+            buf = list(self._lc_voltage_buf)
+        if len(buf) < 5:
+            self._set_status(
+                'Aguardando leituras do sensor — verifique a conexão UDP.', WARN)
+            return
+        avg_v = sum(buf) / len(buf)
+        mass_kg, _old = self._lc_calib_points[i]
+        self._lc_calib_points[i] = (mass_kg, avg_v)
+        self._lc_refresh_points()
+        self._set_status(f'Ponto {i + 1} regravado: {avg_v:.4f} V', OK)
+
+    def _lc_delete_point(self, i: int) -> None:
+        """Remove o ponto i da lista."""
+        if not (0 <= i < len(self._lc_calib_points)):
+            return
+        del self._lc_calib_points[i]
+        self._lc_refresh_points()
+        self._set_status(f'Ponto {i + 1} removido.', OK)
+
     def _lc_calib_capture(self) -> None:
         with self._lock:
             buf = list(self._lc_voltage_buf)
@@ -2946,47 +3067,59 @@ class PalpationGUI(Node):
             return
 
         self._lc_calib_points.append((mass_kg, avg_v))
-        idx     = len(self._lc_calib_points)
-        force_n = mass_kg * 9.80665
-
-        self.lc_point_lbls[idx - 1].config(
-            text=f'{idx}.  {mass_kg:.3f} kg  →  {force_n:.3f} N  →  {avg_v:.4f} V  ✓',
-            fg=OK)
-
-        if idx >= 5:
-            self.lc_step_lbl.config(
-                text='5 pesos capturados — clique em Calcular Calibração', fg=OK)
-            self.lc_capture_btn.config(state='disabled')
-            self.lc_compute_btn.config(state='normal')
-        else:
-            self.lc_step_lbl.config(
-                text=f'Passo {idx + 1} de 5 — pendure/apoie o próximo peso',
-                fg=PRIMARY)
+        idx = len(self._lc_calib_points)
+        self._lc_refresh_points()
         self._set_status(
-            f'Ponto {idx}/5: {mass_kg:.3f} kg → {avg_v:.4f} V', OK)
+            f'Ponto {idx} capturado: {mass_kg:.3f} kg → {avg_v:.4f} V', OK)
 
     def _lc_calib_compute(self) -> None:
-        if len(self._lc_calib_points) < 2:
-            self._set_status('Mínimo de 2 pontos para calibrar.', DANGER)
+        if not self._lc_can_compute():
+            self._set_status(
+                'Mínimo de 2 pontos (ou 1 ponto + o zero) para calibrar.', DANGER)
             return
 
-        forces   = [m * 9.80665 for m, _v in self._lc_calib_points]
-        voltages = [v            for _m, v in self._lc_calib_points]
+        forces_load   = [m * 9.80665 for m, _v in self._lc_calib_points]
+        voltages_load = [v            for _m, v in self._lc_calib_points]
 
-        # Inclui o ponto de zero capturado: ancora a reta em (F=0, V=V₀),
-        # eliminando o offset residual que aparece quando o intercepto não
-        # corresponde à tensão real do sensor sem carga.
         zero_v = self._lc_zero_voltage
         if zero_v is not None:
-            forces   = [0.0] + forces
-            voltages = [zero_v] + voltages
+            # Calibração ANCORADA no repouso: a reta é OBRIGADA a passar por
+            # (F=0, V=V₀) e ajustamos SÓ o ganho — mínimos quadrados pela origem
+            # de (v − V₀) contra F: slope = Σ(F·Δv)/Σ(F²), intercept = V₀.
+            #
+            # Por que não polyfit livre: o polyfit deixa o intercepto flutuar.
+            # Se os pontos com carga extrapolam para um V≠V₀ em F=0 (não-
+            # linearidade/folga perto de zero, ou um ponto ruim), o intercepto
+            # ajustado não bate com a tensão real de repouso e a força lida com
+            # 0 V sai em vários N (era o "-5.42 N parado"). Ancorar garante
+            # F(repouso)=0 por construção, que é como uma célula de carga deve
+            # ser calibrada (a reta passa pela saída sem carga).
+            F  = np.asarray(forces_load, dtype=float)
+            dv = np.asarray(voltages_load, dtype=float) - zero_v
+            denom = float(np.sum(F * F))
+            if denom < 1e-12:
+                self._set_status('Forças dos pontos muito pequenas para o ajuste.',
+                                 DANGER)
+                return
+            slope     = float(np.sum(F * dv) / denom)
+            intercept = float(zero_v)
+            forces    = [0.0] + forces_load
+            voltages  = [zero_v] + voltages_load
+        else:
+            # Sem zero capturado: regressão livre. ATENÇÃO — sem âncora o repouso
+            # pode não dar 0; capture o Zero (Passo 1) para ancorar a reta.
+            forces   = forces_load
+            voltages = voltages_load
+            coeffs    = np.polyfit(forces, voltages, 1)
+            slope     = float(coeffs[0])
+            intercept = float(coeffs[1])
 
-        # Ajuste linear: v = slope * F + intercept → F = (v - intercept) / slope
-        coeffs    = np.polyfit(forces, voltages, 1)
-        slope     = float(coeffs[0])
-        intercept = float(coeffs[1])
+        if abs(slope) < 1e-9:
+            self._set_status('Ganho ≈ 0 — pontos inconsistentes, recalibre.', DANGER)
+            return
 
-        v_fit  = np.polyval(coeffs, forces)
+        # R² da reta resultante sobre todos os pontos (inclui o zero).
+        v_fit  = np.array([slope * f + intercept for f in forces])
         ss_res = float(np.sum((np.array(voltages) - v_fit) ** 2))
         ss_tot = float(np.var(voltages)) * len(voltages)
         r2     = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 1.0
@@ -3002,24 +3135,26 @@ class PalpationGUI(Node):
 
         zero_note = f'  | zero={zero_v:.4f} V' if zero_v is not None else '  | sem zero'
         result = f'slope={slope:.4f}  intercept={intercept:.4f}  R²={r2:.4f}{zero_note}'
-        self.lc_result_lbl.config(text=result, fg=OK)
-        self._set_status(f'Calibração concluída! {result}', OK)
+        # R² baixo com a reta ancorada = os pontos com carga não são colineares
+        # com o repouso → folga/pré-carga (zona morta) perto de zero, ou um
+        # ponto ruidoso. O ganho ancorado fica enviesado e a força no fundo de
+        # escala sai imprecisa. Aponta o usuário para editar/regravar os pontos.
+        low_q = r2 < 0.98
+        self.lc_result_lbl.config(text=result, fg=(WARN if low_q else OK))
+        if low_q:
+            self._set_status(
+                f'Calibrado (repouso=0), mas R²={r2:.3f} baixo — pontos não-lineares '
+                'perto de zero (folga/pré-carga no setup?). Use ✕/Regravar para '
+                f'corrigir os pontos ruins e recalcule.  {result}', WARN)
+        else:
+            self._set_status(f'Calibração concluída! {result}', OK)
 
         # Atualiza card "Calibração Vigente" com os pontos em verde
         self.lc_curr_calib_lbl.config(
             text=f'slope={slope:.4f}  intercept={intercept:.4f}'
                  f'  ({len(self._lc_calib_points)} pontos){zero_note}',
             fg=OK)
-        for i in range(5):
-            if i < len(self._lc_calib_points):
-                mass_kg, v_sensor = self._lc_calib_points[i]
-                force_n = mass_kg * 9.80665
-                self.lc_saved_point_lbls[i].config(
-                    text=f'  {i + 1}.  {mass_kg:.3f} kg  →  {force_n:.3f} N'
-                         f'  →  {v_sensor:.4f} V  ✓',
-                    fg=OK)
-            else:
-                self.lc_saved_point_lbls[i].config(text='')
+        self._lc_render_saved_points(self._lc_calib_points)
 
     def _lc_calib_reset(self) -> None:
         self._lc_calib_points = []
@@ -3031,15 +3166,13 @@ class PalpationGUI(Node):
         self.lc_mass_var.set(0.100)
         self.lc_zero_status_lbl.config(text='Não capturado', fg=WARN)
         self.lc_step_lbl.config(
-            text='Passo 1 de 5 — pendure/apoie o primeiro peso e insira a massa',
+            text='Insira a massa e clique Capturar Leitura (mín. 2 pontos)',
             fg=PRIMARY)
         self.lc_capture_btn.config(state='normal')
         self.lc_compute_btn.config(state='disabled')
+        self._lc_render_saved_points([])
+        self._lc_refresh_points()
         self.lc_result_lbl.config(text='', fg=TEXT_DIM)
-        for i, lbl in enumerate(self.lc_point_lbls):
-            lbl.config(text=f'{i + 1}.  — kg  →  — N  →  — V', fg=TEXT_DIM)
-        for lbl in self.lc_saved_point_lbls:
-            lbl.config(text='')
         self._set_status('Calibração reiniciada.', TEXT_DIM)
 
     # ── Force receiver — gerenciamento do subprocesso ─────────────────
@@ -3258,7 +3391,7 @@ class PalpationGUI(Node):
             self._esp32_status_lbl.config(text='AGUARDANDO', fg=WARN)
 
         # Tensão
-        volt_txt   = f'{voltage:.4f}  V' if has_data else '—  V'
+        volt_txt   = f'{voltage:.6f}  V' if has_data else '—  V'
         volt_color = TEXT if has_data else TEXT_DIM
         self.lc_voltage_lbl.config(text=volt_txt, fg=volt_color)
         self.lc_volt_live_lbl.config(text=volt_txt, fg=volt_color)
