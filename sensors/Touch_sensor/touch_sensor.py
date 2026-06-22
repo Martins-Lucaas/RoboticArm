@@ -23,7 +23,7 @@ import struct
 # Porta default por plataforma: no Windows o STM32 aparece como COMx;
 # no Linux como /dev/ttyACMx ou /dev/ttyUSBx. Quando None, é detectada
 # automaticamente (ver detect_serial_port).
-DEFAULT_PORT = "/dev/ttyACM0"
+DEFAULT_PORT = "/dev/ttyACM1"
 BAUD = 115200
 
 ROWS = 4

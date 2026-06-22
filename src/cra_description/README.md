@@ -2,6 +2,11 @@
 
 Pacote com o **URDF/Xacro e meshes do braço Dobot CR10** (modelo CR10A, 6-DOF). Extraído do repositório oficial Dobot [`DOBOT_6Axis_ROS2_V4`](https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4) — apenas este pacote é usado; os demais (cr3, cr5, cr7, MoveIt, nova2, etc.) podem ser descartados.
 
+<p align="center">
+  <img src="../../images/gazebo_arm_above_pick_station.png" width="60%" alt="Braço Dobot CR10 (URDF cra_description) posicionado sobre a estação de pick no Gazebo"/>
+</p>
+<p align="center"><em>URDF do <strong>Dobot CR10</strong> (6-DOF) carregado no Gazebo Classic a partir do <code>cr10_robot.xacro</code> deste pacote.</em></p>
+
 ---
 
 ## Conteúdo

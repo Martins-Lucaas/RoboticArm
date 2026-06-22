@@ -2,6 +2,12 @@
 
 Pacote principal da **célula de manufatura biomédica**. Integra detecção de objetos por visão computacional, cinemática do braço CR10, controle da mão COVVI e orquestração do ciclo de pick-and-place em Gazebo — com canal opcional para a mão COVVI física via ECI.
 
+<p align="center">
+  <img src="../../images/conveyor_cell_gazebo_full_scene.png" width="48%" alt="Célula de manufatura no Gazebo — esteira, CR10 com mão COVVI e caixas de destino"/>
+  <img src="../../images/conveyor_cell_gui_arm_picking.png" width="48%" alt="GUI da célula durante uma preensão — câmera, detecção e controle do ciclo pick-and-place"/>
+</p>
+<p align="center"><em>Esquerda: célula completa no Gazebo (esteira → estação de pick → caixas). Direita: GUI de operação durante o ciclo de preensão.</em></p>
+
 ---
 
 ## Objetos e preensões
@@ -11,6 +17,13 @@ Pacote principal da **célula de manufatura biomédica**. Integra detecção de 
 | **Frasco** | Âmbar/laranja (`H=8-26, S>120, V>80`) | Palm Grip | Box 1 — vermelha |
 | **Tubo** | Azul rico (`H=100-135, S>80, V>50`) | Claw Grip | Box 2 — verde |
 | **Ampola** | Verde brilhante (`H=38-85, S>110, V>80`) | Fingertip Grip | Box 3 — azul |
+
+<p align="center">
+  <img src="../../images/palmGrip.png" width="32%" alt="Palm Grip — preensão do frasco"/>
+  <img src="../../images/claw.png" width="32%" alt="Claw Grip — preensão do tubo"/>
+  <img src="../../images/fingertip.png" width="32%" alt="Fingertip Grip — preensão da ampola"/>
+</p>
+<p align="center"><em>Tipos de preensão da mão COVVI: <strong>Palm Grip</strong> (frasco) · <strong>Claw Grip</strong> (tubo) · <strong>Fingertip Grip</strong> (ampola).</em></p>
 
 ---
 

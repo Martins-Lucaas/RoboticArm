@@ -10,16 +10,19 @@ Tópicos publicados:
 A calibração é lida de ~/.config/touch_pack/load_cell_calib.json
 e recarregada automaticamente a cada 10 s (após a GUI salvar nova calib).
 
-Payload UDP (little-endian, 8 bytes — LOAD_CELL_PAYLOAD_FMT '<If'):
-  uint32 seq     — contador incremental da ESP32; o salto do seq revela
-                   pacotes perdidos na rede (logado periodicamente).
-  float  v_sensor — tensão do sensor já filtrada na ESP32 (V).
-                   A conversão tensão→força e a calibração são feitas
-                   AQUI, a partir de load_cell_calib.json — nada é
-                   hardcoded na ESP.
+A ESP32 amostra a 1 kHz e envia EM LOTE (LOAD_CELL_BATCH_N amostras por
+datagrama, ~100 pacotes/s). Cada amostra (LOAD_CELL_SAMPLE_FMT '<IIf', 12 B):
+  uint32 seq      — contador incremental por AMOSTRA; o salto revela amostras
+                    perdidas (logado periodicamente).
+  uint32 t_us     — micros() da ESP32 no instante da amostra (relógio de sync).
+  float  v_sensor — tensão do sensor com filtro LEVE na ESP (só a média do
+                    oversampling). O filtro PESADO (mediana + EMA dupla) e a
+                    conversão tensão→força/calibração são feitos AQUI — nada é
+                    hardcoded na ESP, e reajustar o filtro não exige reflashar.
 """
 
 import json
+import math
 import socket
 import struct
 import threading
@@ -32,13 +35,77 @@ from std_msgs.msg import Float32, Bool
 from .constants import (
     LOAD_CELL_UDP_PORT as UDP_PORT,
     LC_CALIB_FILE as CALIB_FILE,
-    LOAD_CELL_PAYLOAD_FMT as PAYLOAD_FMT,
+    LOAD_CELL_SAMPLE_FMT as SAMPLE_FMT,
+    LOAD_CELL_BATCH_N as BATCH_N,
     LOAD_CELL_ESP_IP as ESP_IP,
     LOAD_CELL_DISCOVERY_PORT as DISCOVERY_PORT,
     LOAD_CELL_DISCOVERY_MAGIC as DISCOVERY_MAGIC,
 )
 
-PAYLOAD_SZ  = struct.calcsize(PAYLOAD_FMT)   # 8 bytes: uint32 seq + float v
+SAMPLE_SZ = struct.calcsize(SAMPLE_FMT)   # 12 bytes: uint32 seq + uint32 t_us + float v
+
+# ── Filtro PESADO (movido do firmware para cá) ───────────────────────────────
+# A 1 kHz, parâmetros em AMOSTRAS escalam diferente do firmware antigo (100 Hz).
+# A EMA dupla de cutoff FIXO (α=0.024) custava ~80 ms de atraso de grupo SEMPRE
+# — inclusive numa excitação rápida, que chegava atrasada E atenuada. Trocada
+# pelo filtro One-Euro (Casiez et al. 2012): cutoff ADAPTATIVO. Parado, o cutoff
+# cai a ONE_EURO_MINCUTOFF (zero firme, sem jitter); quando o sinal se move
+# rápido, o cutoff sobe e a latência despenca. Tudo ajustável aqui, sem
+# reflashar a ESP (que só manda a tensão crua).
+MEDIAN_N = 5                  # rejeita glitches isolados de 1–2 amostras (1–2 ms)
+ONE_EURO_FREQ      = 1000.0   # Hz — taxa de amostragem efetiva (uma por elemento do lote)
+ONE_EURO_MINCUTOFF = 1.0      # Hz — cutoff em repouso (↓ = zero mais firme, +lag parado)
+ONE_EURO_BETA      = 0.05     # responsividade ao movimento (↑ = menos lag, +ruído)
+ONE_EURO_DCUTOFF   = 1.0      # Hz — cutoff do estimador de derivada
+
+
+class _LoadCellFilter:
+    """Mediana de MEDIAN_N (mata spikes) seguida do filtro One-Euro — passa-baixa
+    de cutoff adaptativo. Mantém a mesma rejeição de ruído em repouso que a EMA
+    dupla antiga, mas com muito menos atraso quando há excitação rápida."""
+
+    def __init__(self, freq: float = ONE_EURO_FREQ,
+                 mincutoff: float = ONE_EURO_MINCUTOFF,
+                 beta: float = ONE_EURO_BETA,
+                 dcutoff: float = ONE_EURO_DCUTOFF,
+                 median_n: int = MEDIAN_N):
+        self._freq = freq
+        self._mincutoff = mincutoff
+        self._beta = beta
+        self._dcutoff = dcutoff
+        self._median_n = median_n
+        self._median_buf: list[float] = []
+        self._mi = 0
+        self._x_prev = 0.0
+        self._dx_prev = 0.0
+        self._seeded = False
+
+    @staticmethod
+    def _alpha(cutoff: float, freq: float) -> float:
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau * freq)
+
+    def update(self, v: float) -> float:
+        if not self._seeded:
+            self._median_buf = [v] * self._median_n
+            self._x_prev = v
+            self._dx_prev = 0.0
+            self._seeded = True
+            return v
+        # Estágio 1: mediana — spikes isolados de 1–2 amostras não passam.
+        self._median_buf[self._mi] = v
+        self._mi = (self._mi + 1) % self._median_n
+        v_med = sorted(self._median_buf)[self._median_n // 2]
+        # Estágio 2: One-Euro — cutoff sobe com a velocidade estimada do sinal.
+        dx = (v_med - self._x_prev) * self._freq
+        a_d = self._alpha(self._dcutoff, self._freq)
+        dx_hat = a_d * dx + (1.0 - a_d) * self._dx_prev
+        cutoff = self._mincutoff + self._beta * abs(dx_hat)
+        a = self._alpha(cutoff, self._freq)
+        x_hat = a * v_med + (1.0 - a) * self._x_prev
+        self._x_prev = x_hat
+        self._dx_prev = dx_hat
+        return x_hat
 
 QOS_SENSOR = QoSProfile(
     reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -59,6 +126,10 @@ class ForceReceiverNode(Node):
         self._intercept:  float = 0.0017
         self._calibrated: bool  = False
         self._lock = threading.Lock()
+
+        # Filtro pesado em software (a ESP só manda o oversample leve agora).
+        # Só a thread UDP o toca, então não precisa de lock.
+        self._filter = _LoadCellFilter()
 
         # Detecção de perda de pacotes via seq da ESP32.
         self._last_seq:  int | None = None
@@ -132,8 +203,8 @@ class ForceReceiverNode(Node):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # múltiplos nós no mesmo PC
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # aceitar broadcasts
-        # Buffer de recepção generoso: a 100 Hz × 8 B o tráfego é minúsculo, mas
-        # se a thread ROS engasgar por alguns ms o datagrama não é descartado
+        # Buffer de recepção generoso: ~100 pacotes/s de lotes são minúsculos,
+        # mas se a thread ROS engasgar por alguns ms o datagrama não é descartado
         # pelo kernel (uma das fontes de "perda" que não é da rede).
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
@@ -148,39 +219,48 @@ class ForceReceiverNode(Node):
             return
         self.get_logger().info(f'UDP bind OK em 0.0.0.0:{UDP_PORT} (broadcast)')
 
+        rcvbuf = SAMPLE_SZ * BATCH_N + 64   # 1 lote cabe folgado
         while self._running and rclpy.ok():
             try:
-                raw, _ = sock.recvfrom(256)
+                raw, _ = sock.recvfrom(max(256, rcvbuf))
             except socket.timeout:
                 continue
             except OSError:
                 break
 
-            if len(raw) < PAYLOAD_SZ:
+            # Datagrama = N amostras concatenadas (12 B cada). Ignora um rabo
+            # truncado se o tamanho não for múltiplo exato de SAMPLE_SZ.
+            n_samples = len(raw) // SAMPLE_SZ
+            if n_samples == 0:
                 continue
-
-            (seq, v_sensor) = struct.unpack(PAYLOAD_FMT, raw[:PAYLOAD_SZ])
-            self._track_seq(seq)
-
-            v_msg = Float32(); v_msg.data = float(v_sensor)
-            self._voltage_pub.publish(v_msg)
 
             with self._lock:
                 sl = self._slope
                 ic = self._intercept
 
-            if abs(sl) > 1e-9:
-                # Calibração feita em tração → invertido para a convenção do
-                # sistema: compressão = positivo, tração = negativo.
-                force = (ic - v_sensor) / sl
-                f_msg = Float32(); f_msg.data = float(force)
-                self._force_pub.publish(f_msg)
+            for k in range(n_samples):
+                off = k * SAMPLE_SZ
+                (seq, _t_us, v_raw) = struct.unpack_from(SAMPLE_FMT, raw, off)
+                self._track_seq(seq)
+
+                # Filtro pesado no PC (a ESP só mandou o oversample leve).
+                v_sensor = self._filter.update(float(v_raw))
+
+                v_msg = Float32(); v_msg.data = v_sensor
+                self._voltage_pub.publish(v_msg)
+
+                if abs(sl) > 1e-9:
+                    # Calibração feita em tração → invertido para a convenção do
+                    # sistema: compressão = positivo, tração = negativo.
+                    force = (ic - v_sensor) / sl
+                    f_msg = Float32(); f_msg.data = float(force)
+                    self._force_pub.publish(f_msg)
 
         sock.close()
 
     # ──────────────────────────────────────────────────────────────────
-    # Salto de seq acima disto numa janela de 10 s (~1000 pkt a 100 Hz) não é
-    # perda de rede plausível: trata como descontinuidade e re-ancora sem contar.
+    # Salto de seq acima disto numa janela de 10 s (~10000 amostras a 1 kHz) não
+    # é perda de rede plausível: trata como descontinuidade e re-ancora sem contar.
     _MAX_PLAUSIBLE_GAP = 5000
 
     def _track_seq(self, seq: int) -> None:

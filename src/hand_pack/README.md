@@ -2,6 +2,13 @@
 
 Pacote de suporte da mão **COVVI Hand** — contém o URDF combinado CR10 + COVVI, helpers de launch, funções de pós-processamento do URDF e GUIs auxiliares para controle isolado da mão.
 
+<p align="center">
+  <img src="../../images/covvi_hand_rviz_joints_open.png" width="32%" alt="Mão COVVI no RViz — dedos abertos"/>
+  <img src="../../images/covvi_hand_rviz_joints_closed.png" width="32%" alt="Mão COVVI no RViz — dedos fechados"/>
+  <img src="../../images/gui_hand_tab_with_rviz.png" width="32%" alt="GUI de controle da mão COVVI ao lado do RViz"/>
+</p>
+<p align="center"><em>URDF combinado CR10 + COVVI (31 juntas: 6 primárias + 25 <em>mimic</em>) no RViz — dedos abertos e fechados — e a GUI de controle da mão.</em></p>
+
 ---
 
 ## Conteúdo

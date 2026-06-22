@@ -102,8 +102,12 @@ class PalpationLogger(Node):
         self._last_sample_t: float = 0.0
         self._sample_count: int = 0
         # Últimas juntas do braço (rad, ordem _ARM_JOINTS); None até o
-        # primeiro /joint_states.
+        # primeiro /joint_states. _q_cols / _tcp_cols são as colunas do CSV já
+        # formatadas — a FK é cara e roda agora a cada /joint_states (~50 Hz),
+        # NÃO por amostra de força (a 1 kHz seriam 1000 FKs/s do mesmo valor).
         self._q: np.ndarray | None = None
+        self._q_cols: list[str] = [''] * 6
+        self._tcp_cols: list[str] = [''] * 3
         # Última leitura do touch sensor: (valor, instante de chegada).
         # None até o primeiro /touch_sensor/value — sensor é opcional.
         self._touch: tuple[float, float] | None = None
@@ -181,28 +185,31 @@ class PalpationLogger(Node):
         if not all(j in idx for j in _ARM_JOINTS):
             return   # mensagem só com juntas da mão
         q = np.array([float(msg.position[idx[j]]) for j in _ARM_JOINTS])
+        # FK aqui (~50 Hz), não no _cb_force (1 kHz): as colunas ficam prontas
+        # e cada amostra de força só as copia.
+        q_cols = [f'{v:.5f}' for v in q]
+        try:
+            tcp = forward_kinematics(q, T_end=T_TOUCH_TOOL_ATTACH)[:3, 3]
+            tcp_cols = [f'{v:.5f}' for v in tcp]
+        except Exception:
+            tcp_cols = ['', '', '']
         with self._lock:
             self._q = q
+            self._q_cols = q_cols
+            self._tcp_cols = tcp_cols
 
     def _cb_force(self, msg: Float32) -> None:
-        """Uma amostra por leitura de força (~50 Hz) — sinal canônico."""
+        """Uma amostra por leitura de força (agora ~1 kHz) — sinal canônico.
+        Cada amostra vira uma linha do CSV unificado, então o arquivo sai na
+        taxa da força; com a ESP a 1 kHz é um log força+toque a 1 kHz."""
         now = time.time()
         with self._lock:
             self._last_sample_t = now
             if self._csv_writer is None or self._run_t0 is None:
                 return
-            q = self._q
-            if q is not None:
-                try:
-                    tcp = forward_kinematics(
-                        q, T_end=T_TOUCH_TOOL_ATTACH)[:3, 3]
-                    tcp_cols = [f'{v:.5f}' for v in tcp]
-                except Exception:
-                    tcp_cols = ['', '', '']
-                q_cols = [f'{v:.5f}' for v in q]
-            else:
-                q_cols = [''] * 6
-                tcp_cols = [''] * 3
+            # Colunas de junta/TCP já calculadas no _cb_joints (FK fora daqui).
+            q_cols = self._q_cols
+            tcp_cols = self._tcp_cols
             # Touch pareado por chegada (mesma regra do force_sync):
             # fresco entra com valor + idade; estale/ausente sai vazio.
             touch_cols = ['', '']
@@ -222,9 +229,10 @@ class PalpationLogger(Node):
                     *touch_cols,
                 ])
                 self._sample_count += 1
-                # Flush a cada 50 amostras (~1 s @ 50 Hz) para não perder
-                # dados se o nó for morto sem encerrar limpo.
-                if self._sample_count % 50 == 0 and self._csv_fh is not None:
+                # Flush a cada ~1 s (1000 amostras @ 1 kHz) para não perder
+                # dados se o nó for morto sem encerrar limpo, sem martelar o
+                # disco a cada amostra.
+                if self._sample_count % 1000 == 0 and self._csv_fh is not None:
                     self._csv_fh.flush()
             except (ValueError, OSError) as exc:
                 self.get_logger().warn(f'Falha ao gravar amostra: {exc}')

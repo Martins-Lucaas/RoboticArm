@@ -410,7 +410,8 @@ class PalpationGUI(Node):
 
         # ─── Célula de carga (load cell UDP via force_receiver_node) ─
         self._lc_voltage: float          = 0.0
-        self._lc_voltage_buf: collections.deque = collections.deque(maxlen=50)
+        # ~2 s de histórico @ ~100 pacotes/s — base p/ tare estável e auto-zero.
+        self._lc_voltage_buf: collections.deque = collections.deque(maxlen=200)
         self._lc_last_ts: float          = 0.0
         # SEM calibração embutida: a GUI parte de NÃO-CALIBRADA e só publica
         # /load_cell/force_net depois de carregar
@@ -433,6 +434,12 @@ class PalpationGUI(Node):
         # residual que faz o zero não bater após a calibração.
         self._lc_tare_voltage: float = 0.0
         self._lc_tare_done: bool = False
+        # Auto-zero lento: em repouso (fora de medição e dentro da banda morta),
+        # a referência de tare é puxada devagar p/ a tensão atual, cancelando a
+        # deriva DC (térmica/creep) que faz o "0 N" sair do lugar com o tempo.
+        self._lc_autozero_band_n: float = 0.30   # só atua com |F| < banda
+        self._lc_autozero_rate: float = 0.001    # passo/amostra (~τ 10 s @100 Hz)
+        self._lc_tare_stable_n: float = 0.20     # ptp máx no buffer p/ aceitar tare
         # Força de contato tare-compensada (N, positiva = compressão).
         # Publicada em /load_cell/force_net e usada pelo explorer no PID.
         self._lc_force_net: float = 0.0
@@ -457,8 +464,11 @@ class PalpationGUI(Node):
         self._touch_serial_ok = False
         self._sensors_tab_frame: tk.Frame | None = None
         self._sensors_after: str | None = None
-        # Throttle da publicação /touch_sensor/value (STM32 emite ~1 kHz).
-        self._touch_pub_period = 1.0 / 100.0   # 100 Hz
+        # Publicação de /touch_sensor/value SEM decimação: o STM32 emite TOTAL a
+        # ~1 kHz e queremos esse 1 kHz no ROS (logger e force_sync agora gravam/
+        # pareiam a 1 kHz). period=0 → publica toda amostra. (Antes limitava a
+        # 100 Hz "porque os consumidores eram ≤50 Hz" — não vale mais.)
+        self._touch_pub_period = 0.0
         self._touch_pub_last = 0.0
         # ─── Gravação do stream sincronizado (botão na aba Palpação) ──────
         self._rec_fh = None
@@ -556,18 +566,19 @@ class PalpationGUI(Node):
 
     def _on_touch_sample(self, i_final: float) -> None:
         """Callback da thread serial: republica I_final em ROS e atualiza o
-        estado interno (sparkline + painéis), sem tocar em widgets Tk.
+        estado interno, sem tocar em widgets Tk.
 
-        O STM32 emite TOTAL a ~1 kHz; publicar nessa taxa satura o DDS e o
-        executor (e a auto-inscrição da própria GUI) sem benefício — todos os
-        consumidores (force_sync, logger, sparkline) operam a ≤50 Hz. Aqui
-        limitamos a publicação/atualização a TOUCH_PUB_HZ. Os gráficos do
-        toque (heatmap/raster) NÃO dependem disto: leem o estado completo da
-        fonte em alta taxa diretamente."""
-        now = time.monotonic()
-        if now - self._touch_pub_last < self._touch_pub_period:
-            return
-        self._touch_pub_last = now
+        O STM32 emite TOTAL a ~1 kHz e publicamos nessa taxa (force_sync e
+        palpation_logger consomem a 1 kHz). A auto-inscrição da GUI em
+        /touch_sensor/value faz early-return enquanto a serial está conectada,
+        então não há custo de loopback. _touch_pub_period=0 → sem decimação;
+        suba-o se algum dia precisar limitar a taxa. Os gráficos do toque
+        (heatmap/raster) leem o estado completo da fonte direto, independem disto."""
+        if self._touch_pub_period > 0.0:
+            now = time.monotonic()
+            if now - self._touch_pub_last < self._touch_pub_period:
+                return
+            self._touch_pub_last = now
         try:
             msg = Float32(); msg.data = float(i_final)
             self._touch_value_pub.publish(msg)
@@ -576,6 +587,10 @@ class PalpationGUI(Node):
         with self._lock:
             self._touch_value = float(i_final)
             self._touch_last_ts = time.time()
+        # Gravação do stream força+toque a 1 kHz (se ligada) — fora do lock acima
+        # porque _record_row pega self._lock por conta própria.
+        if self._rec_writer is not None:
+            self._record_row(i_final)
 
     # ── Aba "Sensores": todos os plots lado a lado ────────────────────
     def _build_sensors_tab(self, root: tk.Frame) -> None:
@@ -610,14 +625,14 @@ class PalpationGUI(Node):
                     fill='both', expand=True)
                 self._touch_canvas.draw()
                 # Animação com blit=True: redesenha SÓ os artistas que mudam
-                # (heatmap, scatters, linha), não a figura inteira. É o que
-                # mantém o raster/I_final/neurônio fluidos e em tempo real —
-                # blit=False (necessário p/ eixo de tempo absoluto) deixava os
-                # três gráficos travados/estranhos. A janela desliza pelo dado
-                # (t-x_lo) sobre eixo FIXO, então o blit funciona. interval=30
-                # (~33 fps, vs 50 do original) p/ exibição o mais real-time
-                # possível. Inicia pausada; o refresh a retoma só na aba
-                # Sensores visível.
+                # (heatmap, scatters, linha), não a figura inteira — é o que
+                # mantém tudo fluido embutido no Tk. Os dados correm em tempo
+                # relativo sobre eixo fixo (por isso o blit funciona); os RÓTULOS
+                # do eixo mostram tempo absoluto e são reavaliados por um redraw
+                # completo que a própria update() força ~2x/s (TouchFigure). Isso
+                # é barato e não atrapalha o blit (os números ficam fora da bbox
+                # blitada). interval=30 (~33 fps). Inicia pausada; o refresh a
+                # retoma só na aba Sensores visível.
                 self._touch_anim = FuncAnimation(
                     self._touch_figure.fig,
                     self._touch_figure.update,
@@ -789,7 +804,11 @@ class PalpationGUI(Node):
                     'load_cell_voltage_v', 'touch_i_final']
                    + [f'v{r}{c}' for r in range(TOUCH_ROWS)
                       for c in range(TOUCH_COLS)])
-    _REC_PERIOD_MS = 20      # 50 Hz
+    # As LINHAS são gravadas pelo callback do toque (_on_touch_sample, ~1 kHz),
+    # NÃO por um timer Tk: o after() do Tk não faz 1 kHz confiável e escrever na
+    # thread de UI a 1 kHz a congelaria. Este período é só do refresh do RÓTULO
+    # de status (contagem de amostras), que não precisa ser rápido.
+    _REC_STATUS_MS = 250
 
     def _toggle_recording(self) -> None:
         if self._rec_fh is not None:
@@ -808,56 +827,67 @@ class PalpationGUI(Node):
         except OSError as exc:
             self._set_rec_status(f'falha ao abrir CSV: {exc}', DANGER)
             return
-        self._rec_fh = fh
-        self._rec_writer = writer
-        self._rec_path = path
-        self._rec_t0 = time.time()
-        self._rec_count = 0
+        with self._lock:
+            self._rec_fh = fh
+            self._rec_writer = writer
+            self._rec_path = path
+            self._rec_t0 = time.time()
+            self._rec_count = 0
         self.rec_btn.config(text='■ Parar gravação', bg=DANGER, fg='white')
         self._set_rec_status(f'gravando → {os.path.basename(path)}', OK)
         self._rec_after = self.root.after(
-            self._REC_PERIOD_MS, self._recording_tick)
+            self._REC_STATUS_MS, self._recording_status_tick)
 
-    def _recording_tick(self) -> None:
-        if self._rec_fh is None or self._rec_writer is None:
-            return
+    def _record_row(self, i_final: float) -> None:
+        """Grava UMA linha do stream força+toque. Chamado por _on_touch_sample
+        (thread serial, ~1 kHz) — é isto que dá ao __sensors.csv a taxa de 1 kHz.
+
+        Lê as tensões do heatmap pela via barata (latest_voltages, sem o snapshot
+        O(N)) ANTES de pegar self._lock, para não aninhar o lock da fonte de toque
+        dentro do lock da GUI. A escrita em si é feita sob self._lock, coordenada
+        com _stop_recording (que zera o writer sob o mesmo lock)."""
+        if self._rec_writer is None:
+            return   # fast-path sem lock; reconferido sob o lock abaixo
         now = time.time()
-        # Snapshot único = força e toque carimbados no MESMO instante.
+        if self._touch_source is not None and self._touch_serial_ok:
+            volt = self._touch_source.latest_voltages()
+            volt_cols = [f'{volt[r, c]:.4f}'
+                         for r in range(TOUCH_ROWS) for c in range(TOUCH_COLS)]
+        else:
+            volt_cols = [''] * TOUCH_TAXELS
         with self._lock:
-            f_net    = self._lc_force_net
+            if self._rec_writer is None:
+                return   # _stop_recording correu entre o fast-path e aqui
             lc_v     = self._lc_voltage
             lc_slope = self._lc_calib_slope
             lc_ic    = self._lc_calib_intercept
             lc_cal   = self._lc_calibrated
-            touch_v  = self._touch_value
-        lc_bruto = ((lc_v - lc_ic) / lc_slope
-                    if lc_cal and abs(lc_slope) > 1e-9 else 0.0)
-        if self._touch_source is not None and self._touch_serial_ok:
-            snap = self._touch_source.snapshot()
-            volt = snap['volt']
-            i_final = snap['latest_i_final']
-            volt_cols = [f'{volt[r, c]:.4f}'
-                         for r in range(TOUCH_ROWS) for c in range(TOUCH_COLS)]
-        else:
-            i_final = touch_v
-            volt_cols = [''] * TOUCH_TAXELS
-        try:
-            self._rec_writer.writerow([
-                f'{now - self._rec_t0:.4f}', f'{now:.4f}',
-                f'{f_net:.4f}', f'{lc_bruto:.4f}', f'{lc_v:.5f}',
-                f'{i_final:.4f}', *volt_cols,
-            ])
-            self._rec_count += 1
-            if self._rec_count % 50 == 0:
-                self._rec_fh.flush()
-        except (ValueError, OSError) as exc:
-            log.warning('falha ao gravar amostra sincronizada: %s', exc)
-        if self._rec_count % 25 == 0:
-            self._set_rec_status(
-                f'gravando {self._rec_count} amostras → '
-                f'{os.path.basename(self._rec_path or "?")}', OK)
+            f_net    = self._lc_force_net
+            lc_bruto = ((lc_v - lc_ic) / lc_slope
+                        if lc_cal and abs(lc_slope) > 1e-9 else 0.0)
+            try:
+                self._rec_writer.writerow([
+                    f'{now - self._rec_t0:.4f}', f'{now:.4f}',
+                    f'{f_net:.4f}', f'{lc_bruto:.4f}', f'{lc_v:.5f}',
+                    f'{float(i_final):.4f}', *volt_cols,
+                ])
+                self._rec_count += 1
+                # Flush a cada ~1 s (1000 amostras @ 1 kHz).
+                if self._rec_count % 1000 == 0 and self._rec_fh is not None:
+                    self._rec_fh.flush()
+            except (ValueError, OSError) as exc:
+                log.warning('falha ao gravar amostra sincronizada: %s', exc)
+
+    def _recording_status_tick(self) -> None:
+        """Só atualiza o rótulo de status (na thread Tk); as linhas são gravadas
+        pelo callback do toque, não aqui."""
+        if self._rec_fh is None:
+            return
+        self._set_rec_status(
+            f'gravando {self._rec_count} amostras → '
+            f'{os.path.basename(self._rec_path or "?")}', OK)
         self._rec_after = self.root.after(
-            self._REC_PERIOD_MS, self._recording_tick)
+            self._REC_STATUS_MS, self._recording_status_tick)
 
     def _stop_recording(self) -> None:
         if self._rec_after is not None:
@@ -866,12 +896,15 @@ class PalpationGUI(Node):
             except Exception:
                 pass
             self._rec_after = None
-        fh = self._rec_fh
-        path = self._rec_path
-        n = self._rec_count
-        self._rec_fh = None
-        self._rec_writer = None
-        self._rec_path = None
+        # Zera o writer SOB o lock: a thread serial (_record_row) o checa sob o
+        # mesmo lock, então depois daqui ela não escreve mais e podemos fechar.
+        with self._lock:
+            fh = self._rec_fh
+            path = self._rec_path
+            n = self._rec_count
+            self._rec_fh = None
+            self._rec_writer = None
+            self._rec_path = None
         if fh is not None:
             try:
                 fh.flush(); fh.close()
@@ -2762,22 +2795,35 @@ class PalpationGUI(Node):
         with self._lock:
             buf = list(self._lc_voltage_buf)
             has_calib = self._lc_calibrated
+            slope = self._lc_calib_slope
 
         if not has_calib:
             self._set_status('Calibre o sensor antes de zerar.', WARN)
             return
-        if len(buf) < 5:
+        if len(buf) < 30:
             self._set_status(
                 'Aguardando leituras do sensor — verifique a conexão UDP.', WARN)
             return
 
-        avg_v = sum(buf) / len(buf)
+        # Usa só a parte mais recente do buffer (~1 s) e exige ESTABILIDADE:
+        # tarar com o sinal ainda assentando (logo após conectar/tocar) enviesa
+        # o zero. Mede o pico-a-pico convertido p/ N e recusa se passar do limite.
+        win = buf[-100:]
+        ptp_v = max(win) - min(win)
+        ptp_n = ptp_v / abs(slope) if abs(slope) > 1e-9 else ptp_v
+        if ptp_n > self._lc_tare_stable_n:
+            self._set_status(
+                f'Sensor instável p/ zerar (±{ptp_n:.2f} N) — retire qualquer '
+                f'carga e espere o valor parar antes de zerar.', WARN)
+            return
+
+        avg_v = sum(win) / len(win)
         with self._lock:
             self._lc_tare_voltage = avg_v
             self._lc_tare_done = True
 
         self._set_status(
-            f'Sensor zerado — tensão de referência: {avg_v:.4f} V.', OK)
+            f'Sensor zerado — referência: {avg_v:.4f} V (estável ±{ptp_n:.3f} N).', OK)
 
     # ── Callbacks ROS — célula de carga ──────────────────────────────
     def _cb_lc_voltage(self, msg: Float32) -> None:
@@ -2795,6 +2841,15 @@ class PalpationGUI(Node):
             # sai positivo em TRAÇÃO. Invertemos para a convenção do sistema:
             # compressão = POSITIVO (PID e limites de segurança dependem disso).
             f_net = (tare_v - v) / slope   # compressão → positivo, tração → negativo
+            # Auto-zero lento: só em repouso (fase estável, sem palpação ativa)
+            # e dentro da banda morta — puxa a referência devagar p/ cancelar
+            # deriva DC sem comer força real durante uma medição.
+            if (self._latest_phase in ('IDLE', 'DONE', 'ABORTED')
+                    and abs(f_net) < self._lc_autozero_band_n):
+                with self._lock:
+                    self._lc_tare_voltage += self._lc_autozero_rate * (v - self._lc_tare_voltage)
+                    tare_v = self._lc_tare_voltage
+                f_net = (tare_v - v) / slope
             out = Float32()
             out.data = float(f_net)
             try:

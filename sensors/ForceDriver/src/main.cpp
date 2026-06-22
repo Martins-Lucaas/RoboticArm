@@ -59,56 +59,12 @@ static uint32_t adc_count  = 0;
 // 1 para diagnosticar o hardware.
 #define DIAG_RAW  0
 
-// EMA dupla. α é definido em AMOSTRAS, então o fc em Hz escala com a taxa
-// de amostragem. O atraso de grupo da cascata vale ~2·(1−α)/α amostras a
-// 100 Hz, então α controla diretamente a LATÊNCIA da leitura:
-//   α=0.02 → ~0.9 s   (silencioso, mas lento demais)
-//   α=0.05 → ~0.36 s
-//   α=0.20 → ~0.08 s  (fc da cascata ~2.2 Hz)
-// Histórico: 0.10→0.05 cortou ~metade do ruído (~70 g RMS) p/ palpação quase
-// estática; depois 0.05→0.02 cortou mais ~40% (~45 g RMS). MAS em 2026-06-21,
-// testando COMPRESSÃO dinâmica da célula, ~0.9 s ficou lento demais — o sensor
-// precisa identificar a força aplicada na hora. Subi α p/ 0.20: atraso cai p/
-// ~80 ms (resposta rápida), ao custo de mais ruído (~120–150 g RMS no nível
-// atual de ~2 mV/kg no pino). O conserto de verdade p/ ruído é analógico (subir
-// o SPAN e/ou remover o divisor → V_GAIN=1.0), não baixar α. Se for voltar a
-// uso estático e quiser leitura mais limpa (custe latência), reduza α.
-const float ALPHA = 0.20f;
-
-static float ema_stage1     = 0.0f;
-static float volt_filtered  = 0.0f;
-static bool  filter_seeded  = false;
-
-// Mediana de 5 (era 9): rejeita glitches isolados do ADC do ESP32 — o pré-
-// filtro não-linear antes da EMA. Encurtada de 9→5 junto com α=0.20 para
-// resposta rápida à compressão: a janela de 9 (~90 ms) atrasava a borda de
-// subida da força; 5 (~50 ms) ainda derruba spikes de 1–2 amostras.
-#define MEDIAN_N 5
-static float median_buf[MEDIAN_N] = {0};
-static int   median_idx           = 0;
-
-static float median5(const float* buf)
-{
-    float s[MEDIAN_N];
-    memcpy(s, buf, sizeof(s));
-    for (int i = 1; i < MEDIAN_N; ++i) {
-        float v = s[i];
-        int j = i - 1;
-        while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; --j; }
-        s[j + 1] = v;
-    }
-    return s[MEDIAN_N / 2];
-}
-
-// Inicializa todos os estágios na primeira leitura para que o
-// filtro não precise convergir a partir de zero.
-static void filter_seed(float value)
-{
-    ema_stage1    = value;
-    volt_filtered = value;
-    for (int i = 0; i < MEDIAN_N; ++i) median_buf[i] = value;
-    filter_seeded = true;
-}
+// FILTRAGEM MOVIDA PARA O PC (force_receiver_node). A 1 kHz o filtro pesado
+// (mediana + EMA dupla) é definido em AMOSTRAS, então teria de ser reajustado a
+// cada mudança de taxa e exigiria reflashar o ESP para qualquer tweak. Aqui
+// fica só o filtro LEVE — a média do oversampling do ADC dentro de cada janela
+// de 1 ms (ver loop()) — que é praticamente de graça e dá o dither sub-mV. O
+// force_receiver aplica mediana + EMA em software, onde é trivial reajustar.
 // ======================================================
 // DIVISOR DE TENSÃO + GANHO DO AMPLIFICADOR
 // ======================================================
@@ -132,17 +88,26 @@ const float V_GAIN = (R1 + R2) / R2;
 const float V_OFFSET = 0.460276f;
 
 // ======================================================
-// TEMPORIZAÇÃO — 100 Hz não-bloqueante
+// TEMPORIZAÇÃO — 1 kHz não-bloqueante + ENVIO EM LOTE
 // ======================================================
-#define SAMPLE_INTERVAL_MS 10
-static uint32_t last_sample_ms = 0;
+// Amostra a cada 1 ms (1 kHz). Mas NÃO manda um datagrama por amostra: 1000
+// pacotes minúsculos/s estouram o airtime do WiFi e a perda dispara (o
+// histórico mostra 5–37% já a 100 Hz). Em vez disso agrupa BATCH_N amostras
+// por datagrama → ~100 pacotes/s, taxa que o link sustenta. Cada amostra leva
+// seu próprio seq e t_us (micros), então o receiver reconstrói o stream de
+// 1 kHz, detecta perda por amostra e coloca tudo numa grade temporal comum.
+#define SAMPLE_INTERVAL_US 1000          // 1 ms → 1 kHz
+#define BATCH_N            10            // amostras por datagrama → 100 pkt/s
+static uint32_t last_sample_us = 0;
 
-struct __attribute__((packed)) Payload {
-    uint32_t seq;
-    float    v_sensor;
+struct __attribute__((packed)) Sample {
+    uint32_t seq;       // contador por AMOSTRA
+    uint32_t t_us;      // micros() no instante da amostra (relógio de sync)
+    float    v_sensor;  // tensão calibrada, só com a média do oversampling
 };
 
-static Payload  packet;
+static Sample   batch[BATCH_N];
+static uint8_t  batch_count = 0;
 static uint32_t tx_seq = 0;
 
 const uint32_t WIFI_RETRY_MS = 3000;
@@ -163,18 +128,12 @@ static void wifi_connect()
     WiFi.setSleep(false);
     WiFi.begin(ssid, password);
 
-    Serial.print("Conectando");
+    // Sem Serial: espera a conexão (ou desiste em 15 s e segue p/ reconexão
+    // em background via wifi_kick). Nenhum print aqui para não acoplar o boot
+    // a um terminal nem custar ciclos.
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
         delay(500);
-        Serial.print(".");
-    }
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nWiFi conectado!");
-        Serial.print("IP ESP32: ");
-        Serial.println(WiFi.localIP());
-    } else {
-        Serial.println("\nTimeout WiFi — reconectando em background.");
     }
     last_wifi_retry_ms = millis();
 }
@@ -190,13 +149,7 @@ static void discovery_poll()
         int n = udpRx.read((uint8_t*)buf, sizeof(buf) - 1);
         if (n >= (int)sizeof(DISCOVERY_MAGIC) - 1 &&
             strncmp(buf, DISCOVERY_MAGIC, sizeof(DISCOVERY_MAGIC) - 1) == 0) {
-            IPAddress src = udpRx.remoteIP();
-            if (!g_have_dest || src != g_dest_ip) {
-                Serial.print("[DISC] receiver em ");
-                Serial.print(src);
-                Serial.println(" — telemetria por unicast.");
-            }
-            g_dest_ip       = src;
+            g_dest_ip       = udpRx.remoteIP();
             g_have_dest     = true;
             g_last_hello_ms = millis();
         }
@@ -209,7 +162,6 @@ static void wifi_kick()
     uint32_t now = millis();
     if (now - last_wifi_retry_ms < WIFI_RETRY_MS) return;
     last_wifi_retry_ms = now;
-    Serial.println("[WARN] WiFi desconectado — tentando reconectar...");
     WiFi.begin(ssid, password);
 }
 
@@ -223,20 +175,10 @@ static void wifi_kick()
 
 static void ota_setup()
 {
+    // Sem callbacks de Serial: a gravação OTA funciona igual; o progresso/erro
+    // aparece no lado do pio (host), não na serial do ESP.
     ArduinoOTA.setHostname(OTA_HOSTNAME);
     ArduinoOTA.setPassword(OTA_PASSWORD);
-    ArduinoOTA.onStart([]() {
-        Serial.println("[OTA] início — pausando amostragem.");
-    });
-    ArduinoOTA.onEnd([]() {
-        Serial.println("\n[OTA] concluído — reiniciando.");
-    });
-    ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
-        Serial.printf("[OTA] %u%%\r", (p * 100) / t);
-    });
-    ArduinoOTA.onError([](ota_error_t e) {
-        Serial.printf("[OTA] erro %u\n", e);
-    });
     ArduinoOTA.begin();
 }
 
@@ -245,88 +187,90 @@ static void ota_setup()
 // ======================================================
 void setup()
 {
-    Serial.begin(115200);
+    // Serial DESLIGADA de propósito: nada de prints no caminho dos dados. O ADC,
+    // o WiFi e o OTA não dependem da UART.
     analogReadResolution(12);
     analogSetPinAttenuation(ADC_PIN, ADC_11db);  // fundo de escala ~0..3.3 V
     wifi_connect();
     ota_setup();
     udpRx.begin(DISCOVERY_PORT);   // escuta o hello do force_receiver
-    last_sample_ms = millis();
-    Serial.println("ESP: enviando apenas tensão (V) — calibração na GUI.");
+    last_sample_us = micros();
+}
+
+// Monta o datagrama com as amostras acumuladas e o envia (unicast se o receiver
+// foi descoberto; broadcast no fallback). Espelha o formato lido pelo
+// force_receiver (LOAD_CELL_SAMPLE_FMT '<IIf', LOAD_CELL_BATCH_N amostras).
+static void flush_batch()
+{
+    if (batch_count == 0) return;
+    // millis() (não micros()/1000): g_last_hello_ms é medido em millis(); os
+    // dois têm wrap diferente e não são comparáveis se misturados.
+    bool fresh = g_have_dest && (millis() - g_last_hello_ms < HELLO_TIMEOUT_MS);
+    IPAddress dst = fresh ? g_dest_ip : BCAST_IP;
+    udp.beginPacket(dst, UDP_PORT);
+    udp.write(reinterpret_cast<const uint8_t*>(batch),
+              batch_count * sizeof(Sample));
+    udp.endPacket();
+    batch_count = 0;
 }
 
 // ======================================================
-// LOOP — 100 Hz não-bloqueante
+// LOOP — 1 kHz não-bloqueante (amostra) + lote a ~100 Hz (envio)
 // ======================================================
 void loop()
 {
     if (WiFi.status() != WL_CONNECTED) {
-        wifi_kick();                 // não-bloqueante: tenta e segue
-        last_sample_ms = millis();   // evita rajada ao religar
+        wifi_kick();                     // não-bloqueante: tenta e segue
+        last_sample_us = micros();       // evita rajada ao religar
         adc_sum_mv = 0; adc_count = 0;   // descarta acúmulo parcial
+        batch_count = 0;                 // não envia lote meio montado
         return;
     }
 
-    ArduinoOTA.handle();   // atende pedidos de gravação OTA (não-bloqueante)
-    discovery_poll();      // aprende/renova o destino unicast (hello do receiver)
+    // Housekeeping (OTA + auto-descoberta) a ~20 Hz, FORA do caminho quente:
+    // rodá-los a cada iteração (dezenas de milhares de vezes/s) só somava
+    // latência/jitter ao laço de 1 kHz. 50 ms é folgado — o hello vem a cada 2 s
+    // e o início de uma gravação OTA tolera dezenas de ms.
+    static uint32_t last_house_ms = 0;
+    uint32_t house_ms = millis();
+    if (house_ms - last_house_ms >= 50) {
+        last_house_ms = house_ms;
+        ArduinoOTA.handle();
+        discovery_poll();
+    }
 
     // Acumula UMA leitura (mV calibrados) por passagem do loop(). Entre dois
-    // ticks o loop roda centenas de vezes, então adc_count chega a ~150-300:
-    // é o oversampling de fato, e é ele que dá a resolução sub-mV.
+    // ticks de 1 ms o loop roda ~15-30 vezes: é o oversampling LEVE que sobra a
+    // 1 kHz e dá o dither sub-mV (o filtro pesado mora no PC agora).
     adc_sum_mv += (uint32_t)analogReadMilliVolts(ADC_PIN);
     adc_count++;
 
-    uint32_t now = millis();
-    if (now - last_sample_ms < SAMPLE_INTERVAL_MS) return;
-    if (now - last_sample_ms > 4 * SAMPLE_INTERVAL_MS) {
-        last_sample_ms = now;
+    // Subtração unsigned: trata o wrap do micros() (~71 min) corretamente.
+    uint32_t now_us = micros();
+    if ((uint32_t)(now_us - last_sample_us) < SAMPLE_INTERVAL_US) return;
+    if ((uint32_t)(now_us - last_sample_us) > 4 * SAMPLE_INTERVAL_US) {
+        last_sample_us = now_us;         // ficou pra trás (WiFi/OTA) — re-ancora
     } else {
-        last_sample_ms += SAMPLE_INTERVAL_MS;
+        last_sample_us += SAMPLE_INTERVAL_US;
     }
 
     if (adc_count == 0) return;   // segurança: nada acumulado neste tick
-    uint32_t n_used = adc_count;
     // Média FRACIONÁRIA dos mV (sub-mV pelo dither) → volts.
     float v_adc = (adc_sum_mv / (float)adc_count) / 1000.0f;
     adc_sum_mv = 0; adc_count = 0;
 
     float v_sensor = v_adc * V_GAIN - V_OFFSET;
 
-    if (!filter_seeded) filter_seed(v_sensor);
-
-    // Estágio 2: mediana de 5 — spikes isolados não passam
-    median_buf[median_idx] = v_sensor;
-    median_idx = (median_idx + 1) % MEDIAN_N;
-    float v_med = median5(median_buf);
-
-    // Estágio 3: EMA em cascata dupla (passa-baixa de 2ª ordem)
-    ema_stage1    = ALPHA * v_med      + (1.0f - ALPHA) * ema_stage1;
-    volt_filtered = ALPHA * ema_stage1 + (1.0f - ALPHA) * volt_filtered;
-
-    packet.seq      = tx_seq++;
+    // Enfileira a amostra no lote (filtro pesado fica no force_receiver).
+    Sample& s = batch[batch_count];
+    s.seq   = tx_seq++;
+    s.t_us  = now_us;
 #if DIAG_RAW
-    packet.v_sensor = v_adc;          // tensão CRUA do pino (sem nada)
+    s.v_sensor = v_adc;          // tensão CRUA do pino (sem nada)
 #else
-    packet.v_sensor = volt_filtered;
+    s.v_sensor = v_sensor;       // leve: só a média do oversampling
 #endif
-
-    // Destino: unicast para o receiver descoberto (WiFi retransmite → sem
-    // perda); se o hello sumiu por > HELLO_TIMEOUT_MS, volta ao broadcast.
-    bool fresh = g_have_dest && (now - g_last_hello_ms < HELLO_TIMEOUT_MS);
-    IPAddress dst = fresh ? g_dest_ip : BCAST_IP;
-    udp.beginPacket(dst, UDP_PORT);
-    udp.write(reinterpret_cast<const uint8_t*>(&packet), sizeof(Payload));
-    udp.endPacket();
-
-    // Aviso de calibração do SPAN: o ADC do ESP32 fica não-linear/satura
-    // acima de ~2.9 V (≈3600 contagens). Se você vir este aviso ao aplicar a
-    // força máxima, ABAIXE o SPAN do MKTC-05 até a saída do condicionador dar
-    // ~8 V no fundo de escala (≈2.5 V no pino) — aí fica na região linear.
-    if (v_adc > 2.9f) {
-        Serial.printf("[WARN] ADC perto do topo (%.3f V no pino) — sinal "
-                      "alto, risco de saturar/não-linearizar.\n", v_adc);
-    }
-
-    Serial.printf("v_sensor (filtrada): %.6f V  | oversample N=%lu\n",
-                  volt_filtered, (unsigned long)n_used);
+    if (++batch_count >= BATCH_N) flush_batch();
+    // (Sem aviso de saturação por Serial: a checagem do SPAN do ADC é feita na
+    //  GUI/receiver pela tensão recebida — nada de prints no laço de amostragem.)
 }

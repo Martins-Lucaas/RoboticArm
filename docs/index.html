@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="author" content="Lucas Martins Primo"/>
+<meta name="description" content="Documentação pessoal do projeto RoboticArm — Gêmeo Digital CR10 + COVVI Hand — TCC Engenharia Biomédica, Lucas Martins Primo, 2026."/>
+<title>RoboticArm · Documentação Pessoal — Lucas Martins Primo (2026)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0f1a; --bg-2:#111726; --bg-3:#161e30; --panel:#141b2d;
+    --line:#243049; --line-2:#2f3d5c;
+    --txt:#e7ecf6; --txt-2:#aab6cf; --txt-3:#7e8aa6;
+    --accent:#3f8cff; --accent-2:#22d3ee; --accent-3:#f59e0b;
+    --good:#34d399; --bad:#f87171;
+    --radius:14px; --maxw:1180px;
+    --mono:'SFMono-Regular',ui-monospace,'JetBrains Mono',Consolas,monospace;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#16223e 0,transparent 55%),var(--bg);
+    color:var(--txt);font-family:var(--sans);line-height:1.62;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);background:var(--bg-3);padding:.12em .42em;border-radius:6px;font-size:.86em;color:#cfe0ff}
+  pre{background:var(--bg-3);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto}
+  pre code{background:none;padding:0}
+  h1,h2,h3,h4{line-height:1.25;font-weight:700;letter-spacing:-.01em}
+  h2{font-size:1.55rem;margin:0 0 .35em;padding-top:.2em}
+  h3{font-size:1.15rem;margin:1.6em 0 .4em;color:#fff}
+  .muted{color:var(--txt-2)}
+
+  /* ---------- Layout ---------- */
+  .shell{display:grid;grid-template-columns:260px 1fr;max-width:var(--maxw);margin:0 auto;gap:0}
+  .side{position:sticky;top:0;height:100vh;overflow:auto;padding:26px 18px 40px;border-right:1px solid var(--line);background:linear-gradient(180deg,var(--bg-2),transparent)}
+  .side .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .side .dot{width:11px;height:11px;border-radius:50%;background:var(--accent);box-shadow:0 0 16px var(--accent)}
+  .side h1{font-size:1rem;margin:0}
+  .side .by{font-size:.74rem;color:var(--txt-3);margin:0 0 22px;padding-left:21px}
+  .nav a{display:block;color:var(--txt-2);padding:7px 11px;border-radius:9px;font-size:.9rem;font-weight:500;border-left:2px solid transparent}
+  .nav a:hover{background:var(--bg-3);color:#fff;text-decoration:none}
+  .nav a.active{background:linear-gradient(90deg,rgba(63,140,255,.16),transparent);color:#fff;border-left-color:var(--accent)}
+  .nav .grp{font-size:.68rem;text-transform:uppercase;letter-spacing:.13em;color:var(--txt-3);margin:18px 0 6px 11px}
+  .main{padding:0 34px 120px;min-width:0}
+  section{padding:54px 0 10px;border-bottom:1px solid var(--line);scroll-margin-top:14px}
+  section:last-child{border-bottom:none}
+
+  /* ---------- Hero ---------- */
+  .hero{padding:64px 0 40px}
+  .kicker{display:inline-flex;align-items:center;gap:8px;font-size:.74rem;font-weight:600;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent-2);background:rgba(34,211,238,.08);
+    border:1px solid rgba(34,211,238,.25);padding:6px 13px;border-radius:999px}
+  .hero h1{font-size:2.9rem;margin:18px 0 8px;background:linear-gradient(90deg,#fff,#9cc4ff);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .hero p.lead{font-size:1.12rem;color:var(--txt-2);max-width:760px}
+  .badges{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0}
+  .badge{font-size:.76rem;font-weight:600;padding:6px 12px;border-radius:8px;border:1px solid var(--line-2);
+    background:var(--bg-3);color:var(--txt-2)}
+  .badge b{color:#fff}
+  .author-card{display:flex;align-items:center;gap:16px;margin-top:26px;padding:16px 18px;border:1px solid var(--line);
+    border-radius:var(--radius);background:linear-gradient(120deg,var(--bg-2),var(--panel))}
+  .avatar{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:1.2rem;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#06101f;flex:none}
+  .author-card .n{font-weight:700;color:#fff}
+  .author-card .r{font-size:.85rem;color:var(--txt-3)}
+
+  /* ---------- Cards / grid ---------- */
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;transition:.18s}
+  .card:hover{border-color:var(--line-2);transform:translateY(-2px)}
+  .card h3{margin:.1em 0 .35em}
+  .card .tag{font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+  .stat{font-size:1.9rem;font-weight:800;color:#fff;line-height:1}
+  .stat + .sl{font-size:.8rem;color:var(--txt-3)}
+
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.92rem}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--txt-3);font-size:.74rem;text-transform:uppercase;letter-spacing:.08em}
+  tr:hover td{background:var(--bg-3)}
+
+  figure{margin:18px 0}
+  figure img{width:100%;border-radius:12px;border:1px solid var(--line);display:block}
+  figcaption{font-size:.82rem;color:var(--txt-3);margin-top:8px;text-align:center}
+  .shots{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+  .mermaid{background:var(--bg-2);border:1px solid var(--line);border-radius:12px;padding:20px;margin:14px 0;text-align:center}
+
+  .pill{display:inline-block;font-size:.74rem;font-weight:700;padding:3px 9px;border-radius:6px;margin-right:6px}
+  .pill.b{background:rgba(63,140,255,.16);color:#9cc4ff}
+  .pill.c{background:rgba(34,211,238,.14);color:#7fe3f0}
+  .pill.o{background:rgba(245,158,11,.16);color:#ffcd77}
+
+  /* ---------- Interactive: assistant ---------- */
+  .lab{background:linear-gradient(120deg,var(--bg-2),var(--panel));border:1px solid var(--line-2);
+    border-radius:var(--radius);padding:0;overflow:hidden}
+  .lab-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);
+    background:rgba(63,140,255,.06)}
+  .lab-head .ic{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#06101f;font-weight:800}
+  .chat{height:330px;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px}
+  .msg{max-width:82%;padding:11px 14px;border-radius:13px;font-size:.92rem;white-space:pre-wrap}
+  .msg.bot{align-self:flex-start;background:var(--bg-3);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .msg.me{align-self:flex-end;background:linear-gradient(135deg,var(--accent),#2f6fd0);color:#fff;border-bottom-right-radius:4px}
+  .msg.bot b{color:var(--accent-2)}
+  .chips{display:flex;flex-wrap:wrap;gap:7px;padding:0 18px 12px}
+  .chip{font-size:.78rem;background:var(--bg-3);border:1px solid var(--line-2);color:var(--txt-2);
+    padding:6px 11px;border-radius:999px;cursor:pointer;transition:.15s}
+  .chip:hover{border-color:var(--accent);color:#fff;background:rgba(63,140,255,.12)}
+  .ask{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--bg-2)}
+  .ask input{flex:1;background:var(--bg-3);border:1px solid var(--line-2);color:var(--txt);padding:11px 14px;
+    border-radius:10px;font-family:var(--sans);font-size:.92rem;outline:none}
+  .ask input:focus{border-color:var(--accent)}
+  .btn{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#06101f;border:none;font-weight:700;
+    padding:11px 18px;border-radius:10px;cursor:pointer;font-family:var(--sans);font-size:.9rem;transition:.15s}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:var(--bg-3);color:var(--txt);border:1px solid var(--line-2)}
+
+  /* ---------- Interactive: PID sim ---------- */
+  .sim{display:grid;grid-template-columns:300px 1fr;gap:0;border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden}
+  .sim .controls{padding:18px;border-right:1px solid var(--line);background:var(--bg-2)}
+  .sim .controls label{display:block;font-size:.82rem;color:var(--txt-2);margin:14px 0 5px;font-weight:600}
+  .sim .controls label span{float:right;color:var(--accent-2);font-family:var(--mono);font-weight:700}
+  .sim input[type=range]{width:100%;accent-color:var(--accent)}
+  .sim .stage{padding:18px;min-width:0}
+  .sim canvas{width:100%;height:230px;background:var(--bg-3);border:1px solid var(--line);border-radius:10px;display:block}
+  .readout{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px}
+  .readout div{font-size:.8rem;color:var(--txt-3)}
+  .readout b{display:block;font-size:1.35rem;color:#fff;font-family:var(--mono)}
+  .readout b.warn{color:var(--bad)}
+  .readout b.ok{color:var(--good)}
+
+  /* ---------- Grip selector ---------- */
+  .grip-pick{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .grip-pick button{flex:1;min-width:130px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--txt-2);
+    padding:12px;border-radius:11px;cursor:pointer;font-weight:600;transition:.16s}
+  .grip-pick button.on{border-color:var(--accent);color:#fff;background:rgba(63,140,255,.14)}
+  .grip-info{display:grid;grid-template-columns:240px 1fr;gap:18px;align-items:center}
+  .grip-info img{width:100%;border-radius:12px;border:1px solid var(--line)}
+
+  .note{border-left:3px solid var(--accent);background:rgba(63,140,255,.07);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;color:var(--txt-2);font-size:.92rem}
+  footer{max-width:var(--maxw);margin:0 auto;padding:40px 34px 70px;color:var(--txt-3);font-size:.86rem}
+  .top{position:fixed;right:22px;bottom:22px;width:44px;height:44px;border-radius:12px;background:var(--panel);
+    border:1px solid var(--line-2);color:var(--txt);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.2s;z-index:30}
+  .top.show{opacity:1}
+
+  @media(max-width:900px){
+    .shell{grid-template-columns:1fr}
+    .side{display:none}
+    .main{padding:0 18px 80px}
+    .g2,.g3,.g4,.sim,.grip-info{grid-template-columns:1fr}
+    .shots{grid-template-columns:1fr}
+    .hero h1{font-size:2.1rem}
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="side">
+    <div class="brand"><span class="dot"></span><h1>RoboticArm</h1></div>
+    <p class="by">Documentação pessoal · L. M. Primo · 2026</p>
+    <nav class="nav" id="nav">
+      <div class="grp">Visão geral</div>
+      <a href="#topo">Início</a>
+      <a href="#resumo">O projeto</a>
+      <a href="#hardware">Hardware</a>
+      <div class="grp">Arquitetura</div>
+      <a href="#topologia">Topologia do sistema</a>
+      <a href="#pacotes">Pacotes ROS 2</a>
+      <a href="#manufatura">Célula de manufatura</a>
+      <a href="#palpacao">Célula de palpação</a>
+      <a href="#fluxo">Fluxo de dados</a>
+      <div class="grp">Interativo</div>
+      <a href="#assistente">🤖 Assistente do projeto</a>
+      <a href="#simulador">🎛️ Simulador PID de força</a>
+      <a href="#grips">✋ Seletor de preensão</a>
+      <div class="grp">Apêndice</div>
+      <a href="#galeria">Galeria</a>
+      <a href="#rodar">Como rodar</a>
+    </nav>
+  </aside>
+
+  <!-- ================= MAIN ================= -->
+  <main class="main">
+    <!-- HERO -->
+    <header class="hero" id="topo">
+      <span class="kicker">● TCC · Engenharia Biomédica</span>
+      <h1>Gêmeo Digital CR10 + COVVI Hand</h1>
+      <p class="lead">Plataforma virtual de auxílio ao treinamento de usuários de próteses de mão com múltiplos graus de liberdade — braço industrial <b>Dobot CR10</b> acoplado à mão protética biônica <b>COVVI Hand</b>, em <b>ROS 2 Humble / Gazebo Classic 11</b>, com canal direto para o hardware real e uma segunda célula de palpação tátil.</p>
+      <div class="badges">
+        <span class="badge"><b>ROS 2</b> Humble</span>
+        <span class="badge"><b>Gazebo</b> Classic 11</span>
+        <span class="badge"><b>Ubuntu</b> 22.04</span>
+        <span class="badge"><b>Python</b> 3.10+</span>
+        <span class="badge"><b>4</b> pacotes ROS</span>
+        <span class="badge"><b>2</b> células robóticas</span>
+      </div>
+      <div class="author-card">
+        <div class="avatar">LM</div>
+        <div>
+          <div class="n">Lucas Martins Primo</div>
+          <div class="r">Autor · Engenharia Biomédica · 2026 · <a href="mailto:lucaspmartins14@gmail.com">lucaspmartins14@gmail.com</a></div>
+        </div>
+      </div>
+      <div class="note">Esta página é <b>interativa</b>. Pergunte ao <a href="#assistente">Assistente do projeto</a>, brinque com o <a href="#simulador">Simulador do PID de força</a> da palpação e explore o <a href="#grips">Seletor de preensão</a> da mão COVVI.</div>
+    </header>
+
+    <!-- RESUMO -->
+    <section id="resumo">
+      <h2>O projeto</h2>
+      <p class="muted">O sistema identifica objetos farmacêuticos numa esteira, classifica-os pelo <b>tipo de preensão</b> necessário e os deposita nas caixas corretas. O mesmo hardware (CR10 + COVVI) é reaproveitado numa célula de <b>palpação tátil</b> que reproduz o protocolo de <i>Gupta et al. 2021</i> — aproximação com controle de força, hold estabilizado e deslizamento Cartesiano.</p>
+      <div class="grid g4" style="margin-top:8px">
+        <div class="card"><div class="stat">6</div><div class="sl">DOF do braço CR10</div></div>
+        <div class="card"><div class="stat">31</div><div class="sl">juntas da mão COVVI</div></div>
+        <div class="card"><div class="stat">1 kHz</div><div class="sl">amostragem força + toque</div></div>
+        <div class="card"><div class="stat">3</div><div class="sl">tipos de preensão</div></div>
+      </div>
+    </section>
+
+    <!-- HARDWARE -->
+    <section id="hardware">
+      <h2>Hardware</h2>
+      <table>
+        <tr><th>Componente</th><th>Modelo</th><th>Especificações</th></tr>
+        <tr><td><b>Braço</b></td><td>Dobot CR10</td><td>6-DOF · alcance 1375 mm · payload 10 kg · TCP/IP V4</td></tr>
+        <tr><td><b>Mão</b></td><td>COVVI Hand</td><td>5 dedos · 31 juntas (6 primárias + 25 mimic) · ECI Ethernet</td></tr>
+        <tr><td><b>Câmera</b></td><td>RGB Gazebo</td><td>848×480 · FoV 70° · montada atrás da esteira</td></tr>
+        <tr><td><b>Célula de carga</b></td><td>ESP32 + sensor uniaxial</td><td>UDP 8080 · 1 kHz batched · filtro no receptor PC</td></tr>
+        <tr><td><b>Sensor de toque</b></td><td>STM32 + matriz 4×4</td><td>USB-CDC 115200 · modelo de Izhikevich (RA/SA + I_final) · UDP 8081 opcional</td></tr>
+      </table>
+      <div class="shots">
+        <figure><img src="../images/covvi_hand_product_photo.jpg" alt="Mão COVVI"/><figcaption>Mão protética biônica COVVI Hand (foto do produto).</figcaption></figure>
+        <figure><img src="../images/covvi_hand_rviz_collision_mesh.png" alt="Mesh de colisão COVVI no RViz"/><figcaption>Malha de colisão da mão COVVI no RViz.</figcaption></figure>
+      </div>
+    </section>
+
+    <!-- TOPOLOGIA -->
+    <section id="topologia">
+      <h2>Topologia do sistema</h2>
+      <p class="muted">Diagrama de blocos de alto nível: do mundo simulado (Gazebo) e GUIs em ROS 2 até o hardware físico (CR10 via TCP/IP, mão COVVI via ECI, sensores via UDP/USB).</p>
+      <div class="mermaid">
+flowchart TB
+  subgraph SIM["🖥️ Mundo Simulado · Gazebo Classic 11"]
+    GZ["Gazebo<br/>CR10 + COVVI + cena"]
+    CAM["Câmera RGB<br/>/camera/color/image_raw"]
+    JTC["ros2_control · JTC<br/>braço + mão"]
+  end
+  subgraph ROS["🤖 ROS 2 Humble"]
+    GUI["GUIs Tkinter<br/>manual_control · palpation_gui"]
+    GRASP["grasp_ml_pack<br/>detecção · grasp · pipeline"]
+    TOUCH["touch_pack<br/>FSM palpação · força · logging"]
+    HAND["hand_pack<br/>URDF CR10+COVVI"]
+  end
+  subgraph HW["⚙️ Hardware Real (opcional)"]
+    CR10["Dobot CR10<br/>TCP/IP V4"]
+    COVVI["COVVI Hand<br/>ECI Ethernet"]
+    ESP["ESP32 célula de carga<br/>UDP 8080"]
+    STM["STM32 sensor de toque<br/>USB-CDC / UDP 8081"]
+  end
+  CAM --> GRASP
+  GUI --> GRASP & TOUCH
+  GRASP --> JTC
+  TOUCH --> JTC
+  HAND --- GZ
+  JTC --> GZ
+  GRASP -.mirror/real.-> CR10
+  GRASP -.ECI.-> COVVI
+  TOUCH -.mirror/real.-> CR10
+  ESP --> TOUCH
+  STM --> TOUCH
+  classDef sim fill:#16223e,stroke:#3f8cff,color:#e7ecf6;
+  classDef ros fill:#14233a,stroke:#22d3ee,color:#e7ecf6;
+  classDef hw fill:#2a2113,stroke:#f59e0b,color:#e7ecf6;
+  class GZ,CAM,JTC sim; class GUI,GRASP,TOUCH,HAND ros; class CR10,COVVI,ESP,STM hw;
+      </div>
+    </section>
+
+    <!-- PACOTES -->
+    <section id="pacotes">
+      <h2>Pacotes ROS 2</h2>
+      <div class="grid g2">
+        <div class="card"><span class="tag">célula de manufatura</span><h3>grasp_ml_pack</h3><p class="muted">Esteira, detecção de objetos (HSV / YOLOv8), cinemática do CR10, controle da mão COVVI e orquestração do ciclo pick-and-place.</p><a href="../src/grasp_ml_pack/README.md">→ README do pacote</a></div>
+        <div class="card"><span class="tag">palpação tátil</span><h3>touch_pack</h3><p class="muted">Protocolo Gupta 2021: FSM de força, GUI, logging sincronizado força+toque, célula de carga ESP32 e sensor STM32 (Izhikevich).</p><a href="../src/touch_pack/README.md">→ README do pacote</a></div>
+        <div class="card"><span class="tag">descrição da mão</span><h3>hand_pack</h3><p class="muted">URDF combinado CR10 + COVVI (31 juntas), helpers de launch, pós-processamento do URDF e GUIs auxiliares.</p><a href="../src/hand_pack/README.md">→ README do pacote</a></div>
+        <div class="card"><span class="tag">descrição do braço</span><h3>cra_description</h3><p class="muted">URDF/Xacro e meshes do Dobot CR10 (6-DOF), extraído do repositório oficial DOBOT_6Axis_ROS2_V4.</p><a href="../src/cra_description/README.md">→ README do pacote</a></div>
+      </div>
+      <h3>Grafo de nós (visão simplificada)</h3>
+      <div class="mermaid">
+flowchart LR
+  CAM(["/camera/color/image_raw"]) --> OD["object_detector"]
+  OD -->|"/detected_objects"| GE["grasp_executor"]
+  GE -->|"IK · ciclo F1-F7"| CC["conveyor_controller"]
+  GE --> JT(["/cr10_group_controller<br/>/joint_trajectory"])
+  PG["palpation_gui"] -->|"/palpation/start"| TE["tactile_explorer"]
+  TE -->|"/palpation/status"| PG
+  TE --> JT
+  FR["force_receiver"] -->|"/load_cell/force"| FS["force_sync"]
+  TR["touch_receiver"] -->|"/touch_sensor/value"| FS
+  FS -->|"/touch_sync/data 50Hz"| LOG["palpation_logger"]
+  TE --> LOG
+  classDef n fill:#14233a,stroke:#22d3ee,color:#e7ecf6;
+  class OD,GE,CC,PG,TE,FR,TR,FS,LOG n;
+      </div>
+    </section>
+
+    <!-- MANUFATURA -->
+    <section id="manufatura">
+      <h2>Célula de manufatura — <code>grasp_ml_pack</code></h2>
+      <p class="muted">A câmera RGB observa a esteira; o detector segmenta o objeto por cor (HSV) ou YOLOv8; o executor escolhe o <b>tipo de preensão</b> e a caixa de destino, resolve a IK e roda o ciclo de 7 fases de pick-and-place.</p>
+      <div class="shots">
+        <figure><img src="../images/conveyor_cell_gazebo_full_scene.png" alt="Célula de manufatura no Gazebo"/><figcaption>Célula completa no Gazebo — esteira, CR10 + COVVI e caixas de destino.</figcaption></figure>
+        <figure><img src="../images/conveyor_cell_gui_arm_picking.png" alt="GUI durante a preensão"/><figcaption>GUI de operação durante o ciclo de preensão.</figcaption></figure>
+      </div>
+      <table>
+        <tr><th>Objeto</th><th>Cor no Gazebo</th><th>Preensão</th><th>Caixa</th></tr>
+        <tr><td>Frasco</td><td>Âmbar / laranja</td><td>Palm Grip</td><td>Box 1 — vermelha</td></tr>
+        <tr><td>Tubo</td><td>Azul</td><td>Claw Grip</td><td>Box 2 — verde</td></tr>
+        <tr><td>Ampola</td><td>Verde</td><td>Fingertip Grip</td><td>Box 3 — azul</td></tr>
+      </table>
+    </section>
+
+    <!-- PALPACAO -->
+    <section id="palpacao">
+      <h2>Célula de palpação — <code>touch_pack</code></h2>
+      <p class="muted">Reproduz o protocolo de <i>Gupta et al. 2021</i>. A FSM percorre aproximação → hold de força estabilizado → (deslizamento) → retração, com controle por <b>streaming Jacobiano a 33 Hz</b> e PID de força no eixo normal.</p>
+      <div class="mermaid">
+stateDiagram-v2
+  [*] --> IDLE
+  IDLE --> HOME: /palpation/start
+  HOME --> DESCENDING: TCP aponta p/ baixo
+  DESCENDING --> HOLD: F ≥ setpoint
+  HOLD --> SLIDING: modo Deslizamento
+  HOLD --> RETRACT: modo Toque
+  SLIDING --> RETRACT: distância atingida
+  RETRACT --> HOME: repeats restantes
+  RETRACT --> DONE: último ciclo
+  DONE --> [*]
+  DESCENDING --> ABORTED: F > 15 N
+  HOLD --> ABORTED: leitura stale
+      </div>
+      <div class="shots">
+        <figure><img src="../images/touch_pack_gui_palpation_slide.png" alt="GUI de palpação modo deslizamento"/><figcaption>GUI <code>palpation_gui</code> — aba Palpação (modo Deslizamento) com célula de carga ao vivo.</figcaption></figure>
+        <figure><img src="../images/touch_pack_gui_sensors_izhikevich.png" alt="Aba Sensores Izhikevich"/><figcaption>Aba Sensores — heatmap 4×4, raster RA/SA, I_final e neurônio pós (Izhikevich).</figcaption></figure>
+      </div>
+      <div class="note"><b>Segurança de força:</b> compressão = positivo. A medição é abortada se a compressão exceder <b>15 N</b>; o setpoint do PID é saturado em <b>10 N</b>. Leitura > 0.5 s velha ⇒ <code>stale</code>.</div>
+    </section>
+
+    <!-- FLUXO -->
+    <section id="fluxo">
+      <h2>Fluxo de dados — força &amp; toque</h2>
+      <p class="muted">A célula de carga (ESP32) transmite a 1 kHz batched por UDP; o sensor de toque (STM32) chega por USB-CDC ou UDP. O <code>force_sync</code> pareia as duas streams a 50 Hz e o <code>palpation_logger</code> grava CSV/JSON por run em <code>sensors/Data/</code>.</p>
+      <div class="mermaid">
+flowchart LR
+  ESP["ESP32<br/>GPIO34 · 1 kHz batched"] -->|"UDP 8080"| FR["force_receiver<br/>(filtro pesado no PC)"]
+  STM["STM32 4×4<br/>Izhikevich"] -->|"USB-CDC / UDP 8081"| TR["touch_source /<br/>touch_receiver"]
+  FR -->|"/load_cell/force"| FS["force_sync"]
+  TR -->|"/touch_sensor/value"| FS
+  FS -->|"/touch_sync/data<br/>SyncedTouch 50 Hz"| LOG["palpation_logger"]
+  LOG --> CSV[("sensors/Data/<br/>*.csv · *.json")]
+  classDef n fill:#14233a,stroke:#22d3ee,color:#e7ecf6;
+  classDef s fill:#2a2113,stroke:#f59e0b,color:#e7ecf6;
+  class FR,TR,FS,LOG n; class ESP,STM s;
+      </div>
+    </section>
+
+    <!-- ============ ASSISTENTE ============ -->
+    <section id="assistente">
+      <h2>🤖 Assistente do projeto</h2>
+      <p class="muted">Faça uma pergunta sobre o projeto — pacotes, hardware, como rodar, a FSM de palpação, os tipos de preensão. O assistente roda 100% no seu navegador (sem servidor) a partir da base de conhecimento desta documentação.</p>
+      <div class="lab">
+        <div class="lab-head"><span class="ic">LM</span><div><b>Assistente RoboticArm</b><div class="r" style="font-size:.78rem;color:var(--txt-3)">base local · TCC L. M. Primo 2026</div></div></div>
+        <div class="chat" id="chat"></div>
+        <div class="chips" id="chips"></div>
+        <form class="ask" id="askform" autocomplete="off">
+          <input id="askinput" placeholder="Ex.: como rodo a célula de palpação?"/>
+          <button class="btn" type="submit">Perguntar</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ SIMULADOR PID ============ -->
+    <section id="simulador">
+      <h2>🎛️ Simulador do PID de força (palpação)</h2>
+      <p class="muted">Esta é a fase <b>DESCENDING → HOLD</b> do <code>tactile_explorer</code>: a ponta TouchTool desce, a compressão cresce com a penetração e o PID ajusta a velocidade em Z para levar a força ao setpoint. Mexa nos ganhos e veja a resposta — exatamente o trade-off que se ajusta na aba <i>Avançados</i> da GUI.</p>
+      <div class="sim">
+        <div class="controls">
+          <label>Força alvo (setpoint)<span id="vSP">2.0 N</span></label>
+          <input type="range" id="sp" min="1" max="10" step="0.5" value="2"/>
+          <label>Kp<span id="vKp">0.0010</span></label>
+          <input type="range" id="kp" min="0" max="0.004" step="0.0001" value="0.001"/>
+          <label>Ki<span id="vKi">0.00050</span></label>
+          <input type="range" id="ki" min="0" max="0.002" step="0.00005" value="0.0005"/>
+          <label>Kd<span id="vKd">0.00000</span></label>
+          <input type="range" id="kd" min="0" max="0.001" step="0.00005" value="0"/>
+          <label>Rigidez do contato<span id="vK">0.8 N/mm</span></label>
+          <input type="range" id="kc" min="0.3" max="2" step="0.1" value="0.8"/>
+          <button class="btn" id="run" style="margin-top:18px;width:100%">▶ Rodar palpação</button>
+          <button class="btn ghost" id="reset" style="margin-top:8px;width:100%">Reset</button>
+        </div>
+        <div class="stage">
+          <canvas id="cv" width="640" height="230"></canvas>
+          <div class="readout">
+            <div>Força final<b id="rF">—</b></div>
+            <div>Erro estac.<b id="rE">—</b></div>
+            <div>Overshoot<b id="rO">—</b></div>
+            <div>Status<b id="rS">—</b></div>
+          </div>
+        </div>
+      </div>
+      <div class="note">Linha tracejada vermelha = limite de abort (15 N). Linha verde = setpoint. Curva azul = força de contato medida. Subir muito o Kp acelera a resposta mas gera <i>overshoot</i> — e pode disparar o abort, igual no robô real.</div>
+    </section>
+
+    <!-- ============ GRIP SELECTOR ============ -->
+    <section id="grips">
+      <h2>✋ Seletor de preensão da mão COVVI</h2>
+      <p class="muted">Escolha um objeto farmacêutico e veja qual preensão a célula de manufatura aplica e em qual caixa ele é depositado.</p>
+      <div class="grip-pick" id="gpick">
+        <button data-g="palm" class="on">🧴 Frasco</button>
+        <button data-g="claw">🧪 Tubo</button>
+        <button data-g="tip">💉 Ampola</button>
+      </div>
+      <div class="grip-info">
+        <img id="gimg" src="../images/palmGrip.png" alt="Tipo de preensão"/>
+        <div>
+          <h3 id="gname" style="margin-top:0">Palm Grip</h3>
+          <p id="gdesc" class="muted">Preensão envolvente de palma — usada para o <b>frasco</b> (âmbar). A mão fecha em torno do corpo cilíndrico com apoio total da palma.</p>
+          <p><span class="pill o" id="gobj">Objeto: Frasco</span><span class="pill b" id="gbox">Caixa 1 — vermelha</span><span class="pill c" id="ggrip">Palm Grip</span></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- GALERIA -->
+    <section id="galeria">
+      <h2>Galeria</h2>
+      <div class="grid g3">
+        <figure><img src="../images/touch_pack_gazebo_tactile_cell.png" alt="Cena de palpação"/><figcaption>Palpação — cena Gazebo</figcaption></figure>
+        <figure><img src="../images/touch_pack_gui_manual_gazebo.png" alt="Controle manual"/><figcaption>Controle manual + Gazebo</figcaption></figure>
+        <figure><img src="../images/conveyor_cell_gui_camera_idle.png" alt="Câmera idle"/><figcaption>Manufatura — câmera</figcaption></figure>
+        <figure><img src="../images/covvi_hand_rviz_joints_open.png" alt="Mão aberta"/><figcaption>COVVI — dedos abertos</figcaption></figure>
+        <figure><img src="../images/covvi_hand_rviz_joints_closed.png" alt="Mão fechada"/><figcaption>COVVI — dedos fechados</figcaption></figure>
+        <figure><img src="../images/gazebo_arm_descending_to_object.png" alt="Braço descendo"/><figcaption>CR10 descendo ao objeto</figcaption></figure>
+      </div>
+    </section>
+
+    <!-- RODAR -->
+    <section id="rodar">
+      <h2>Como rodar</h2>
+      <h3>Célula de manufatura</h3>
+      <pre><code>source install/setup.bash
+ros2 launch grasp_ml_pack conveyor_cell.launch.py
+# autônomo com YOLO:
+ros2 launch grasp_ml_pack conveyor_cell.launch.py use_yolo:=true autonomous:=true</code></pre>
+      <h3>Célula de palpação</h3>
+      <pre><code># ponta tátil + célula de carga (libera a aba Palpação):
+ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool
+# espelho do robô real:
+ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool \
+    control_mode:=mirror robot_ip:=192.168.5.2</code></pre>
+      <h3>Mão COVVI no CR10 (visualização)</h3>
+      <pre><code>ros2 launch hand_pack cr10_covvi_gazebo.launch.py   # Gazebo
+ros2 launch hand_pack cr10_covvi_rviz.launch.py      # RViz</code></pre>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <b>RoboticArm</b> — Documentação pessoal · <b>Lucas Martins Primo</b> · TCC Engenharia Biomédica · 2026 ·
+  <a href="mailto:lucaspmartins14@gmail.com">lucaspmartins14@gmail.com</a> · Apache-2.0.<br/>
+  Página interativa gerada para o projeto; diagramas via Mermaid, simulador e assistente em JavaScript local.
+</footer>
+<div class="top" id="top" title="Voltar ao topo">↑</div>
+
+<script>
+  /* ---------- Mermaid ---------- */
+  mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{
+    fontFamily:'Inter,sans-serif',primaryColor:'#16223e',primaryTextColor:'#e7ecf6',
+    lineColor:'#3f8cff',background:'#111726'}});
+
+  /* ---------- Scrollspy + back to top ---------- */
+  const navLinks=[...document.querySelectorAll('#nav a')];
+  const secs=navLinks.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  const topBtn=document.getElementById('top');
+  window.addEventListener('scroll',()=>{
+    let cur=secs[0]?.id;
+    for(const s of secs){if(window.scrollY>=s.offsetTop-90)cur=s.id;}
+    navLinks.forEach(a=>a.classList.toggle('active',a.getAttribute('href')==='#'+cur));
+    topBtn.classList.toggle('show',window.scrollY>500);
+  });
+  topBtn.onclick=()=>window.scrollTo({top:0,behavior:'smooth'});
+
+  /* ================= ASSISTENTE (rule-based) ================= */
+  const KB=[
+    {k:['palpa','gupta','toque','desliza','touch_pack','tatil','tátil'],
+     a:"A <b>célula de palpação</b> (pacote touch_pack) reproduz o protocolo de Gupta 2021. A FSM é IDLE → HOME → DESCENDING → HOLD → [SLIDING] → RETRACT. Há dois modos: <b>Toque</b> (encosta com força controlada e volta) e <b>Deslizamento</b> (ciclo completo com arrasto lateral). Rode com:\nros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool"},
+    {k:['manufatura','esteira','grasp_ml','pick','place','conveyor','preens','objeto'],
+     a:"A <b>célula de manufatura</b> (grasp_ml_pack) detecta objetos na esteira por cor (HSV) ou YOLOv8, escolhe a preensão e a caixa, resolve a IK e roda o ciclo pick-and-place. Frasco→Palm/Box1, Tubo→Claw/Box2, Ampola→Fingertip/Box3. Rode:\nros2 launch grasp_ml_pack conveyor_cell.launch.py"},
+    {k:['hardware','cr10','dobot','covvi','mao','mão','esp32','stm32','sensor','camera','câmera'],
+     a:"O <b>hardware</b>: braço Dobot CR10 (6-DOF, TCP/IP V4), mão COVVI (31 juntas, ECI Ethernet), câmera RGB do Gazebo, célula de carga ESP32 (UDP 8080, 1 kHz) e sensor de toque STM32 4×4 com modelo de Izhikevich (USB-CDC / UDP 8081)."},
+    {k:['rodar','launch','iniciar','executar','como rod','comando'],
+     a:"Sempre dê <code>source install/setup.bash</code> primeiro. Manufatura: <code>ros2 launch grasp_ml_pack conveyor_cell.launch.py</code>. Palpação: <code>ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool</code>. Mão no CR10: <code>ros2 launch hand_pack cr10_covvi_gazebo.launch.py</code>."},
+    {k:['pid','forca','força','setpoint','kp','ki','kd','controle','hold'],
+     a:"O <b>PID de força</b> controla a velocidade em Z para levar a compressão ao setpoint. Convenção: compressão = positivo. Setpoint saturado em 10 N e <b>abort acima de 15 N</b>. Estabiliza no HOLD quando |Fz−alvo| ≤ tol por hold_stable_s. Experimente no Simulador PID desta página!"},
+    {k:['pacote','package','quantos','quais','estrutura','workspace'],
+     a:"São 4 pacotes principais: <b>grasp_ml_pack</b> (manufatura), <b>touch_pack</b> (palpação), <b>hand_pack</b> (URDF CR10+COVVI) e <b>cra_description</b> (URDF do CR10). O driver da mão (eci_ros) entra como submódulo git."},
+    {k:['dado','data','csv','log','grava','salva','sincron'],
+     a:"O <b>palpation_logger</b> grava CSV+JSON por run em <code>sensors/Data/</code>. O <b>force_sync</b> pareia força × toque a 50 Hz publicando touch_pack_msgs/SyncedTouch em /touch_sync/data, com idades (age_ms) para avaliar a sincronização."},
+    {k:['izhikevich','neuro','raster','spike','ra','sa','taxel'],
+     a:"O <b>sensor de toque</b> é uma matriz 4×4 (STM32) com modelo neuromórfico de <b>Izhikevich</b>: emite tensões dos taxels, spikes RA/SA e a corrente I_final do neurônio pós-sináptico. A aba Sensores da GUI mostra heatmap, raster RA/SA, I_final e o neurônio pós em tempo real."},
+    {k:['autor','quem','lucas','tcc','voce','você'],
+     a:"Este projeto é o <b>TCC em Engenharia Biomédica de Lucas Martins Primo (2026)</b>: uma plataforma virtual de auxílio ao treinamento de usuários de próteses de mão. Eu sou o assistente local desta documentação 🤖."},
+    {k:['mirror','real','espelho','ip','servoj','movj'],
+     a:"No modo <b>MIRROR</b> os comandos do Gazebo chegam ao CR10 real: ServoJ a 33 Hz durante a palpação (latência mínima) e MovJ no jog manual. Configure com <code>control_mode:=mirror robot_ip:=192.168.5.2</code>."},
+  ];
+  const FALLBACK="Não tenho isso na base. Tente perguntar sobre: <b>palpação</b>, <b>célula de manufatura</b>, <b>hardware</b>, <b>PID de força</b>, <b>como rodar</b>, <b>sensor de toque</b> ou <b>dados/logging</b>.";
+  const SUGS=["Como rodo a célula de palpação?","Quais são os pacotes?","O que é o sensor de Izhikevich?","Como funciona o PID de força?","Que hardware o projeto usa?","Onde os dados são salvos?"];
+  const chat=document.getElementById('chat');
+  function norm(s){return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
+  function push(t,who){const d=document.createElement('div');d.className='msg '+who;d.innerHTML=t;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;}
+  function answer(q){const n=norm(q);let best=null,score=0;
+    for(const e of KB){let s=0;for(const k of e.k){if(n.includes(norm(k)))s++;}if(s>score){score=s;best=e;}}
+    return score>0?best.a:FALLBACK;}
+  function ask(q){push(q,'me');setTimeout(()=>push(answer(q),'bot'),220);}
+  const chips=document.getElementById('chips');
+  SUGS.forEach(s=>{const c=document.createElement('span');c.className='chip';c.textContent=s;c.onclick=()=>ask(s);chips.appendChild(c);});
+  document.getElementById('askform').addEventListener('submit',e=>{e.preventDefault();
+    const i=document.getElementById('askinput');if(i.value.trim()){ask(i.value.trim());i.value='';}});
+  push("Olá! 👋 Sou o assistente do projeto <b>RoboticArm</b>. Pergunte sobre os pacotes, o hardware, a palpação ou como rodar — ou clique numa sugestão abaixo.",'bot');
+
+  /* ================= SIMULADOR PID ================= */
+  const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+  const $=id=>document.getElementById(id);
+  const els={sp:$('sp'),kp:$('kp'),ki:$('ki'),kd:$('kd'),kc:$('kc')};
+  function fmt(){
+    $('vSP').textContent=(+els.sp.value).toFixed(1)+' N';
+    $('vKp').textContent=(+els.kp.value).toFixed(4);
+    $('vKi').textContent=(+els.ki.value).toFixed(5);
+    $('vKd').textContent=(+els.kd.value).toFixed(5);
+    $('vK').textContent=(+els.kc.value).toFixed(1)+' N/mm';
+  }
+  Object.values(els).forEach(e=>e.addEventListener('input',()=>{fmt();simulate(false);}));
+  fmt();
+
+  function simulate(animate=true){
+    const SP=+els.sp.value, Kp=+els.kp.value, Ki=+els.ki.value, Kd=+els.kd.value, Kc=+els.kc.value;
+    const dt=1/33, T=8.0, N=Math.floor(T/dt);     // 33 Hz como o explorer real
+    const ABORT=15, VMAX=60;                        // mm/s clamp na descida
+    let pen=0, integ=0, prevErr=0, F=0;
+    const data=[]; let aborted=false, peak=0;
+    for(let i=0;i<N;i++){
+      F=Math.max(0,Kc*pen);
+      if(F>peak)peak=F;
+      const err=SP-F;
+      integ+=err*dt; integ=Math.max(-8000,Math.min(8000,integ));
+      const der=(err-prevErr)/dt; prevErr=err;
+      // saída do PID = velocidade comandada (mm/s) — escala p/ ganhos pequenos típicos
+      let v=(Kp*err+Ki*integ+Kd*der)*1000;
+      v=Math.max(-VMAX,Math.min(VMAX,v));
+      pen+=v*dt; if(pen<0)pen=0;
+      data.push(F);
+      if(F>ABORT){aborted=true;break;}
+    }
+    // readouts
+    const Ffinal=data[data.length-1]||0;
+    $('rF').textContent=Ffinal.toFixed(2)+' N';
+    $('rE').textContent=(SP-Ffinal).toFixed(2)+' N';
+    const ov=Math.max(0,peak-SP);
+    $('rO').textContent=ov.toFixed(2)+' N';
+    const st=$('rS');
+    if(aborted){st.textContent='ABORT >15N';st.className='warn';}
+    else if(Math.abs(SP-Ffinal)<0.25){st.textContent='ESTÁVEL';st.className='ok';}
+    else{st.textContent='oscilando';st.className='';}
+    draw(data,SP,ABORT,T,dt,aborted);
+  }
+  function draw(data,SP,ABORT,T,dt,aborted){
+    const W=cv.width,H=cv.height,pad=34,Ymax=16;
+    ctx.clearRect(0,0,W,H);
+    const x=t=>pad+(t/T)*(W-pad-10);
+    const y=f=>H-pad-(f/Ymax)*(H-pad-12);
+    // grid
+    ctx.strokeStyle='#243049';ctx.lineWidth=1;ctx.fillStyle='#7e8aa6';ctx.font='10px monospace';
+    for(let f=0;f<=Ymax;f+=4){ctx.beginPath();ctx.moveTo(pad,y(f));ctx.lineTo(W-10,y(f));ctx.stroke();ctx.fillText(f+'N',4,y(f)+3);}
+    for(let t=0;t<=T;t+=2){ctx.fillText(t+'s',x(t)-5,H-16);}
+    // abort line
+    ctx.strokeStyle='#f87171';ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(pad,y(ABORT));ctx.lineTo(W-10,y(ABORT));ctx.stroke();
+    // setpoint
+    ctx.strokeStyle='#34d399';ctx.beginPath();ctx.moveTo(pad,y(SP));ctx.lineTo(W-10,y(SP));ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#34d399';ctx.fillText('setpoint',W-66,y(SP)-5);
+    // force curve
+    ctx.strokeStyle='#3f8cff';ctx.lineWidth=2.2;ctx.beginPath();
+    data.forEach((f,i)=>{const px=x(i*dt),py=y(f);i?ctx.lineTo(px,py):ctx.moveTo(px,py);});
+    ctx.stroke();
+    if(aborted){ctx.fillStyle='#f87171';ctx.font='bold 13px Inter';ctx.fillText('⚠ ABORT — compressão > 15 N',pad+8,22);}
+  }
+  $('run').onclick=()=>simulate(true);
+  $('reset').onclick=()=>{els.sp.value=2;els.kp.value=0.001;els.ki.value=0.0005;els.kd.value=0;els.kc.value=0.8;fmt();simulate(false);};
+  simulate(false);
+
+  /* ================= GRIP SELECTOR ================= */
+  const GRIPS={
+    palm:{img:'../images/palmGrip.png',name:'Palm Grip',obj:'Frasco',box:'Caixa 1 — vermelha',
+      desc:'Preensão envolvente de palma — usada para o <b>frasco</b> (âmbar). A mão fecha em torno do corpo cilíndrico com apoio total da palma.'},
+    claw:{img:'../images/claw.png',name:'Claw Grip',obj:'Tubo',box:'Caixa 2 — verde',
+      desc:'Preensão em garra — usada para o <b>tubo</b> (azul). Os dedos curvam em forma de gancho para envolver corpos finos e alongados.'},
+    tip:{img:'../images/fingertip.png',name:'Fingertip Grip',obj:'Ampola',box:'Caixa 3 — azul',
+      desc:'Preensão de pinça com as pontas dos dedos — usada para a <b>ampola</b> (verde), objeto pequeno e delicado.'}
+  };
+  document.querySelectorAll('#gpick button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('#gpick button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');const g=GRIPS[b.dataset.g];
+    $('gimg').src=g.img;$('gname').textContent=g.name;$('gdesc').innerHTML=g.desc;
+    $('gobj').textContent='Objeto: '+g.obj;$('gbox').textContent=g.box;$('ggrip').textContent=g.name;
+  });
+</script>
+</body>
+</html>

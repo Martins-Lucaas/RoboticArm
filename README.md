@@ -15,6 +15,8 @@ Gêmeo digital do braço industrial **Dobot CR10** acoplado à mão protética b
 
 Componente do **Trabalho de Conclusão de Curso (TCC) em Engenharia Biomédica** — plataforma virtual de auxílio ao treinamento de usuários de próteses de mão com múltiplos graus de liberdade. O mesmo hardware (CR10 + COVVI) é reutilizado em uma segunda célula de **palpação tátil**, que reproduz o protocolo de Gupta et al. 2021 com controle de força e deslizamento Cartesiano.
 
+> 📘 **Documentação pessoal interativa** — diagramas de bloco, galeria, **assistente do projeto**, **simulador do PID de força** e **seletor de preensão**: [`docs/index.html`](docs/index.html) *(abra no navegador)* · autor **Lucas Martins Primo — 2026**.
+
 ---
 
 ## Hardware

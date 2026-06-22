@@ -38,10 +38,25 @@ FORCE_SETPOINT_MAX_N = 10.0
 
 # ── Célula de carga (ESP32 via UDP) ──────────────────────────────────────────
 LOAD_CELL_UDP_PORT = 8080
-# Payload (little-endian, 8 bytes): uint32 seq + float v_sensor (tensão V).
-# Espelhado em sensors/ForceDriver/src/main.cpp (struct Payload). O seq
-# permite ao force_receiver detectar pacotes perdidos (simétrico ao touch).
-LOAD_CELL_PAYLOAD_FMT = '<If'
+# A ESP32 amostra a 1 kHz (1 ms) e ENVIA EM LOTE: empacota
+# LOAD_CELL_BATCH_N amostras por datagrama, transmitindo ~100 pacotes/s. Isso
+# entrega 1 kHz de dados mantendo a taxa de pacotes na faixa que o WiFi sustenta
+# de forma confiável (1000 datagramas minúsculos/s estouravam o airtime e a
+# perda). Cada amostra é auto-descritiva (seq + timestamp + tensão), então um
+# pacote perdido aparece como salto de seq, sem desalinhar o stream.
+#
+# Amostra (little-endian, 12 bytes): uint32 seq + uint32 t_us + float v_sensor.
+#   seq    — contador incremental por AMOSTRA (não por pacote); o salto revela
+#            amostras perdidas.
+#   t_us   — micros() da ESP32 no instante da amostra; é o relógio de 1 ms usado
+#            para colocar força e toque numa grade temporal comum (sincronização).
+#   v_sensor — tensão calibrada (V), com filtro LEVE na ESP (só média do
+#            oversampling); o filtro pesado roda no force_receiver (PC).
+# Espelhado em sensors/ForceDriver/src/main.cpp (struct Sample).
+LOAD_CELL_SAMPLE_FMT = '<IIf'
+# Quantas amostras a ESP agrupa por datagrama. 1 kHz / 10 = 100 pacotes/s.
+# Espelhado no firmware (BATCH_N).
+LOAD_CELL_BATCH_N = 10
 
 # Auto-descoberta para enviar a telemetria por UNICAST (broadcast no WiFi não
 # é reconhecido/retransmitido pela 802.11 → ~30% de perda). O force_receiver

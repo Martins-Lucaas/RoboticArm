@@ -27,10 +27,11 @@ from touch_pack_msgs.msg import SyncedTouch
 
 from .constants import SYNC_MAX_AGE_S
 
-SYNC_RATE_HZ = 100.0    # mesma taxa da célula de carga (SAMPLE_INTERVAL_MS 10)
-# NOTA: o par só é tão fresco quanto a fonte MAIS LENTA. Se o STM32 do toque
-# emitir TOTAL/Ifinal abaixo de 100 Hz, o valor de toque é repetido (segura
-# a última amostra dentro de SYNC_MAX_AGE_S) — sobe a taxa, não a informação.
+SYNC_RATE_HZ = 1000.0   # mesma taxa da célula de carga (ESP a 1 kHz) e do toque
+# NOTA: o par só é tão fresco quanto a fonte MAIS LENTA. Com a célula a 1 kHz e
+# o STM32 do toque a 1 kHz ambas as fontes acompanham; se uma cair abaixo disso,
+# o último valor é repetido (segurado dentro de SYNC_MAX_AGE_S) — sobe a taxa de
+# emissão, não a informação.
 
 QOS_SENSOR = QoSProfile(
     reliability=QoSReliabilityPolicy.BEST_EFFORT,

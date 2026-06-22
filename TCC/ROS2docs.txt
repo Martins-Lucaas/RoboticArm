@@ -1,0 +1,594 @@
+Per-Package Documentation
+
+This article describes the requirements and design of ROS 2’s per-package documentation system.
+
+Authors: Marya Belanger
+
+Date Written: 2020-10
+
+Last Modified: 2020-10
+Background
+
+ROS 2 is lacking a process for the conglomeration of package documentation. Discoverability for package documentation (and documentation in general) is one of the most frequent user complaints.
+
+The goal of this design is to make ROS 2 documentation as accessible as possible for all ROS users. To achieve this we are seeking to standardize a documentation process for ROS 2 packages that will encourage maintainers to robustly document their packages, in turn making ROS 2 package documentation more available. The results will be presented in a consistent way alongside the general ROS 2 documentation, making the documentation as a whole discoverable and predictable.
+
+In general, the vision for the system is:
+
+    Package maintainers document their packages in their repositories following some recommended guidelines or templates
+    Package documentation (API documentation, other package related content) from the repositories is built on the ROS 2 infrastructure and deployed to the ROS 2 documentation site in an automatic process maintainers can opt in to by adding a doc block to the distribution.yaml
+        See REP 141 for more context.
+    Package documentation is indexed alongside ROS 2’s generic content on the docs site
+
+Context
+
+The per-package documentation plan is an extension of the general ROS 2 documentation project, which introduced some requirements that affect the context of the per-package documentation:
+
+    All documentation will be hosted on docs.ros.org
+    All documentation will be versioned by ROS 2 distribution names
+    The URL structure will be docs.ros.org/<lang>/<distro>/... for generic documentation and docs.ros.org/<lang>/<distro>/p/<package_name>/... for package documentation
+        See the diagram below for more context on where documentation will fall under this URL structure: Content placement in the new URL structure - flowchart
+
+Requirements
+
+The Primary requirements are those that must be in place for the system to be functional and achieve its purpose. The Secondary requirements are also absolute requirements, however they are not necessary to roll out the first stage of implementation. They will be carried out following the initial roll out.
+1. Primary requirements
+
+1.1 All package documentation must be available with the rest of the ROS 2 documentation under a single domain
+
+Package documentation will be treated the same as the generic ROS 2 documentation. Its presence as part of the docs site should be made well-known from the site’s overview as well as from any entry point into the docs site, and be intuitive from the organization and layout of the site.
+
+1.2 Package documentation must have an easily navigable and intuitive URL structure
+
+Every package’s “home page” should be reachable with minimal effort by the scheme docs.ros.org/<lang>/<distro>/p/<package_name>/
+
+1.3 Package documentation must be maintainable in its repository without going through a third party
+
+Maintainers and contributors will only have to work on their package’s documentation within its repository. The details of building and hosting will not be a concern of package maintainers.
+
+Despite being hosted alongside the generic documentation, working on a package’s documentation will not require any work on the repositories of the generic documentation (currently ros2/ros2_documentation) or the site repository (currently ros-infrastructure/rosindex).
+
+1.4 The system must support C++ and Python API docs generation
+
+The system will automatically extract API docs for these languages from the source code in package repositories and build the output on the docs site.
+
+1.5 Package documentation must be written and formatted in rst (reStructuredText)
+
+Rst is the file format currently utilized by the ROS 2 documentation. Package documentation should continue to utilize rst for consistency.
+
+1.6 The system must allow package documentation to be versioned per ROS 2 distribution
+
+The docs site and buildfarm will allow documentation for the latest version of a package corresponding to each ROS 2 distribution the docs site supports versioning for. The package repository can still maintain its own docs for previous versions.
+
+While multiple package versions per distribution will not initially be supported, the URL structure will support the addition of this feature in the future (mentioned under Secondary requirements below).
+
+1.7 The buildfarm must automatically build package documentation
+
+Changes to the documentation in a package repository shouldn’t require the maintainer to manually trigger a build.
+
+1.8 The system must automatically generate listing content for a package so it’s listed on docs.ros.org even if the package maintainer does not explicitly set up anything in the package repository
+
+By default some package info will be listed for every package added to a rosdistro.
+
+1.9 The systems must support cross-referencing between packages
+
+A stable linking process will be in place to cross-reference between package docs despite their originating from separate repositories.
+
+1.10 The system must prevent the possibility of package file names (created by maintainers) colliding with auto-generated content (from the system’s side)
+
+When writing package documentation, maintainers should not have to concern themselves with auto-generated content, like the current /changelogs and /symbols directories in the current docs.ros.org API docs structure for ROS 1.
+2. Secondary requirements
+
+2.1 Package maintainers should have the ability to include free form documentation, like tutorials, design docs, etc., alongside generated API docs on docs.ros.org
+
+2.2 The system should provide a standardized interface for generating an index page/landing page for packages, consistent across ROS 2
+
+2.3 The system should provide a standardized method for generating package documentation locally, including build error alerts
+
+2.4 The system should be extensible for more languages
+
+2.5 Users should be able to switch between versions (distributions) while viewing a package’s documentation
+
+2.6 The system should support building documentation for more than one version of a package per ROS 2 distribution
+
+2.7 Changes to documentation pushed in a package repository should be immediately deployed to the documentation site
+
+2.8 The system should support bi-directional cross-referencing (“backwards” to dependents)
+Design
+
+The design covers the solution for satisfying the primary requirements. Some secondary requirements are also satisfied inherently through the primary design decisions.
+
+In summary, the design for the system is:
+
+    Utilize Sphinx, Doxygen and Breathe tools to satisfy both C++ and Python API documentation (1.4), cross-referencing across packages (1.9) and consistent use of RST (1.5)
+    Develop a new doc tool integrated into the build system (1.7) for maintainers to run on their packages (1.3) that encompasses Sphinx, Doxygen and Breathe, and builds the docs locally (2.3).
+    The output of the tool is uploaded to docs.ros.org (1.1) by the build farm, to the correct URL address (1.2, 1.10)
+    A package’s inclusion in a rosdistro (as per normal release process*) will version its documentation to that distribution (1.6) and list the package under that distribution’s listing of packages on docs.ros.org (1.8)
+        Via the inclusion of a doc block in a distribution.yaml in github.com/ros/rosdistro
+
+The design description is laid out in the following subsections:
+
+    The Documentation System section, which describes, at a high level, the functionality of the doc tool for both the user side of package documentation as well as how it interacts with the buildfarm.
+    The URL Structure section, which shows how directories under docs.ros.org will be organized in the new system.
+    The Considerations section, which addresses some other options that were considered for various aspects of the design, and why they were decided against.
+
+Documentation System
+User process
+
+The doc tool will invoke everything necessary to document a work space according to our requirements and vision for the new documentation site. It can be run on any ROS 2 package.
+
+The tool may be developed to run standalone, or it may be necessary for maintainers to add a one liner to their package.xml, rosdoc.yaml, etc. telling the tool whether it should be building C++ docs, Python docs, or both.
+
+The tool works by first building the package to ensure all the generated code is accounted for and able to be documented. Then, the tool checks for a doxyfile or C++ code. If either are present, the tool will run Doxygen.
+
+If the package maintainer wants their C++ code documented, they should include a doxyfile. We can provide a standard template for the doxyfile, which maintainers can then customize the contents of, to the specifications of their package’s needs.
+
+Maintainers can also choose to not include a doxyfile, in which case the tool will substitute a default doxyfile if it finds C++ code, providing standard configuration for the package.
+
+Doxygen will produce API docs for any C++ code it is run on, and the maintainer has the option to further elaborate on their API docs by including Doxygen comment blocks within their source code.
+
+Once Doxygen is completed, or if it never ran because the tool did not find any doxyfile or C++ code, the tool will proceed to running Breathe and Sphinx.
+
+Breathe imports the symbols from Doxygen’s output to Sphinx. It will allow C++ API docs to be built by Sphinx to maintain consistency across ROS 2 API docs and allow cross-referencing between all packages.
+
+If there is no Doxygen output (no C++ documentation), Sphinx will run without Breathe. All packages will need a Sphinx configuration file. If a package doesn’t have one, the tool can use a default one. Python packages will need Sphinx directives explicitly integrated into the source code to produce API documentation (standard for Sphinx API documentation).
+
+Once complete, the tool will output the package documentation build locally. Users will be able to see any build errors as well as how their documentation will look once built to docs.ros.org.
+Support for other languages
+
+This section addresses how the system will potentially satisfy requirement 2.4 in the future. In general, the goal is to treat additional languages the same as the system treats Python and Doxygen. That is, a library in any additional language should be able to utilize its native/standard documentation tool. There should then be a bridge between the output of that tool and Sphinx, like how Breathe bridges Doxygen and Sphinx. This will most likely not be an out-of-box solution for most languages, but the assumption is that extension will be possible.
+
+Bridging with Sphinx allows the assumption that cross-referencing will be possible. It also maintains the standard landing page requirement; the top level entry point will be Sphinx regardless of a package’s language. The landing page will provide access to the other generated documentation.
+
+For packages with documentation for multiple languages, the landing pages will provide access to each generator (e.g. “Click here for Doxygen content, Click here for Javadoc content”). Supporting multiple documentation engines will require that each generator outputs into its own designated directory (see URL Structure - /generated).
+Buildfarm process
+
+To opt in to having documentation built on docs.ros.org, maintainers will have to add a doc block to their distribution.yaml file that indicates the rosdistro branch and a path to the repository. Opting-in this way will cause the tool to automatically generate an index landing page for the package.
+
+The buildfarm will invoke the same tool used in the user process, run on n packages, to generate the documentation for docs.ros.org. It will require some additional settings, for example the URL where content should generate into.
+
+A webhook between GitHub and the buildfarm will indicate when there is a new commit to a repository (for the branches being tracked for documentation) so the documentation can be automatically regenerated and immediately deployed.
+
+Some files will be auto-generated during this process (changelogs, tag files, etc.). The auto-generated content won’t be saved to the upstream repositories, but it will be built to docs.ros.org.
+
+There is a possibility of collision occurring between maintainer created files and generated files. To prevent this to the best of the system’s ability, the system will place auto-generated content in a restricted directory (see URL Structure - /generated).
+Cross-referencing between sibling packages
+
+This section addresses requirement 2.8, cross-referencing between sibling packages. As packages integrate their documentation into the system, cross-referencing between packages will be inconsistent. It may require multiple builds of all the packages in the system to eventually reach a consistent state for cross-references. How exactly this will be executed will be determined.
+URL structure
+
+The URL structure of the new documentation system
+index pages
+
+The index pages indicate the default page that is rendered when the directory level immediately before is visited without any specific .html page following.
+
+For example, visiting docs.ros.org/en/foxy would render index1, docs.ros.org/en/foxy/p would render index2, and docs.ros.org/en/foxy/p/ would render `index3`.
+
+index1 is the general ROS 2 documentation overview page, what is currently seen when visiting index.ros.org/doc/ros2/
+
+index2 will be the package listing page for each ROS 2 distribution.
+
+index3 will be each specific package’s homepage. This will be generated by the tool, but a user-generated index page should also be able to be merged or augmented with the auto-generated page to prevent collision.
+Versioning at the <package_name> level
+
+To support the goal of being able to support multiple versions of packages documented within the context of one distro (2.6) we plan to reserve URL space and have a plan to migrate forward but not to implement it at first.
+
+When functionality is added to the documentation system for more than one version of package documentation per rosdistro, those versions will be appended to the package name in the URL. For example, /p/rclcpp can have versioned content added to /p/rclcpp-2.1.0 and /p/rclcpp-3.0.0. After enabling versioning, the unversioned URL will be a link to the version currently indexed in the rosdistro.
+
+See Considerations - Package version directory for an explanation of the naming convention.
+/generated
+
+The purpose of this directory is to allocate a place where automatically generated content can be placed without risk of collision with user-created content. The tool will throw warnings to ensure users do not write any manual content into /generated; it is ultimately up to maintainers to prevent collision. Manually created content will override auto-generated content it collides with.
+
+The index page for each package will link to the generated API docs, changelogs, etc.
+user generated
+
+Within a package’s repo, the tool will generate a /docs directory where maintainers can place any manually created rst files they would like, like tutorials, architecture articles, etc.
+
+The tool will direct Sphinx to generate the content in the /docs directory, which will output to the top level when deployed (sibling to /generated and index3).
+
+However, it may become evident during development of the system that it is necessary to add an additional subdirectory/subdirectories at this level to contain the manually created content. This decision will be confirmed before deployment of the new site. For now, the URL structure uses user generated as a placeholder for either case.
+ROS 1 documentation
+
+Besides the addition of /en, the structure and functionality of ROS 1’s API documentation will remain the same. Necessary redirects will be implemented.
+Considerations
+Other doc tools
+
+There are many documentation tools available, but ultimately Sphinx, Doxygen and Breathe were the best choices to satisfy our requirements.
+
+Sphinx and Doxygen are well-established and ubiquitous for documenting their respective languages This ensures the robustness of the system more so than any of the non-standard tools, and also that our users will have easy access to resources to aid them in documenting their packages with these tools.
+
+With Breathe, it is simple to satisfy the requirement of coordinating C++ and Python documentation, and basing the system off of Sphinx allows simple customization with Python modules.
+
+Another tool, Exhale has been considered for future addition to the system. Exhale adds some extra features available in pure Doxygen that Breathe alone doesn’t import into Sphinx.
+Allowing pure Doxygen use
+
+If a package maintainer insists on using Doxygen alone, they are of course welcome to. However, this is not a use case we plan to support.
+
+The standard entry point should be utilizing our tool, which will run Doxygen but then also run Breathe and Sphinx over it so the output can be uniform with the rest of our documentation. Using Doxygen by itself will sacrifice that consistency and also the ability to cross-reference to and from that package, both major driving points for this project. The tool should mostly mask the complexities of the Sphinx/Breathe/Doxygen system, making the difference between using “pure” Doxygen and using the new tool negligible for maintainers.
+Package version directory
+
+To satisfy secondary requirement 2.6, the first obvious consideration for the structure was .../p/<package_name>/<version>, but, as indicated in the URL structure section above, the decision is to use .../p/<package_name-version.number.n>.
+
+The chosen structure doesn’t force another directory, which allows versioned package documentation to be added later on in the development of the system without leaving an unused directory level in the meantime. Adding package versions in the future will not disrupt the meaning of the URL structure, because /<package_name>/ without any appended -version.number.n will always implicitly indicate the latest version.
+
+# rosdoc2
+
+Command-line tool for generating documentation for ROS 2 packages.
+
+## Quick-start
+
+This tool can be viewed from two perspectives: first from the perspective of a user wanting to build documentation for any given ROS 2 package in order to view it, and second from the perspective of package maintainers who need to write their documentation and configure how this tool works on their package.
+
+### Build documentation for a ROS 2 package
+
+To generate the documentation for almost any ROS 2 package, run this command replacing the arguments with appropriate directories:
+
+```
+rosdoc2 build \
+  --package-path ./src/path/to/my_package_name
+```
+
+> [!NOTE]
+> Please see [Known Issues](#known-issues) if failed.
+
+This command will inspect your package and run various documentation tools based on the configuration of your package.
+
+The package directory that you specify must contain a single ROS 2 package that has a `package.xml` file and optionally a YAML configuration file to configure the doc build process.
+
+There will be an `index.html` file in the output directory which you can open manually, or with this command:
+
+```
+rosdoc2 open ./docs_output
+```
+then click through to the package name, then `index.html`. Or you can do that directly, filling in the package name, using:
+```
+rosdoc2 open ./docs_output/<package_name>/index.html
+```
+
+For more advanced usage see the documentation.
+
+It may be helpful during rosdoc2 development to run a version of rosdoc2 without installing it. This can be done
+(after doing an initial normal install to make sure prerequisites are available) by running, from the rosdoc2 main directory:
+```bash
+python3 -m rosdoc2.main <options>
+```
+
+### Set up a ROS 2 package to be used with this tool
+
+In many cases, C/C++ or python packages require no configuration, and will work if you simply
+layout your package in a standard configuration and the tool will do the rest.
+
+If you want to provide additional documentation, like a conceptual overview or tutorials,
+you can provide those files in either restructured text (.rst) or markdown (.md) in a `doc/` folder.
+It is also highly recommended that you provide a README file, which will be rendered on the package
+documentation front page by rosdoc2 (and also by the other ROS documentation tool, rosindex).
+
+Currently, official documentation builds for released packages are done automatically by the build system,
+placing results under `https://docs.ros.org/en/<distro>/p/` for example [rolling](https://docs.ros.org/en/rolling/p/)
+
+## Installation
+
+The official package documentation builds install rosdoc2 directly from its git repository, so the best way to test with rosdoc2 is
+to install from source. Other methods are also available, though the rosdoc2 version there may be older.
+
+### Installation from source
+
+We recommend you install and use rosdoc2 it from a [virtualenv](https://docs.python.org/3/library/venv.html).
+
+To install:
+
+```
+python3 -m pip install --upgrade 'git+https://github.com/ros-infrastructure/rosdoc2@main'
+```
+
+### Installation from ROS repositories
+
+`rosdoc2` can be installed from the [ROS repositories](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debians.html#enable-required-repositories).
+
+```
+apt install -y python3-rosdoc2
+```
+
+### Installation from PyPI
+
+You may also install rosdoc2 from [PyPI](https://pypi.org/project/rosdoc2).
+If you do so, we recommend you install and use it from a [virtualenv](https://docs.python.org/3/library/venv.html).
+
+```
+python3 -m pip install rosdoc2
+```
+
+## Documentation
+
+The purpose of this tool is to automate the execution of the various documentation tools when building documentation for ROS 2 packages.
+Additionally, it provides several out-of-the-box behaviors to minimize configuration in the packages and to provide consistency across packages.
+
+It aims to support two main cases:
+
+- zero configuration generation of C++ and Python API documents with a landing page for simple packages
+- custom Doxyfile (for C++) and Sphinx conf.py file for more extensively configured documentation
+
+The goal for the first case is to allow almost no configuration in packages while still providing some useful documentation, even if there is no Doxyfile, Sphinx conf.py file, or any free form documentation.
+
+The goal for the second case is to allow packages to have free form documentation, additional settings for Doxygen and Sphinx, as well as make it possible for developers to easily invoke Doxygen or Sphinx on their projects manually, without this tool.
+In this case, the tool would just automate execution of the tools and provide or override certain additional settings to make it more consistent with other packages, for example configuring the output directory or providing the configuration needed to use cross-references via tag files in Doxygen and inventory files in Sphinx.
+
+### Features
+
+Additionally, the tool aims to enable a few features:
+
+- consistent landing page with basic package information for all packages
+- support C++ API documentation extraction via Doxygen
+- support Python API documentation extraction via Sphinx
+- support free form documentation (prose, tutorial, concept pages, etc) via Sphinx
+- support cross-language API cross-referencing via Sphinx using Breathe
+- support cross-package documentation cross-referencing between packages via Sphinx
+
+### Roadmap Features
+
+Some features were kept in mind while initially developing this tool, but are not yet implemented.
+Including:
+
+- extensible "builders", so that other kinds of documentation tools can be supported in the future
+- using this tool in automated testing and/or CI
+
+### Building Documentation for a Package
+
+### Documenting a Package
+
+What you need to do in order to get basic documentation for your package using this tool is.. nothing.
+
+This tool will extract information from your package's `package.xml` manifest file and generate a landing page for you.
+
+Additionally, if your package is laid out in a standard way then it will automatically run Sphinx and/or Doxygen for you.
+
+However, if you need to place your files in non-standard locations, configure Sphinx and/or Doxygen beyond the defaults, or do something else, you will need to create a `rosdoc2.yaml` file and reference it from your package's `package.xml`.
+How to do that, and how to handle some other special cases will follow.
+
+Also refer to the [Documenting a ROS 2 package how-to guide in the ROS 2 docs](https://docs.ros.org/en/rolling/How-To-Guides/Documenting-a-ROS-2-Package.html).
+
+#### Using a `rosdoc2.yaml` file to control how your package is documented
+
+To generate a default config file, run
+
+```
+rosdoc2 default_config \
+  --package-path ./src/path/to/my_package_name
+```
+
+TODO
+
+#### Packages with C/C++ API Documentation
+
+The tool uses information from your package's `package.xml` manifest file, and assumes the source files with documentation to be extracted are all in the `include` folder of your packages, based on the package layout conventions for ROS 2:
+
+https://docs.ros.org/en/rolling/The-ROS2-Project/Contributing/Developer-Guide.html#filesystem-layout
+
+#### Packages with Python API Documentation
+
+TODO
+
+#### Packages with both Python and C/C++ API Documentation
+
+TODO
+
+#### Packages with ROS 2 Messages and other kinds of Interfaces
+
+TODO
+
+## Get in touch
+
+TODO
+
+## Testing
+
+To install rosdoc2 prerequisites for testing, run
+```
+pip install --user --upgrade .[test]
+```
+
+You probably want to test rosdoc2 using code in a local directory rather than
+re-running install every time you do a change. To do this, run (from the directory
+containing this README):
+```
+python3 -m pytest
+```
+If you want to see more output, try the ```-rP``` and/or ```--log-level=DEBUG``` option.
+To limit to a particular test, for example the test of "full_package", use ```-k full_package```
+
+Combining these as an example, to get detailed output from the full_package test even for
+passed tests, run:
+```
+python3 -m pytest -rP --log-level=DEBUG -k full_package
+```
+
+## Contributing
+
+TODO
+
+## Known Issues
+
+| Description / Error Message | Issue | Workaround |
+|:---|:---:|:---|
+| `No module named 'rclpy._rclpy_pybind11'` | [#66](https://github.com/ros-infrastructure/rosdoc2/issues/66) | Do not source colcon workspace. |
+
+[virtualenv]: https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/#create-and-use-virtual-environments
+
+Documenting a ROS 2 package
+
+Table of Contents
+
+    Prerequisites
+
+    Package Documentation Overview
+
+    Building Package Docs
+
+    Configuration
+
+        rosdoc2.yaml
+
+        conf.py, rosdoc2_settings
+
+        Doxyfile
+
+    Customizing Sphinx Documentation
+
+        Creating a Sphinx Project
+
+        Customizing index.rst
+
+        Adding Python API-Docs
+
+        Adding C++ API-Docs
+
+    Including an existing README.md
+
+    CI, docs.ros.org
+
+    Further Reading
+
+This guide introduces the standard way to create documentation for ROS 2 packages. For packages with binary releases this also results in the docs being hosted at docs.ros.org/en/<distro>/p/<package>/. For information on how to contribute to this documentation on docs.ros.org, see Contributing to ROS 2 Documentation.
+Prerequisites
+
+    Install ROS
+
+    Install rosdoc2
+
+Package Documentation Overview
+
+The type of documentation discussed in this guide is referred to as “package docs” or “API docs”. For ROS packages that have been released on ROS Index, their documentation will be built on the ROS buildfarm, included on docs.ros.org, and visible via the API Docs button on index.ros.org.
+
+The tool responsible for generating ROS 2 package docs is rosdoc2.
+
+rosdoc2 is a convenient wrapper around the commonly used Sphinx documentation framework. Sphinx allows freeform written documentation as well as API documentation for python code generated from comments in the code. The breathe + exhale packages allow integration with Doxygen, to include autogenerated C++ API documentation as well.
+
+rosdoc2 creates a default configuration for packages with no documentation or configuration at all, and applies options for a uniform theme and integration with other packages.
+Building Package Docs
+
+To generate the documentation for a package in HTML format with rosdoc2, run:
+
+rosdoc2 build --package-path <package-path>
+
+The documentation is written to docs_output/<package-name>/index.html and can be viewed in a browser.
+Configuration
+
+There are three configuration locations for ROS package docs: rosdoc2.yaml for general settings, conf.py for sphinx settings and the Doxyfile for doxygen settings. For all of those, a default is assumed or generated if not present, so none of them is strictly required. However, it might be necessary to create and modify those once you want to use features such as custom textual documentation pages.
+rosdoc2.yaml
+
+This is the main entrypoint for rosdoc2. It specifies generic settings, and can be used to control the execution of specific builders (Doxygen and Sphinx) and decides which builders to run.
+
+rosdoc2 provides a multitude of configuration options, which can be adjusted in a config file rosdoc2.yaml. To generate a default rosdoc2.yaml which you can then further customize, run:
+
+rosdoc2 default_config --package-path <package-path>
+
+And add <rosdoc2>rosdoc2.yaml</rosdoc2> to the export section in your package.xml:
+
+<package>
+    <!-- [...] -->
+    <export>
+        <!-- [...] -->
+        <rosdoc2>rosdoc2.yaml</rosdoc2>
+    </export>
+</package>
+
+However, for most packages, the default settings in rosdoc2 will suffice, and no custom config is necessary. More information about rosdoc2.yaml can be found in the rosdoc2 readme.
+conf.py, rosdoc2_settings
+
+The final output of the package docs is (almost) always built by Sphinx. Each Sphinx project is configured by a conf.py file in the doc directory. If no configuration is present, a default Sphinx project is created and used when building the documentation. If however a conf.py Sphinx config is found in the doc subdirectory of the package, this is used instead. A custom Sphinx project is required if you want to include a standalone reStructuredText documentation page. A standalone documentation page can be used to list multiple tutorials and guides; if that’s something you want for your package you’ll need to create a custom Sphinx project.
+
+rosdoc2 provides additional settings to conf.py and overrides some. Information about changes done to the Sphinx settings are logged to the console with a [rosdoc2] prefix.
+Doxyfile
+
+Doxygen is a tool for automatically generating C++ API docs from code comments. While Doxygen can also generate HTML output directly, in the usual workflow for ROS packages, Doxygen produces machine readable output in XML format which is then consumed by Sphinx and integrated with the rest of the documentation. Doxygen-only docs are possible by only enabling the Doxygen builder in rosdoc2.yaml, but this is uncommon.
+Customizing Sphinx Documentation
+Creating a Sphinx Project
+
+In order to add standalone documentation pages in addition to the automatically generated API docs, a custom Sphinx project is necessary. This should be created in a subdirectory called doc in the package directory. A new Sphinx project can be created by running sphinx-quickstart in the doc directory, answering no to “Separate source and build directories”. The wizard requires entering the project name, author and version, but this can later be removed and will be provided to Sphinx by rosdoc2 from your packages package.xml. More information about creating a sphinx project can be found on the Sphinx quickstart page,
+Customizing index.rst
+
+The sphinx-quickstart wizard creates an index.rst file, which is the custom landing page for your package, similar to a Github README file.
+Adding Python API-Docs
+
+By default rosdoc2 uses the sphinx-apidoc tool and the autodoc Sphinx extension to automatically generate documentation for python code. In order for autodoc to find the Python modules in your package, it must be added to the python search path in conf.py:
+
+sys.path.insert(0, os.path.abspath('.'))
+
+This is because rosdoc2 wraps the custom conf.py with more configuration from a script which will be placed in the package. In this case the . path in os.path.abspath refers to the package’s directory root, not the package’s doc directory due to the interaction between rosdoc2 and conf.py.
+
+By default, package API docs are already reachable through the “Module Index” link that is present on the landing page. For the API docs to also appear in the table of contents, simply add a link to the modules page to your index.rst:
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+   Python Modules <modules>
+
+Adding C++ API-Docs
+
+If you would like to add your automatically generated API docs back to your custom landing page, add the line generated/index to your documentation page where you would like the API docs to appear:
+
+.. toctree::
+   :maxdepth: 2
+
+   C++ API Docs <generated/index>
+
+This adds the elements “Class Hierarchy”, “File Hierarchy” and “Reference” to the table of contents in the sidebar. To make those appear under one “C++ API Docs” heading for a less cluttered sidebar, a separate file such as cpp_api_docs.rst can be added, which links to the generated docs:
+cpp_api_docs.rst
+
+C++ API Docs
+============
+
+These are the autogenerated docs for the internal implementation.
+
+.. toctree::
+   :maxdepth: 3
+   :caption: Contents:
+
+   generated/index
+
+Which then also needs to be added in index.rst to appear in the sidebar:
+index.rst
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+   cpp_api_docs
+
+Including an existing README.md
+
+If your git repository already has an existing README.md, it is possible to reuse this as the landing page for the documentation, without duplicating the contents. To correctly include a Markdown file in Sphinx while preserving relative links and images, some additional effort is required.
+
+First, create a proxy-file readme_include.md next to index.rst. This is a markdown file which just includes the original README.md, but preserves the relative image paths, which would otherwise break in the next step:
+readme_include.md
+
+```{include} ../README.md
+:relative-images:
+```
+
+Then, include the contents of this file from index.rst using myst to include markdown from rst:
+index.rst
+
+.. include:: readme_include.md
+   :parser: myst_parser.sphinx_
+
+This also requires adding myst_parser to the extensions in conf.py:
+conf.py
+
+extensions = ["myst_parser"]
+
+CI, docs.ros.org
+
+The ROS build farm uses rosdoc2 to build the package documentation hosted at docs.ros.org/en/<distro>/p/<package>/. To enable this, the repository containing the documentation must be configured in rosdistro/humble/distribution.yaml. This would usually be the package source repository:
+
+<package_name>:
+  doc:
+    type: git
+    url: https://github.com/<github_username>/<package_name>.git
+    version: main
+  release:
+  [...]
+
+The buildfarm hosts the documentation for every distribution separately, and periodically rebuilds it from the latest commit on the specified branch. It is not required to tag a new release to update the hosted documentation. To view the status of your package’s documentation build, search for doc__<package_name> on https://build.ros2.org. One job is created for every distribution for which the package is released. On each job page, you can see when a build was last triggered, as well as the status and logs of each build.

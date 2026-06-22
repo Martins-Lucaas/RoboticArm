@@ -20,6 +20,7 @@ import re
 import socket
 import struct
 import threading
+import time
 from collections import deque
 from typing import Callable, Optional
 
@@ -46,8 +47,13 @@ ROWS = 4
 COLS = 4
 NUM_TAXELS = ROWS * COLS
 VREF = 3.3
-RASTER_WINDOW = 5.0      # s de histórico no raster
-WINDOW_SIZE = 50         # amostras no gráfico de I_final
+# Janela de tempo (s) compartilhada por TODAS as séries temporais — raster
+# RA/SA, I_final e neurônio pós deslizam continuamente sobre esta mesma janela.
+# Mude só aqui para alongar/encurtar o histórico.
+RASTER_WINDOW = 20.0
+# Backstop de memória do buffer de I_final (a poda real é por TEMPO, em
+# _note_time); evita crescimento ilimitado caso só cheguem linhas TOTAL.
+I_FINAL_MAXLEN = 20000
 
 # Regex pré-compiladas: o parser roda em cada linha da serial.
 RE_DATA = re.compile(r"idx=(\d+),adc=(\d+),t=(\d+)")
@@ -106,9 +112,20 @@ class TouchSensorSource:
         self.spike_times_RA = [deque() for _ in range(NUM_TAXELS)]
         self.spike_times_SA = [deque() for _ in range(NUM_TAXELS)]
         self.spike_times_POST: deque = deque()
-        self.I_final_data: deque = deque([0.0] * WINDOW_SIZE, maxlen=WINDOW_SIZE)
+        # I_final agora é série TEMPORAL: guarda (t, valor) e desliza pela mesma
+        # janela RASTER_WINDOW que os rasters (antes eram só os últimos N
+        # valores, indexados por amostra, sem noção de tempo). t vem de
+        # current_time no instante do TOTAL — o firmware não envia t na linha
+        # TOTAL, então ancoramos no relógio mais recente do STM32.
+        self.I_final_data: deque = deque(maxlen=I_FINAL_MAXLEN)
         self.current_time = 0.0
         self._last_evict = 0.0
+        # Âncora p/ o relógio de DISPLAY: mapeia o tempo do STM32 (current_time)
+        # para o relógio monotônico do PC. A GUI usa isso para deslizar a janela
+        # SUAVEMENTE a cada frame (33 fps), mesmo quando os dados da serial
+        # chegam em rajadas — sem isso a janela dava saltos a cada lote.
+        self._t_ref_stm = 0.0
+        self._t_ref_pc: Optional[float] = None
 
     # ──────────────────────────────────────────────────────────────────
     def start(self) -> bool:
@@ -183,15 +200,29 @@ class TouchSensorSource:
             lines = self._buffer.split("\n")
             self._buffer = lines[-1]
 
-            for line in lines[:-1]:
-                # Uma linha malformada NUNCA pode derrubar a thread de leitura:
-                # se _parse_line lançar, o parsing pararia e o display ficaria
-                # congelado no último frame até resetar a página. Engole o erro
-                # da linha individual e segue lendo a serial.
-                try:
-                    self._parse_line(line.strip())
-                except Exception:
-                    pass
+            # Lock BATELADO: pega self._lock UMA vez por chunk em vez de por
+            # linha. Com o firmware a ~1 kHz são ~16 mil linhas/s; travar/soltar
+            # o lock por linha gerava contenção massiva com o snapshot() da GUI
+            # (a causa real do "travando muito"). Aqui o parse do chunk inteiro
+            # roda sob um único lock; broadcasts/ROS ficam para DEPOIS de soltá-lo.
+            pending = []
+            with self._lock:
+                for line in lines[:-1]:
+                    # Uma linha malformada NUNCA pode derrubar a thread: engole
+                    # o erro da linha individual e segue.
+                    try:
+                        self._parse_line(line.strip(), pending)
+                    except Exception:
+                        pass
+            # Reenvio UDP e callback ROS FORA do lock — rede/ROS não podem
+            # segurar o lock de dados nem bloquear a leitura da serial.
+            for i_final in pending:
+                self._broadcast(i_final)
+                if self._on_sample is not None:
+                    try:
+                        self._on_sample(i_final)
+                    except Exception:
+                        pass
 
     def _note_time(self, t: float) -> None:
         """Avança ``current_time`` para o timestamp mais recente e detecta
@@ -213,11 +244,18 @@ class TouchSensorSource:
                 self.spike_times_RA[n].clear()
                 self.spike_times_SA[n].clear()
             self.spike_times_POST.clear()
+            self.I_final_data.clear()
             self.current_time = t
             self._last_evict = t
+            self._t_ref_stm = t
+            self._t_ref_pc = time.monotonic()
             return
         if t > self.current_time:
             self.current_time = t
+            # Re-ancora o relógio de display no dado mais novo: assim a janela
+            # "gruda" no presente quando há dados e desliza sozinha entre eles.
+            self._t_ref_stm = t
+            self._t_ref_pc = time.monotonic()
         # Poda no máximo a ~50 Hz, independente da taxa de linhas da serial.
         if self.current_time - self._last_evict < 0.02:
             return
@@ -233,8 +271,14 @@ class TouchSensorSource:
         post = self.spike_times_POST
         while post and post[0] < cutoff:
             post.popleft()
+        ifd = self.I_final_data
+        while ifd and ifd[0][0] < cutoff:
+            ifd.popleft()
 
-    def _parse_line(self, line: str) -> None:
+    def _parse_line(self, line: str, pending: list) -> None:
+        """Parseia UMA linha e aplica ao estado. O CALLER já segura self._lock
+        (lock batelado por chunk — ver _worker). I_final que chegar via TOTAL é
+        empilhado em ``pending`` para broadcast/ROS fora do lock."""
         if line.startswith("DATA"):
             m = RE_DATA.search(line)
             if m:
@@ -244,9 +288,8 @@ class TouchSensorSource:
                 adc = int(m.group(2))
                 tstamp = int(m.group(3)) / 1e6
                 row, col = divmod(idx, COLS)
-                with self._lock:
-                    self._note_time(tstamp)
-                    self.voltage_matrix[row, col] = adc * (VREF / 4095.0)
+                self._note_time(tstamp)
+                self.voltage_matrix[row, col] = adc * (VREF / 4095.0)
 
         elif line.startswith("RA"):
             m = RE_IDX_T.search(line)
@@ -255,9 +298,8 @@ class TouchSensorSource:
                 if not 0 <= idx < NUM_TAXELS:
                     return
                 tstamp = int(m.group(2)) / 1e6
-                with self._lock:
-                    self._note_time(tstamp)
-                    self.spike_times_RA[idx].append(tstamp)
+                self._note_time(tstamp)
+                self.spike_times_RA[idx].append(tstamp)
 
         elif line.startswith("SA"):
             m = RE_IDX_T.search(line)
@@ -266,17 +308,15 @@ class TouchSensorSource:
                 if not 0 <= idx < NUM_TAXELS:
                     return
                 tstamp = int(m.group(2)) / 1e6
-                with self._lock:
-                    self._note_time(tstamp)
-                    self.spike_times_SA[idx].append(tstamp)
+                self._note_time(tstamp)
+                self.spike_times_SA[idx].append(tstamp)
 
         elif line.startswith("POST"):
             m = RE_POST.search(line)
             if m:
                 tstamp = int(m.group(1)) / 1e6
-                with self._lock:
-                    self._note_time(tstamp)
-                    self.spike_times_POST.append(tstamp)
+                self._note_time(tstamp)
+                self.spike_times_POST.append(tstamp)
 
         elif line.startswith("TOTAL"):
             m = RE_TOTAL.search(line)
@@ -287,16 +327,10 @@ class TouchSensorSource:
                     return
                 if not np.isfinite(i_final):
                     return
-                with self._lock:
-                    self.I_final_data.append(i_final)
-                # Fora do lock: nem o callback (publish ROS) nem o envio UDP
-                # devem segurar o lock de dados.
-                self._broadcast(i_final)
-                if self._on_sample is not None:
-                    try:
-                        self._on_sample(i_final)
-                    except Exception:
-                        pass
+                # Ancora no relógio mais recente do STM32 (TOTAL não traz t)
+                # para a série deslizar junto com os rasters.
+                self.I_final_data.append((self.current_time, i_final))
+                pending.append(i_final)
 
     def _broadcast(self, i_final: float) -> None:
         """Reemite o I_final por UDP a cada TOTAL (como o plotter original).
@@ -317,6 +351,13 @@ class TouchSensorSource:
             pass
 
     # ──────────────────────────────────────────────────────────────────
+    def latest_voltages(self) -> np.ndarray:
+        """Cópia barata só da matriz de tensões (ROWSxCOLS), sob lock. Para o
+        gravador a 1 kHz, que não precisa do snapshot completo (spikes etc.) e
+        não pode pagar a cópia O(N) das listas a cada amostra."""
+        with self._lock:
+            return self.voltage_matrix.copy()
+
     def snapshot(self) -> dict:
         """Retrato consistente do estado para renderização. As listas já vêm
         podadas à janela pela thread serial (_note_time); aqui só COPIAMOS sob
@@ -324,14 +365,25 @@ class TouchSensorSource:
         travava o desenho sob carga). O desenho em si roda fora do lock."""
         with self._lock:
             t_now = self.current_time
+            # Relógio de DISPLAY contínuo: parte do último dado (t_ref_stm) e
+            # avança com o relógio real do PC, então a janela desliza suave a
+            # cada frame mesmo sem dado novo. Limitado a current_time + W: depois
+            # disso a janela já esvaziou (tudo correu para fora pela esquerda).
+            if self._t_ref_pc is None:
+                t_disp = self.current_time
+            else:
+                t_disp = self._t_ref_stm + (time.monotonic() - self._t_ref_pc)
+                if t_disp > self.current_time + RASTER_WINDOW:
+                    t_disp = self.current_time + RASTER_WINDOW
             volt = self.voltage_matrix.copy()
             ra = [list(lst) for lst in self.spike_times_RA]
             sa = [list(lst) for lst in self.spike_times_SA]
             post = list(self.spike_times_POST)
-            i_final = list(self.I_final_data)
-            latest_v = float(self.I_final_data[-1]) if self.I_final_data else 0.0
+            i_final = list(self.I_final_data)  # lista de (t, valor)
+            latest_v = float(self.I_final_data[-1][1]) if self.I_final_data else 0.0
         return {
             "t_now": t_now,
+            "t_disp": t_disp,
             "volt": volt,
             "ra": ra,
             "sa": sa,
@@ -341,11 +393,33 @@ class TouchSensorSource:
         }
 
 
+# Teto de pontos da LINHA do I_final por frame. Acima disso, _decimate_xy pega
+# 1 a cada k pontos: o desenho fica O(MAX_RENDER_PTS) em vez de O(N), mantendo
+# o FPS estável se a taxa de TOTAL for muito alta. (Os scatters não decimam.)
+MAX_RENDER_PTS = 1500
+
+
 def _offsets(xs, ys):
     """Empacota pares (x, y) no formato (N, 2) exigido por set_offsets."""
     if len(xs) == 0:
         return np.empty((0, 2))
     return np.column_stack((xs, ys))
+
+
+def _decimate_xy(xs, ys):
+    """Subamostra duas sequências paralelas (x, y) para no máx. MAX_RENDER_PTS
+    pontos. Usado SÓ na LINHA do I_final: numa curva conectada a subamostragem
+    é imperceptível, então serve de teto de custo se a taxa de TOTAL for alta.
+    (Nos SCATTERS não decimamos: ali a seleção mudaria visivelmente a cada frame
+    — pisca-pisca — e o blit já desenha milhares de pontos sem problema.)
+    Ancora no fim (`(n-1) % step`) só para garantir que o ponto mais recente —
+    a ponta direita da curva — esteja sempre presente."""
+    n = len(xs)
+    if n <= MAX_RENDER_PTS:
+        return xs, ys
+    step = n // MAX_RENDER_PTS + 1
+    s = (n - 1) % step
+    return xs[s::step], ys[s::step]
 
 
 class TouchFigure:
@@ -365,6 +439,16 @@ class TouchFigure:
         self.ax_heat, self.ax_raster = ax1, ax2
         self.ax_ifinal, self.ax_post = ax5, ax6
 
+        # Eixo de tempo RELATIVO e ESTÁTICO (janela deslizante): os dados são
+        # plotados como t - x_lo sobre eixo fixo 0..W, então as três séries
+        # deslizam continuamente para a esquerda sob blit=True puro. Os RÓTULOS
+        # NÃO mudam por frame de propósito — tentar mostrar tempo absoluto exigia
+        # forçar redraw completo da figura (~2x/s), que reintroduzia travamento.
+        # Aqui o tick "W" = agora, "0" = W segundos atrás. Ticks espaçados
+        # ~W/5 para não lotar o eixo numa janela longa (20 s → 0,4,8,12,16,20).
+        _tick_step = max(1, int(round(RASTER_WINDOW / 5)))
+        self._time_ticks = list(range(0, int(RASTER_WINDOW) + 1, _tick_step))
+
         # ── Heatmap ───────────────────────────────────────────────────
         # interpolation="bicubic": mesmo visual suave do plotter original. É
         # mais caro que "nearest" (reinterpola o painel), mas sob blit=True só o
@@ -383,28 +467,32 @@ class TouchFigure:
                      fontsize=8, color="white")
             for c in range(COLS)] for r in range(ROWS)]
 
-        # ── Raster RA / SA (tempo relativo, eixo fixo) ────────────────
+        _xlabel = f"tempo (s) — janela de {RASTER_WINDOW:.0f} s (dir. = agora)"
+
+        # ── Raster RA / SA (janela deslizante, eixo estático) ──────────
         ax2.set_title("Raster RA / SA")
         ax2.set_xlim(0, RASTER_WINDOW)
         ax2.set_ylim(-1, NUM_TAXELS * 2)
-        ax2.set_xlabel("tempo (s, janela deslizante)")
+        ax2.set_xlabel(_xlabel)
+        ax2.set_xticks(self._time_ticks)
         self.scatter_RA = ax2.scatter([], [], s=10, color="red", label="RA")
         self.scatter_SA = ax2.scatter([], [], s=10, color="blue", label="SA")
         ax2.legend(loc="upper right", fontsize=8)
 
-        # ── I_final ───────────────────────────────────────────────────
-        self.x_fixed = np.arange(WINDOW_SIZE)
-        (self.line_I_final,) = ax5.plot(
-            self.x_fixed, [0.0] * WINDOW_SIZE, lw=2)
+        # ── I_final (série temporal deslizante, mesma janela do raster) ──
+        (self.line_I_final,) = ax5.plot([], [], lw=2)
         ax5.set_title("I_final")
-        ax5.set_xlim(0, WINDOW_SIZE)
+        ax5.set_xlim(0, RASTER_WINDOW)
         ax5.set_ylim(-1000, 1000)
+        ax5.set_xlabel(_xlabel)
+        ax5.set_xticks(self._time_ticks)
 
-        # ── Neurônio pós ──────────────────────────────────────────────
+        # ── Neurônio pós (janela deslizante, eixo estático) ────────────
         ax6.set_title("Neurônio Pós")
         ax6.set_xlim(0, RASTER_WINDOW)
         ax6.set_ylim(-1, 1)
-        ax6.set_xlabel("tempo (s, janela deslizante)")
+        ax6.set_xlabel(_xlabel)
+        ax6.set_xticks(self._time_ticks)
         self.scatter_POST = ax6.scatter([], [], s=20, color="black")
 
         try:
@@ -430,21 +518,20 @@ class TouchFigure:
         self.scatter_RA.set_offsets(np.empty((0, 2)))
         self.scatter_SA.set_offsets(np.empty((0, 2)))
         self.scatter_POST.set_offsets(np.empty((0, 2)))
-        self.line_I_final.set_data(self.x_fixed, [0.0] * WINDOW_SIZE)
+        self.line_I_final.set_data([], [])
         return self.blit_artists
 
     # ──────────────────────────────────────────────────────────────────
     def update(self, *_frame) -> list:
         snap = self.source.snapshot()
-        t_now = snap["t_now"]
-        # Janela deslizante de RASTER_WINDOW s: o tempo é mapeado para [0, W]
-        # subtraindo x_lo (= borda esquerda). Mesma MOVIMENTAÇÃO do plotter
-        # original (os spikes correm para a esquerda e somem em 0), mas com
-        # EIXO FIXO — isso é o que permite blit=True (o fundo/ticks não mudam),
-        # mantendo a animação fluida e em tempo real. Mexer no xlim por frame
-        # (eixo absoluto) obrigaria blit=False e foi o que deixou os gráficos
-        # travados/estranhos.
-        x_lo = max(0.0, t_now - RASTER_WINDOW)
+        # t_disp = relógio de display CONTÍNUO (avança a cada frame, ver
+        # snapshot). x_lo = borda esquerda da janela. As três séries plotam em
+        # tempo RELATIVO (t - x_lo) sobre EIXO FIXO 0..W — blit puro (xlim/ticks
+        # nunca mudam), tudo fluido no Tk SEM redraw completo. Como x_lo avança
+        # suave a cada frame, os pontos DESLIZAM continuamente para a esquerda e
+        # saem da tela, em vez de saltar quando chega uma rajada de dados.
+        t_disp = snap["t_disp"]
+        x_lo = max(0.0, t_disp - RASTER_WINDOW)
 
         # Heatmap (rot90 ×2 = mesma orientação do plotter original).
         volt = snap["volt"]
@@ -453,7 +540,7 @@ class TouchFigure:
             for c in range(COLS):
                 self.texts_volt[r][c].set_text(f"{volt[r, c]:.2f}")
 
-        # Raster RA / SA.
+        # Raster RA / SA (sem decimação — ver _decimate_xy; o blit dá conta).
         x_ra, y_ra = [], []
         ra = snap["ra"]
         for n in range(NUM_TAXELS):
@@ -469,11 +556,18 @@ class TouchFigure:
         self.scatter_RA.set_offsets(_offsets(x_ra, y_ra))
         self.scatter_SA.set_offsets(_offsets(x_sa, y_sa))
 
-        # Neurônio pós.
+        # Neurônio pós — tempo RELATIVO (t - x_lo) sobre eixo fixo, igual ao
+        # raster, para o blit funcionar.
         x_post = [t - x_lo for t in snap["post"]]
         self.scatter_POST.set_offsets(_offsets(x_post, [0] * len(x_post)))
 
-        # I_final.
-        self.line_I_final.set_data(self.x_fixed, snap["i_final"])
+        # I_final — série temporal deslizante (mesma janela/eixo do raster):
+        # plota cada (t, valor) em tempo relativo t - x_lo, então a curva corre
+        # para a esquerda continuamente, em vez de só empilhar amostras. Também
+        # decimado para limitar o custo da linha sob alta taxa de TOTAL.
+        ifd = snap["i_final"]
+        xs_i = [t - x_lo for (t, _v) in ifd]
+        ys_i = [v for (_t, v) in ifd]
+        self.line_I_final.set_data(*_decimate_xy(xs_i, ys_i))
 
         return self.blit_artists

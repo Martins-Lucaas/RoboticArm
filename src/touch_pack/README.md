@@ -4,6 +4,12 @@ Plataforma de **palpação tátil** com o braço CR10 e a ferramenta de contato 
 
 Inclui ainda um **sensor de toque neuromórfico (STM32, matriz 4×4 + modelo de Izhikevich)**, gravação **sincronizada de força + toque**, e dois **modos de operação**: **Toque** (encosta com força controlada e volta) e **Deslizamento** (ciclo completo com arrasto lateral).
 
+<p align="center">
+  <img src="../../images/touch_pack_gazebo_tactile_cell.png" width="48%" alt="Célula de palpação tátil no Gazebo — CR10 com ponta TouchTool sobre a mesa de palpação"/>
+  <img src="../../images/touch_pack_gui_palpation_slide.png" width="48%" alt="GUI de Palpação — aba Palpação no modo Deslizamento com painel da célula de carga ao vivo"/>
+</p>
+<p align="center"><em>Esquerda: cena de palpação no Gazebo Classic. Direita: GUI <code>palpation_gui</code> — aba <strong>Palpação</strong> (modo Deslizamento) com leitura ao vivo da célula de carga e do sensor de toque.</em></p>
+
 ---
 
 ## Modos de palpação
@@ -104,6 +110,11 @@ Notebook com 5 abas: **Palpação · Controle Manual · Célula de Carga · Pose
 - Presets Abrir / Apontar / Fechar · SpeedFactor (%) · duração de trajetória.
 - Botões Home e salvar Home customizada · mini-painel da célula de carga.
 
+<p align="center">
+  <img src="../../images/touch_pack_gui_manual_gazebo.png" width="92%" alt="Aba Controle Manual lado a lado com o Gazebo — sliders das juntas do CR10 e leitura da célula de carga"/>
+</p>
+<p align="center"><em>Aba <strong>Controle Manual</strong> ao lado do Gazebo: jog das 6 juntas do CR10 com a célula de carga lida ao vivo (jog em <code>MovJ</code> quando em MIRROR).</em></p>
+
 ### Aba Célula de Carga
 - **Leitura**: força/tensão ao vivo + tara.
 - **Calibração**: wizard que coleta pares (massa kg, tensão V) e faz regressão linear (slope/intercept).
@@ -118,6 +129,11 @@ Notebook com 5 abas: **Palpação · Controle Manual · Célula de Carga · Pose
 Dashboard do **sensor de toque (STM32, Izhikevich)** com 4 gráficos embutidos via matplotlib:
 **Heatmap de tensão (4×4)** · **Raster RA/SA** (janela deslizante de 5 s) · **I_final** · **Neurônio pós**, ao lado da leitura ao vivo da célula de carga.
 Renderização com **blit** (`FuncAnimation` @ 20 Hz) — desenha só os artistas que mudam, e pausa quando a aba não está visível (sem travamento, raster desliza suave).
+
+<p align="center">
+  <img src="../../images/touch_pack_gui_sensors_izhikevich.png" width="92%" alt="Aba Sensores — heatmap 4×4, raster RA/SA, I_final e neurônio pós do modelo de Izhikevich"/>
+</p>
+<p align="center"><em>Aba <strong>Sensores</strong>: heatmap de tensão 4×4, raster RA/SA, corrente <code>I_final</code> e resposta do neurônio pós-sináptico (Izhikevich), lidos do STM32 por USB-CDC.</em></p>
 
 ### Header
 - IP da mão e do braço CR10 + Conectar/Desconectar · dropdown SIM_ONLY ↔ MIRROR · ECI ON/OFF · PWR ON/OFF · E-STOP.
