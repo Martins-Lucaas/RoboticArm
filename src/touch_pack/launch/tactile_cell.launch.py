@@ -10,10 +10,15 @@ Argumentos (todos opcionais):
     no_gui           true = não abrir palpation_gui (default false);
                        com control_mode:=mirror, sobe o mirror_node
                        standalone no lugar do espelhamento da GUI
+    sensor           4 | 5  (default 4) — grade do sensor de toque
+                       4 → sensor 4×4 (firmware com TOTAL/Ifinal)
+                       5 → sensor 5×5 (sem TOTAL; ativação média por frame)
 
 Exemplos:
     ros2 launch touch_pack tactile_cell.launch.py
     ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool
+    ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool sensor:='4'
+    ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool sensor:='5'
     ros2 launch touch_pack tactile_cell.launch.py end_effector:=touch_tool no_gui:=true
 """
 import os
@@ -528,6 +533,12 @@ def launch_setup(context, *args, **kwargs):
     robot_ip     = LaunchConfiguration('robot_ip').perform(context)
     no_gui_val   = LaunchConfiguration('no_gui').perform(context)
     no_gui       = no_gui_val.strip().lower() in ('true', '1', 'yes')
+    # Tipo do sensor de toque: '4' (4×4, com Ifinal/TOTAL) | '5' (5×5, sem TOTAL).
+    # Só afeta a grade/heatmap e o sinal de 1 kHz da GUI — a geometria do
+    # touch_tool no URDF é a mesma. Qualquer valor ≠ '5' cai no 4×4 (default).
+    sensor = LaunchConfiguration('sensor').perform(context).strip()
+    if sensor not in ('4', '5'):
+        sensor = '4'
 
     robot_mode = _CONTROL_MODE_MAP.get(control_mode, 'SIM_ONLY')
 
@@ -596,7 +607,9 @@ def launch_setup(context, *args, **kwargs):
                      'robot_ip':     robot_ip,
                      'robot_mode':   robot_mode,
                      # Gate do modo Palpação: só liberado com end_effector=touch_tool.
-                     'end_effector': end_effector}],
+                     'end_effector': end_effector,
+                     # Grade do sensor de toque (4×4 | 5×5).
+                     'sensor':       sensor}],
         condition=UnlessCondition(LaunchConfiguration('no_gui')))
 
     logger_node = Node(
@@ -674,6 +687,9 @@ def generate_launch_description():
             'robot_ip', default_value='192.168.5.2'),
         DeclareLaunchArgument(
             'no_gui', default_value='false'),
+        DeclareLaunchArgument(
+            'sensor', default_value='4',
+            description="Sensor de toque: '4' (4×4, com Ifinal) | '5' (5×5, sem TOTAL)"),
 
         OpaqueFunction(function=launch_setup),
     ])

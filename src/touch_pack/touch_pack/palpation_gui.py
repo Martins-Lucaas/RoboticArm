@@ -456,6 +456,18 @@ class PalpationGUI(Node):
         # Porta da serial do STM32: '' (default) → auto-detect (/dev/ttyACMx).
         self._touch_port = str(self.declare_parameter(
             'touch_serial_port', '').value).strip()
+        # ─── Tipo do sensor de toque (launch: sensor:='4' | '5') ──────────
+        # '4' → grade 4×4 com linha TOTAL/Ifinal (firmware Izhikevich clássico).
+        # '5' → grade 5×5 SEM TOTAL; o sinal de 1 kHz publicado em
+        # /touch_sensor/value é a ativação média por frame (ver touch_source).
+        # Qualquer outro valor cai no 4×4 (default seguro).
+        _sensor = str(self.declare_parameter('sensor', '4').value).strip()
+        if _sensor == '5':
+            self._touch_rows, self._touch_cols, self._touch_has_total = 5, 5, False
+        else:
+            self._touch_rows, self._touch_cols, self._touch_has_total = 4, 4, True
+        self._touch_taxels = self._touch_rows * self._touch_cols
+        self._sensor_kind = _sensor
         self._touch_source = None      # TouchSensorSource | None
         self._touch_figure = None      # TouchFigure | None
         self._touch_canvas = None      # FigureCanvasTkAgg | None
@@ -477,6 +489,15 @@ class PalpationGUI(Node):
         self._rec_path: str | None = None
         self._rec_count: int = 0
         self._rec_after: str | None = None
+        # Cabeçalho do CSV montado a partir da GRADE escolhida (4×4 ou 5×5).
+        # touch_t_stm_s = relógio do firmware (micros()/1e6 a 1 kHz): é ELE que
+        # data cada amostra de 1 ms, em vez do relógio do PC (t_unix). As colunas
+        # de tensão v{r}{c} cobrem todos os taxels da grade ativa.
+        self._rec_header = (
+            ['t_rel_s', 't_unix', 'touch_t_stm_s', 'force_net_n',
+             'load_cell_raw_n', 'load_cell_voltage_v', 'touch_i_final']
+            + [f'v{r}{c}' for r in range(self._touch_rows)
+               for c in range(self._touch_cols)])
         # palpation_logger spawnado pela GUI quando ela roda standalone
         # (fora do launch) — sem ele nenhum run é gravado em ~/touch_pack_runs.
         self._logger_proc: subprocess.Popen | None = None
@@ -518,7 +539,9 @@ class PalpationGUI(Node):
         if _TOUCH_PLOT_OK:
             self._touch_source = TouchSensorSource(
                 port=(self._touch_port or None),
-                on_sample=self._on_touch_sample)
+                on_sample=self._on_touch_sample,
+                rows=self._touch_rows, cols=self._touch_cols,
+                has_total=self._touch_has_total)
 
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
@@ -624,20 +647,19 @@ class PalpationGUI(Node):
                 self._touch_canvas.get_tk_widget().pack(
                     fill='both', expand=True)
                 self._touch_canvas.draw()
-                # Animação com blit=True: redesenha SÓ os artistas que mudam
-                # (heatmap, scatters, linha), não a figura inteira — é o que
-                # mantém tudo fluido embutido no Tk. Os dados correm em tempo
-                # relativo sobre eixo fixo (por isso o blit funciona); os RÓTULOS
-                # do eixo mostram tempo absoluto e são reavaliados por um redraw
-                # completo que a própria update() força ~2x/s (TouchFigure). Isso
-                # é barato e não atrapalha o blit (os números ficam fora da bbox
-                # blitada). interval=30 (~33 fps). Inicia pausada; o refresh a
-                # retoma só na aba Sensores visível.
+                # Animação no MESMO estilo do plotter standalone
+                # (touch_sensor4x4.py/5x5.py): blit=False → redraw completo a
+                # cada frame, o que permite o eixo de TEMPO ABSOLUTO do raster
+                # deslizar (xlim = agora-W .. agora). A poda dos buffers já roda
+                # na thread serial (TouchSensorSource._note_time), então o
+                # desenho é barato mesmo a 1 kHz. interval=50 (~20 fps), igual ao
+                # standalone. Inicia pausada; o refresh a retoma só na aba
+                # Sensores visível.
                 self._touch_anim = FuncAnimation(
                     self._touch_figure.fig,
                     self._touch_figure.update,
                     init_func=self._touch_figure.init_blit,
-                    interval=30, blit=True, cache_frame_data=False)
+                    interval=50, blit=False, cache_frame_data=False)
                 self._touch_anim_running = True
             except Exception as exc:
                 log.warning('[TOUCH] falha ao embutir figura: %s', exc)
@@ -800,10 +822,8 @@ class PalpationGUI(Node):
             cv.create_line(*coords, fill=PRIMARY, width=2)
 
     # ── Gravação do stream sincronizado força + toque (CSV) ───────────
-    _REC_HEADER = (['t_rel_s', 't_unix', 'force_net_n', 'load_cell_raw_n',
-                    'load_cell_voltage_v', 'touch_i_final']
-                   + [f'v{r}{c}' for r in range(TOUCH_ROWS)
-                      for c in range(TOUCH_COLS)])
+    # O cabeçalho (self._rec_header) é montado no __init__ a partir da grade
+    # do sensor (4×4 ou 5×5) — ver bloco de estado de gravação.
     # As LINHAS são gravadas pelo callback do toque (_on_touch_sample, ~1 kHz),
     # NÃO por um timer Tk: o after() do Tk não faz 1 kHz confiável e escrever na
     # thread de UI a 1 kHz a congelaria. Este período é só do refresh do RÓTULO
@@ -823,7 +843,7 @@ class PalpationGUI(Node):
             path = os.path.join(RUNS_DIR, f'{ts}__sensors.csv')
             fh = open(path, 'w', newline='')
             writer = csv.writer(fh)
-            writer.writerow(self._REC_HEADER)
+            writer.writerow(self._rec_header)
         except OSError as exc:
             self._set_rec_status(f'falha ao abrir CSV: {exc}', DANGER)
             return
@@ -850,11 +870,15 @@ class PalpationGUI(Node):
             return   # fast-path sem lock; reconferido sob o lock abaixo
         now = time.time()
         if self._touch_source is not None and self._touch_serial_ok:
-            volt = self._touch_source.latest_voltages()
+            # Tensões + relógio do STM32 sob o MESMO lock: o timestamp do
+            # firmware (1 kHz) é o que data a amostra na planilha.
+            volt, t_stm = self._touch_source.latest_voltages_and_time()
             volt_cols = [f'{volt[r, c]:.4f}'
-                         for r in range(TOUCH_ROWS) for c in range(TOUCH_COLS)]
+                         for r in range(self._touch_rows)
+                         for c in range(self._touch_cols)]
         else:
-            volt_cols = [''] * TOUCH_TAXELS
+            t_stm = 0.0
+            volt_cols = [''] * self._touch_taxels
         with self._lock:
             if self._rec_writer is None:
                 return   # _stop_recording correu entre o fast-path e aqui
@@ -868,6 +892,7 @@ class PalpationGUI(Node):
             try:
                 self._rec_writer.writerow([
                     f'{now - self._rec_t0:.4f}', f'{now:.4f}',
+                    f'{t_stm:.6f}',
                     f'{f_net:.4f}', f'{lc_bruto:.4f}', f'{lc_v:.5f}',
                     f'{float(i_final):.4f}', *volt_cols,
                 ])
