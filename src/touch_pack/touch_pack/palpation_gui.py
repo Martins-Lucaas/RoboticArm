@@ -83,6 +83,7 @@ from .constants import (
     FORCE_ABORT_LIMIT_N as _FORCE_ABORT_LIMIT_N,
     FORCE_SETPOINT_MAX_N,
     HOME_POSE_FILE, ROBOT_CONFIG_FILE, LC_CALIB_FILE, POSES_FILE,
+    LC_CALIB_REPO_FILE, lc_calib_read_path,
     PALPATION_PARAMS_FILE, RUNS_DIR,
     LC_FW_VOLTAGE_SCALE, LC_FW_VOLTAGE_OFFSET,
 )
@@ -383,6 +384,9 @@ class PalpationGUI(Node):
             JointState, '/joint_states', self._cb_joint_states, 5)
         self.create_subscription(
             Float32, '/load_cell/voltage', self._cb_lc_voltage, QOS_SENSOR)
+        # Tensão crua (sem filtro) — só para diagnóstico/teste no painel.
+        self.create_subscription(
+            Float32, '/load_cell/voltage_raw', self._cb_lc_voltage_raw, QOS_SENSOR)
         self.create_subscription(
             Float32, '/load_cell/force_net', self._cb_lc_force_net_gui, QOS_SENSOR)
         self.create_subscription(
@@ -410,6 +414,10 @@ class PalpationGUI(Node):
 
         # ─── Célula de carga (load cell UDP via force_receiver_node) ─
         self._lc_voltage: float          = 0.0
+        # Tensão crua (sem filtro pesado) só para mostrar no painel — não entra
+        # no cálculo de força/calibração, é apenas diagnóstico.
+        self._lc_voltage_raw: float      = 0.0
+        self._lc_voltage_raw_ts: float   = 0.0
         # ~2 s de histórico @ ~100 pacotes/s — base p/ tare estável e auto-zero.
         self._lc_voltage_buf: collections.deque = collections.deque(maxlen=200)
         self._lc_last_ts: float          = 0.0
@@ -2623,6 +2631,15 @@ class PalpationGUI(Node):
             row_v, text='—  V', font=FONT_MONO, bg=PANEL, fg=TEXT_DIM)
         self.lc_voltage_lbl.pack(side='right')
 
+        # Tensão CRUA (sem filtro) — diagnóstico: ver o ruído/comportamento real.
+        row_vr = tk.Frame(card, bg=PANEL)
+        row_vr.pack(fill='x', pady=(0, 2))
+        tk.Label(row_vr, text='Tensão Crua (sem filtro)', font=FONT_LBL,
+                 bg=PANEL, fg=TEXT_MUTED).pack(side='left')
+        self.lc_voltage_raw_lbl = tk.Label(
+            row_vr, text='—  V', font=FONT_MONO, bg=PANEL, fg=TEXT_DIM)
+        self.lc_voltage_raw_lbl.pack(side='right')
+
     def _build_lc_calibration_tab(self, root: tk.Frame):
         # ── Status da calibração vigente ─────────────────────────────
         status_card = self._card(root, 'Calibração Vigente')
@@ -2882,6 +2899,12 @@ class PalpationGUI(Node):
             except Exception:
                 pass
 
+    def _cb_lc_voltage_raw(self, msg: Float32) -> None:
+        """Recebe /load_cell/voltage_raw (tensão SEM filtro) — só p/ display."""
+        with self._lock:
+            self._lc_voltage_raw = float(msg.data)
+            self._lc_voltage_raw_ts = time.time()
+
     def _cb_lc_force_net_gui(self, msg: Float32) -> None:
         """Recebe /load_cell/force_net → atualiza display da aba Palpação."""
         with self._lock:
@@ -2903,9 +2926,11 @@ class PalpationGUI(Node):
     # ── Calibração — load / save ──────────────────────────────────────
     def _load_lc_calib(self) -> None:
         try:
-            if not os.path.exists(LC_CALIB_FILE):
+            path = lc_calib_read_path()
+            if not os.path.exists(path):
                 return
-            with open(LC_CALIB_FILE) as fh:
+            from_repo = (path == LC_CALIB_REPO_FILE)
+            with open(path) as fh:
                 data = json.load(fh)
             slope     = float(data['slope'])
             intercept = float(data['intercept'])
@@ -2937,7 +2962,8 @@ class PalpationGUI(Node):
             self._lc_zero_voltage  = zero_v
             self.get_logger().info(
                 f'Calibração LC: slope={slope:.4f} intercept={intercept:.6f} '
-                f'zero={zero_v}  ({n_pts} pts)')
+                f'zero={zero_v}  ({n_pts} pts)'
+                + ('  [repo compartilhado]' if from_repo else ''))
             if mismatch:
                 old_scale  = float(scale_raw)  if scale_raw  is not None else float('nan')
                 old_offset = float(offset_raw) if offset_raw is not None else float('nan')
@@ -2974,6 +3000,21 @@ class PalpationGUI(Node):
             self.get_logger().info(f'Calibração LC salva em {LC_CALIB_FILE}')
         except OSError as exc:
             self._set_status(f'Falha ao salvar calibração: {exc}', DANGER)
+            return
+        # Espelha no repo (versionado) p/ compartilhar via git: a nova calibração
+        # vira um diff pronto p/ `git commit`. Best-effort — ignora se o pacote
+        # estiver fora da árvore do repo ou o destino não for gravável.
+        if LC_CALIB_REPO_FILE:
+            try:
+                os.makedirs(os.path.dirname(LC_CALIB_REPO_FILE), exist_ok=True)
+                with open(LC_CALIB_REPO_FILE, 'w') as fh:
+                    json.dump(data, fh, indent=2)
+                self.get_logger().info(
+                    f'Calibração LC também versionada em {LC_CALIB_REPO_FILE} '
+                    '(faça commit p/ compartilhar)')
+            except OSError as exc:
+                self.get_logger().warn(
+                    f'Não consegui versionar a calibração no repo: {exc}')
 
     # ── Calibração — wizard ───────────────────────────────────────────
     def _lc_capture_zero(self) -> None:
@@ -3432,6 +3473,8 @@ class PalpationGUI(Node):
     def _refresh_lc_panel(self):
         with self._lock:
             voltage    = self._lc_voltage
+            voltage_raw    = self._lc_voltage_raw
+            voltage_raw_ts = self._lc_voltage_raw_ts
             calibrated = self._lc_calibrated
             slope      = self._lc_calib_slope
             intercept  = self._lc_calib_intercept
@@ -3475,6 +3518,12 @@ class PalpationGUI(Node):
         volt_color = TEXT if has_data else TEXT_DIM
         self.lc_voltage_lbl.config(text=volt_txt, fg=volt_color)
         self.lc_volt_live_lbl.config(text=volt_txt, fg=volt_color)
+
+        # Tensão crua (sem filtro) — diagnóstico independente do filtrado.
+        has_raw      = (time.time() - voltage_raw_ts) < 1.0
+        volt_raw_txt = f'{voltage_raw:.6f}  V' if has_raw else '—  V'
+        self.lc_voltage_raw_lbl.config(
+            text=volt_raw_txt, fg=TEXT if has_raw else TEXT_DIM)
 
         # Força total calibrada (inclui preload estático).
         # Sinal invertido em relação à calibração (feita em tração):

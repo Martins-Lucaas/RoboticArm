@@ -3,12 +3,16 @@ force_receiver_node.py — Recebe pacotes UDP da ESP32 (célula de carga)
 e publica os dados como tópicos ROS2.
 
 Tópicos publicados:
-  /load_cell/voltage    std_msgs/Float32   tensão do sensor (V)
-  /load_cell/force      std_msgs/Float32   força calibrada (N, compressão = positivo)
-  /load_cell/calibrated std_msgs/Bool      True quando calibração existe
+  /load_cell/voltage     std_msgs/Float32   tensão do sensor FILTRADA (V)
+  /load_cell/voltage_raw std_msgs/Float32   tensão CRUA da ESP, sem o filtro
+                                            pesado (diagnóstico/teste)
+  /load_cell/force       std_msgs/Float32   força calibrada (N, compressão = positivo)
+  /load_cell/calibrated  std_msgs/Bool      True quando calibração existe
 
-A calibração é lida de ~/.config/touch_pack/load_cell_calib.json
-e recarregada automaticamente a cada 10 s (após a GUI salvar nova calib).
+A calibração é lida de ~/.config/touch_pack/load_cell_calib.json (local desta
+máquina); se não existir, cai na cópia VERSIONADA no repo
+(sensors/load_cell_calib.json), compartilhada via git. Recarregada
+automaticamente a cada 10 s (após a GUI salvar nova calib).
 
 A ESP32 amostra a 1 kHz e envia EM LOTE (LOAD_CELL_BATCH_N amostras por
 datagrama, ~100 pacotes/s). Cada amostra (LOAD_CELL_SAMPLE_FMT '<IIf', 12 B):
@@ -34,7 +38,7 @@ from std_msgs.msg import Float32, Bool
 
 from .constants import (
     LOAD_CELL_UDP_PORT as UDP_PORT,
-    LC_CALIB_FILE as CALIB_FILE,
+    lc_calib_read_path,
     LOAD_CELL_SAMPLE_FMT as SAMPLE_FMT,
     LOAD_CELL_BATCH_N as BATCH_N,
     LOAD_CELL_ESP_IP as ESP_IP,
@@ -55,8 +59,16 @@ SAMPLE_SZ = struct.calcsize(SAMPLE_FMT)   # 12 bytes: uint32 seq + uint32 t_us +
 MEDIAN_N = 5                  # rejeita glitches isolados de 1–2 amostras (1–2 ms)
 ONE_EURO_FREQ      = 1000.0   # Hz — taxa de amostragem efetiva (uma por elemento do lote)
 ONE_EURO_MINCUTOFF = 1.0      # Hz — cutoff em repouso (↓ = zero mais firme, +lag parado)
-ONE_EURO_BETA      = 0.05     # responsividade ao movimento (↑ = menos lag, +ruído)
-ONE_EURO_DCUTOFF   = 1.0      # Hz — cutoff do estimador de derivada
+# BETA antigo (0.05) era pequeno demais p/ a escala do sinal (V/s): na descida
+# o termo beta·|velocidade| mal saía de zero, o cutoff ficava preso em ~1 Hz e o
+# degrau de soltura levava ~0,5 s p/ assentar (confirmado: a tensão CRUA caía na
+# hora, só a filtrada arrastava). Subido p/ destravar a descida. Em repouso a
+# velocidade é ~0, então o beta nem entra — o zero continua firme.
+ONE_EURO_BETA      = 7.0      # responsividade ao movimento (↑ = menos lag, +ruído)
+# DCUTOFF baixo (1 Hz) atrasava o filtro a PERCEBER que o sinal começou a se
+# mover (a derivada era passada por um passa-baixa lento). Subido p/ o cutoff
+# reagir já no início do degrau.
+ONE_EURO_DCUTOFF   = 5.0      # Hz — cutoff do estimador de derivada
 
 
 class _LoadCellFilter:
@@ -118,8 +130,10 @@ class ForceReceiverNode(Node):
     def __init__(self):
         super().__init__('force_receiver')
 
-        self._voltage_pub = self.create_publisher(Float32, '/load_cell/voltage',    QOS_SENSOR)
-        self._force_pub   = self.create_publisher(Float32, '/load_cell/force',      QOS_SENSOR)
+        self._voltage_pub     = self.create_publisher(Float32, '/load_cell/voltage',     QOS_SENSOR)
+        # Tensão CRUA (sem o filtro pesado) — só para inspeção/teste na GUI.
+        self._voltage_raw_pub = self.create_publisher(Float32, '/load_cell/voltage_raw', QOS_SENSOR)
+        self._force_pub       = self.create_publisher(Float32, '/load_cell/force',       QOS_SENSOR)
         self._calib_pub   = self.create_publisher(Bool,    '/load_cell/calibrated', 10)
 
         self._slope:      float = 0.4490
@@ -164,7 +178,9 @@ class ForceReceiverNode(Node):
     # ──────────────────────────────────────────────────────────────────
     def _load_calib(self) -> None:
         try:
-            with open(CALIB_FILE) as f:
+            # Local (~/.config) tem precedência; senão cai na versionada no repo
+            # (compartilhada via git) — a calibração pertence ao sensor, não ao PC.
+            with open(lc_calib_read_path()) as f:
                 data = json.load(f)
             sl = float(data['slope'])
             ic = float(data['intercept'])
@@ -242,6 +258,11 @@ class ForceReceiverNode(Node):
                 off = k * SAMPLE_SZ
                 (seq, _t_us, v_raw) = struct.unpack_from(SAMPLE_FMT, raw, off)
                 self._track_seq(seq)
+
+                # Tensão crua, exatamente como veio da ESP (só oversample leve),
+                # publicada antes do filtro pesado para inspeção na GUI.
+                vr_msg = Float32(); vr_msg.data = float(v_raw)
+                self._voltage_raw_pub.publish(vr_msg)
 
                 # Filtro pesado no PC (a ESP só mandou o oversample leve).
                 v_sensor = self._filter.update(float(v_raw))

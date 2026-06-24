@@ -115,21 +115,54 @@ PALPATION_PARAMS_FILE = os.path.join(CONFIG_DIR, 'palpation_params.json')
 # arquivo até achar um diretório que contenha `sensors/` — funciona tanto
 # rodando do código-fonte (src/...) quanto do espaço instalado (install/...),
 # ambos sob a raiz do repositório. Override explícito: TOUCH_PACK_DATA_DIR.
-def _resolve_runs_dir() -> str:
-    env = os.environ.get('TOUCH_PACK_DATA_DIR')
-    if env:
-        return os.path.abspath(os.path.expanduser(env))
+def _resolve_repo_root() -> str | None:
+    """Sobe a partir deste arquivo até achar um diretório que contenha
+    `sensors/` — funciona rodando do código-fonte (src/...) ou do espaço
+    instalado (install/...), ambos sob a raiz do repositório. None se o pacote
+    estiver instalado fora da árvore do repo."""
     d = os.path.dirname(os.path.abspath(__file__))
     for _ in range(10):
         if os.path.isdir(os.path.join(d, 'sensors')):
-            return os.path.join(d, 'sensors', 'Data')
+            return d
         parent = os.path.dirname(d)
         if parent == d:        # chegou na raiz do filesystem
             break
         d = parent
+    return None
+
+
+_REPO_ROOT = _resolve_repo_root()
+
+
+def _resolve_runs_dir() -> str:
+    env = os.environ.get('TOUCH_PACK_DATA_DIR')
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    if _REPO_ROOT:
+        return os.path.join(_REPO_ROOT, 'sensors', 'Data')
     # Fallback: repo não encontrado (pacote instalado fora da árvore) —
     # mantém o comportamento antigo para não perder dados.
     return os.path.expanduser('~/touch_pack_runs')
 
 
 RUNS_DIR = _resolve_runs_dir()
+
+# ── Calibração da célula COMPARTILHADA via git ───────────────────────────────
+# A calibração pertence ao SENSOR (célula+amp+firmware), não ao PC. Para que
+# toda máquina que clonar o repo já venha calibrada, guardamos uma cópia
+# VERSIONADA aqui no repo. Precedência de LEITURA: a calibração local em
+# ~/.config (recalibrada NESTA máquina) ganha; se não houver, cai nesta cópia do
+# repo. None se o pacote estiver instalado fora da árvore do repo.
+LC_CALIB_REPO_FILE = (os.path.join(_REPO_ROOT, 'sensors', 'load_cell_calib.json')
+                      if _REPO_ROOT else None)
+
+
+def lc_calib_read_path() -> str:
+    """Caminho de onde LER a calibração: prefere a local (~/.config); se não
+    existir, cai na versionada no repo (compartilhada via git). Gravar sempre vai
+    para LC_CALIB_FILE (local) — e é espelhado no repo para virar diff de commit."""
+    if os.path.exists(LC_CALIB_FILE):
+        return LC_CALIB_FILE
+    if LC_CALIB_REPO_FILE and os.path.exists(LC_CALIB_REPO_FILE):
+        return LC_CALIB_REPO_FILE
+    return LC_CALIB_FILE   # nenhum existe: o loader trata a ausência
