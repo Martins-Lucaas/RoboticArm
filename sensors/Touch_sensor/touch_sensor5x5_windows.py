@@ -17,11 +17,10 @@ import struct
 # CONFIG
 # =========================================================
 
-# Porta default por plataforma: no Windows o STM32 aparece como COMx;
-# no Linux como /dev/ttyACMx ou /dev/ttyUSBx. Quando None, é detectada
-# automaticamente (ver detect_serial_port). Como o número da COM no Windows
-# varia, o default lá é None (autodetecção); no Linux mantém /dev/ttyACM1.
-DEFAULT_PORT = None if sys.platform.startswith("win") else "/dev/ttyACM1"
+# Porta serial default do STM32 no Windows. Como o número da COM varia conforme
+# a porta USB / o PC, o default é None = autodetecção (ver detect_serial_port).
+# Para fixar, troque por ex. "COM5", ou passe --port COM5 na linha de comando.
+DEFAULT_PORT = None
 BAUD = 115200
 
 ROWS = 5
@@ -39,7 +38,7 @@ WINDOW_SIZE = 50
 # Destino UDP configurável por CLI — o default é o broadcast da rede do
 # laboratório; em outra rede rode com --udp-ip <broadcast da sua rede>.
 parser = argparse.ArgumentParser(
-    description="Visualizador STM32 + retransmissor UDP do touch sensor 5x5"
+    description="Visualizador STM32 + retransmissor UDP do touch sensor 5x5 (Windows)"
 )
 
 parser.add_argument(
@@ -58,8 +57,8 @@ parser.add_argument(
 parser.add_argument(
     "--port",
     default=DEFAULT_PORT,
-    help="porta serial do STM32 (ex.: COM7 ou /dev/ttyACM0). "
-         "Se omitida, é detectada automaticamente (Windows e Linux)."
+    help="porta serial do STM32 (ex.: COM5). "
+         "Se omitida, é detectada automaticamente."
 )
 
 parser.add_argument(
@@ -93,13 +92,12 @@ udp_seq = 0
 # =========================================================
 
 def detect_serial_port():
-    # No Windows o STM32 vira COMx; no Linux, /dev/ttyACMx ou /dev/ttyUSBx.
-    if sys.platform.startswith("win"):
-        candidates = [p.device for p in list_ports.comports()
-                      if p.device.upper().startswith("COM")]
-    else:
-        candidates = [p.device for p in list_ports.comports()
-                      if "ACM" in p.device or "USB" in p.device]
+    # No Windows o STM32 vira COMx (COM3, COM5, ...). Pega o primeiro COM
+    # disponível; se houver mais de um, prefira passar --port COMx.
+    candidates = [
+        p.device for p in list_ports.comports()
+        if p.device.upper().startswith("COM")
+    ]
     return candidates[0] if candidates else None
 
 
@@ -108,9 +106,11 @@ PORT = cli_args.port or detect_serial_port()
 if PORT is None:
     disponiveis = ", ".join(p.device for p in list_ports.comports()) or "nenhuma"
     sys.exit(
-        "Nenhuma porta serial USB/ACM encontrada.\n"
+        "Nenhuma porta serial COM encontrada.\n"
         f"Portas disponiveis: {disponiveis}\n"
-        "Conecte o STM32 ou informe a porta com --port (ex.: --port /dev/ttyACM0)."
+        "Conecte o STM32 ou informe a porta com --port (ex.: --port COM5).\n"
+        "Veja a COM no Gerenciador de Dispositivos -> Portas (COM e LPT) "
+        "ou com 'py -m serial.tools.list_ports -v'."
     )
 
 try:
@@ -122,8 +122,8 @@ try:
 except serial.SerialException as e:
     sys.exit(
         f"Nao foi possivel abrir a porta serial '{PORT}': {e}\n"
-        "No Linux verifique se voce tem permissao (ex.: "
-        "'sudo usermod -aG dialout $USER' e relogar)."
+        "No Windows verifique se a porta nao esta em uso por outro programa "
+        "(feche Arduino IDE / PuTTY) e se a COM esta correta."
     )
 
 print(f"Serial conectada em {PORT} @ {BAUD} baud")

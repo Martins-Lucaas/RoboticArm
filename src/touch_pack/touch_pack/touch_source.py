@@ -119,6 +119,16 @@ class TouchSensorSource:
         self._frame_port = int(frame_port)
         self._frame_sock: Optional[socket.socket] = None
         self._net_sock: Optional[socket.socket] = None
+        # Escuta do ESCALAR (:8081) no modo rede. Quando ESTE PC não tem a serial
+        # mas um plotter standalone (ex.: touch_sensor5x5.py num PC Windows) só
+        # transmite o escalar '<If' em :8081 — SEM o relay de frame em :8082 —, é
+        # por aqui que a GUI recebe o sinal de toque. None fora do modo rede.
+        self._scalar_sock: Optional[socket.socket] = None
+        self._scalar_thread: Optional[threading.Thread] = None
+        # Instante (monotônico) do último FRAME recebido em :8082. Serve para NÃO
+        # duplicar o escalar: se o relay de frame está fresco, o :8082 já entrega
+        # o I_final reconstruído e ignoramos o :8081 (evita publicar em dobro).
+        self._last_frame_rx = 0.0
 
         # ── Grade do sensor (4×4 ou 5×5) ──────────────────────────────────
         # Cada instância carrega a sua grade; TODO o estado (matriz de tensões,
@@ -256,6 +266,9 @@ class TouchSensorSource:
         self._thread = threading.Thread(
             target=self._net_worker, daemon=True, name="touch-net")
         self._thread.start()
+        # Escuta best-effort do escalar em :8081 — cobre o plotter standalone que
+        # só transmite o escalar (sem relay de frame em :8082).
+        self._start_scalar_listener()
         return True
 
     def is_fresh(self, max_age: float = 1.0) -> bool:
@@ -268,13 +281,16 @@ class TouchSensorSource:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=1.0)
+        if self._scalar_thread is not None:
+            self._scalar_thread.join(timeout=1.5)
+            self._scalar_thread = None
         if self._ser is not None:
             try:
                 self._ser.close()
             except Exception:
                 pass
             self._ser = None
-        for attr in ('_udp_sock', '_frame_sock', '_net_sock'):
+        for attr in ('_udp_sock', '_frame_sock', '_net_sock', '_scalar_sock'):
             sk = getattr(self, attr)
             if sk is not None:
                 try:
@@ -357,12 +373,76 @@ class TouchSensorSource:
             if not raw:
                 continue
             _complete, pending = self._ingest(raw.decode(errors="ignore"))
+            if _complete:
+                # Frame de :8082 chegou → marca fresco para o listener do escalar
+                # (:8081) se calar e não duplicar o I_final.
+                self._last_frame_rx = time.monotonic()
             for i_final in pending:
                 if self._on_sample is not None:
                     try:
                         self._on_sample(i_final)
                     except Exception:
                         pass
+
+    def _start_scalar_listener(self) -> None:
+        """Abre (best-effort) o socket do escalar em :8081 e dispara o worker.
+
+        Só faz sentido no modo rede: quando o PC NÃO tem a serial, um plotter
+        standalone (ex.: touch_sensor5x5.py) pode estar transmitindo apenas o
+        escalar '<If' em :8081, sem o relay de frame em :8082. Falha de bind NÃO
+        derruba o modo rede — apenas desliga esta fonte extra."""
+        port = self._udp_addr[1]
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(1.0)
+            sock.bind(('', port))
+        except OSError:
+            self._scalar_sock = None
+            return
+        self._scalar_sock = sock
+        self._scalar_thread = threading.Thread(
+            target=self._net_scalar_worker, daemon=True, name="touch-net-scalar")
+        self._scalar_thread.start()
+
+    def _net_scalar_worker(self) -> None:
+        """Modo rede: recebe o escalar '<If' em :8081 e o entrega via on_sample.
+
+        Caminho usado quando um plotter standalone transmite SÓ o escalar (sem o
+        relay de frame em :8082). Quando o relay de frame ESTÁ fresco, o :8082 já
+        reconstrói e entrega o I_final — então ignoramos o :8081 para não publicar
+        em dobro."""
+        sock = self._scalar_sock
+        if sock is None:
+            return
+        sz = struct.calcsize(TOUCH_PAYLOAD_FMT)
+        while not self._stop.is_set():
+            try:
+                raw, _addr = sock.recvfrom(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if len(raw) < sz:
+                continue
+            # Relay de frame chegando há < 1 s → o :8082 já entrega o escalar.
+            if (time.monotonic() - self._last_frame_rx) < 1.0:
+                continue
+            try:
+                _seq, value = struct.unpack(TOUCH_PAYLOAD_FMT, raw[:sz])
+            except struct.error:
+                continue
+            self.last_rx = time.monotonic()
+            if self._on_sample is not None:
+                try:
+                    self._on_sample(float(value))
+                except Exception:
+                    pass
 
     def _relay_lines(self, lines: list) -> None:
         """Retransmite as linhas brutas do firmware por UDP (:frame_port).
