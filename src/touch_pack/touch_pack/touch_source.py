@@ -30,6 +30,7 @@ from .constants import (
     TOUCH_SENSOR_UDP_PORT,
     TOUCH_PAYLOAD_FMT,
     TOUCH_UDP_BROADCAST_IP,
+    TOUCH_FRAME_UDP_PORT,
 )
 
 try:
@@ -92,11 +93,32 @@ class TouchSensorSource:
                  udp_ip: str = TOUCH_UDP_BROADCAST_IP,
                  udp_port: int = TOUCH_SENSOR_UDP_PORT,
                  rows: int = ROWS, cols: int = COLS,
-                 has_total: bool = True):
+                 has_total: bool = True,
+                 frame_relay: bool = False,
+                 frame_port: int = TOUCH_FRAME_UDP_PORT):
         # port=None → auto-detect no start().
         self._port_req = port
         self.port: Optional[str] = None
         self._on_sample = on_sample
+
+        # ── Modo de ingestão ──────────────────────────────────────────────
+        # 'serial'  → lê o STM32 pela USB (start());
+        # 'network' → recebe as linhas retransmitidas por UDP (start_network()),
+        #             para um PC SEM USB exibir os mesmos gráficos.
+        # None      → ainda não iniciado / parado.
+        self.mode: Optional[str] = None
+        # Relógio monotônico do PC no último dado REALMENTE parseado — usado pela
+        # GUI para diferenciar "conectado e recebendo" de "conectado sem dados".
+        self.last_rx: float = 0.0
+
+        # ── Relay do frame completo (linhas brutas) p/ PCs remotos ─────────
+        # No modo serial, além do escalar em :8081, retransmitimos as linhas do
+        # firmware em :frame_port para que um PC sem USB reconstrua tudo.
+        self._frame_relay = bool(frame_relay)
+        self._frame_addr = (udp_ip, int(frame_port))
+        self._frame_port = int(frame_port)
+        self._frame_sock: Optional[socket.socket] = None
+        self._net_sock: Optional[socket.socket] = None
 
         # ── Grade do sensor (4×4 ou 5×5) ──────────────────────────────────
         # Cada instância carrega a sua grade; TODO o estado (matriz de tensões,
@@ -134,7 +156,13 @@ class TouchSensorSource:
         # O(1) por descarte, na própria thread serial — ver _note_time. Antes
         # a poda era O(N) DENTRO do snapshot(), na thread da GUI, e travava o
         # desenho sob carga (muitos spikes).
+        # voltage_matrix = frame sendo PREENCHIDO (taxel a taxel, pode estar
+        # parcial). voltage_frame = último frame COMPLETO (anti-tearing): só é
+        # atualizado quando a varredura fecha (idx == num_taxels-1). A figura, a
+        # gravação e o snapshot leem voltage_frame, então o heatmap nunca mostra
+        # meia varredura (metade nova, metade antiga).
         self.voltage_matrix = np.zeros((self.rows, self.cols))
+        self.voltage_frame = np.zeros((self.rows, self.cols))
         self.spike_times_RA = [deque() for _ in range(self.num_taxels)]
         self.spike_times_SA = [deque() for _ in range(self.num_taxels)]
         self.spike_times_POST: deque = deque()
@@ -175,6 +203,7 @@ class TouchSensorSource:
         self.port = port
         self.connected = True
         self.error = None
+        self.mode = 'serial'
         # Socket de broadcast (best-effort): falha de rede aqui NÃO impede a
         # leitura serial nem a publicação ROS local — só desliga o reenvio UDP.
         if self._udp_broadcast:
@@ -184,11 +213,56 @@ class TouchSensorSource:
                 self._udp_sock = sock
             except Exception:
                 self._udp_sock = None
+        # Socket do relay do frame completo (linhas brutas) → PCs remotos.
+        if self._frame_relay:
+            try:
+                fsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                fsock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                self._frame_sock = fsock
+            except Exception:
+                self._frame_sock = None
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._worker, daemon=True, name="touch-serial")
         self._thread.start()
         return True
+
+    def start_network(self) -> bool:
+        """Modo rede: ingere as linhas retransmitidas por UDP (PC SEM USB).
+
+        Faz bind na porta do frame (:frame_port) e alimenta o MESMO parser que a
+        serial, então a TouchFigure renderiza heatmap/rasters/pós idênticos sem
+        nenhuma mudança. Best-effort: em falha registra ``self.error`` e devolve
+        False (a GUI segue mostrando zeros / o escalar de /touch_sensor/value)."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(1.0)
+            sock.bind(('', self._frame_port))
+        except OSError as exc:
+            self.error = f"bind UDP :{self._frame_port} falhou: {exc}"
+            return False
+        self._net_sock = sock
+        self.connected = True
+        self.error = None
+        self.mode = 'network'
+        self._buffer = ""
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._net_worker, daemon=True, name="touch-net")
+        self._thread.start()
+        return True
+
+    def is_fresh(self, max_age: float = 1.0) -> bool:
+        """True se chegou dado parseado nos últimos ``max_age`` s. Distingue
+        'conectado e recebendo' de 'conectado/ligado mas sem dados' (porta serial
+        errada, STM mudo, ou rede ligada sem ninguém transmitindo)."""
+        return self.last_rx > 0.0 and (time.monotonic() - self.last_rx) < max_age
 
     def stop(self) -> None:
         self._stop.set()
@@ -199,15 +273,45 @@ class TouchSensorSource:
                 self._ser.close()
             except Exception:
                 pass
-        if self._udp_sock is not None:
-            try:
-                self._udp_sock.close()
-            except Exception:
-                pass
-            self._udp_sock = None
+            self._ser = None
+        for attr in ('_udp_sock', '_frame_sock', '_net_sock'):
+            sk = getattr(self, attr)
+            if sk is not None:
+                try:
+                    sk.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
         self.connected = False
+        self.mode = None
 
     # ──────────────────────────────────────────────────────────────────
+    def _ingest(self, text: str) -> tuple[list, list]:
+        """Acumula ``text`` no buffer, fatia em linhas e parseia as COMPLETAS
+        sob um único lock (batelado). Retorna (linhas_completas, pending), onde
+        pending são os I_final a reenviar/entregar FORA do lock. Compartilhado
+        pelas duas fontes (serial e rede) — ambas falam o mesmo protocolo."""
+        self._buffer += text
+        lines = self._buffer.split("\n")
+        self._buffer = lines[-1]
+        complete = lines[:-1]
+        pending: list = []
+        # Lock BATELADO: pega self._lock UMA vez por chunk em vez de por linha.
+        # Com o firmware a ~1 kHz são ~16 mil linhas/s; travar/soltar o lock por
+        # linha gerava contenção massiva com o snapshot() da GUI. Aqui o parse do
+        # chunk inteiro roda sob um único lock; broadcast/ROS ficam para depois.
+        with self._lock:
+            for line in complete:
+                # Uma linha malformada NUNCA pode derrubar a thread: engole o
+                # erro da linha individual e segue.
+                try:
+                    self._parse_line(line.strip(), pending)
+                except Exception:
+                    pass
+            if complete:
+                self.last_rx = time.monotonic()
+        return complete, pending
+
     def _worker(self) -> None:
         """Lê e parseia a serial continuamente até stop()."""
         ser = self._ser
@@ -222,26 +326,13 @@ class TouchSensorSource:
             if not chunk:
                 continue
 
-            self._buffer += chunk.decode(errors="ignore")
-            lines = self._buffer.split("\n")
-            self._buffer = lines[-1]
-
-            # Lock BATELADO: pega self._lock UMA vez por chunk em vez de por
-            # linha. Com o firmware a ~1 kHz são ~16 mil linhas/s; travar/soltar
-            # o lock por linha gerava contenção massiva com o snapshot() da GUI
-            # (a causa real do "travando muito"). Aqui o parse do chunk inteiro
-            # roda sob um único lock; broadcasts/ROS ficam para DEPOIS de soltá-lo.
-            pending = []
-            with self._lock:
-                for line in lines[:-1]:
-                    # Uma linha malformada NUNCA pode derrubar a thread: engole
-                    # o erro da linha individual e segue.
-                    try:
-                        self._parse_line(line.strip(), pending)
-                    except Exception:
-                        pass
-            # Reenvio UDP e callback ROS FORA do lock — rede/ROS não podem
-            # segurar o lock de dados nem bloquear a leitura da serial.
+            complete, pending = self._ingest(chunk.decode(errors="ignore"))
+            # Relay do frame completo (linhas brutas) p/ PCs remotos sem USB —
+            # FORA do lock, e antes do escalar para minimizar latência do frame.
+            if self._frame_relay:
+                self._relay_lines(complete)
+            # Reenvio UDP escalar (:8081) e callback ROS FORA do lock — rede/ROS
+            # não podem segurar o lock de dados nem bloquear a leitura da serial.
             for i_final in pending:
                 self._broadcast(i_final)
                 if self._on_sample is not None:
@@ -249,6 +340,56 @@ class TouchSensorSource:
                         self._on_sample(i_final)
                     except Exception:
                         pass
+
+    def _net_worker(self) -> None:
+        """Modo rede: recebe os datagramas do relay e os injeta no parser.
+
+        Não reenvia escalar nem retransmite (evita laços): só atualiza o estado
+        para a figura e entrega o I_final via on_sample (publica ROS local)."""
+        sock = self._net_sock
+        while not self._stop.is_set():
+            try:
+                raw, _addr = sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if not raw:
+                continue
+            _complete, pending = self._ingest(raw.decode(errors="ignore"))
+            for i_final in pending:
+                if self._on_sample is not None:
+                    try:
+                        self._on_sample(i_final)
+                    except Exception:
+                        pass
+
+    def _relay_lines(self, lines: list) -> None:
+        """Retransmite as linhas brutas do firmware por UDP (:frame_port).
+
+        Empacota em datagramas de até ~1400 B (abaixo da MTU típica) cortando em
+        fronteiras de linha, para evitar fragmentação IP. Best-effort: erro de
+        rede é engolido para não derrubar a leitura serial."""
+        sock = self._frame_sock
+        if sock is None or not lines:
+            return
+        buf: list = []
+        size = 0
+        for ln in lines:
+            b = (ln + "\n").encode("ascii", "ignore")
+            if size + len(b) > 1400 and buf:
+                try:
+                    sock.sendto(b"".join(buf), self._frame_addr)
+                except Exception:
+                    pass
+                buf, size = [], 0
+            buf.append(b)
+            size += len(b)
+        if buf:
+            try:
+                sock.sendto(b"".join(buf), self._frame_addr)
+            except Exception:
+                pass
 
     def _note_time(self, t: float) -> None:
         """Avança ``current_time`` para o timestamp mais recente e detecta
@@ -316,14 +457,18 @@ class TouchSensorSource:
                 row, col = divmod(idx, self.cols)
                 self._note_time(tstamp)
                 self.voltage_matrix[row, col] = adc * (VREF / 4095.0)
-                # Sensor SEM linha TOTAL (5×5): o sinal de 1 kHz publicado em
-                # /touch_sensor/value é sintetizado por FRAME. Ao chegar o ÚLTIMO
-                # taxel da varredura (idx == num_taxels-1), o heatmap está
-                # completo → emite a média das tensões como "ativação" do frame.
-                if not self.has_total and idx == self.num_taxels - 1:
-                    agg = self._frame_aggregate()
-                    self.I_final_data.append((self.current_time, agg))
-                    pending.append(agg)
+                # Fim da varredura (último taxel): o frame está completo.
+                if idx == self.num_taxels - 1:
+                    # Publica o frame ESTÁVEL (anti-tearing): a figura/gravação
+                    # leem voltage_frame, nunca a matriz parcial em preenchimento.
+                    self.voltage_frame = self.voltage_matrix.copy()
+                    # Sensor SEM linha TOTAL (5×5): o sinal de 1 kHz publicado em
+                    # /touch_sensor/value é sintetizado por FRAME — média das
+                    # tensões do frame recém-fechado, emitida aqui.
+                    if not self.has_total:
+                        agg = self._frame_aggregate()
+                        self.I_final_data.append((self.current_time, agg))
+                        pending.append(agg)
 
         elif line.startswith("RA"):
             m = RE_IDX_T.search(line)
@@ -372,8 +517,9 @@ class TouchSensorSource:
         Média das tensões dos taxels (V, faixa 0..VREF) — proxy da intensidade
         global de contato, derivado direto do heatmap que o firmware já manda.
         Bounded e estável; troque por np.sum se quiser a "carga" total em vez da
-        média. Chamado SOB self._lock (a partir de _parse_line)."""
-        return float(self.voltage_matrix.mean())
+        média. Chamado SOB self._lock (a partir de _parse_line), logo após fechar
+        o frame — usa voltage_frame (varredura completa)."""
+        return float(self.voltage_frame.mean())
 
     def _broadcast(self, i_final: float) -> None:
         """Reemite o I_final por UDP a cada TOTAL (como o plotter original).
@@ -397,17 +543,19 @@ class TouchSensorSource:
     def latest_voltages(self) -> np.ndarray:
         """Cópia barata só da matriz de tensões (rows×cols), sob lock. Para o
         gravador a 1 kHz, que não precisa do snapshot completo (spikes etc.) e
-        não pode pagar a cópia O(N) das listas a cada amostra."""
+        não pode pagar a cópia O(N) das listas a cada amostra. Devolve o último
+        frame COMPLETO (voltage_frame), não a matriz parcial em preenchimento."""
         with self._lock:
-            return self.voltage_matrix.copy()
+            return self.voltage_frame.copy()
 
     def latest_voltages_and_time(self) -> tuple[np.ndarray, float]:
         """Tensões (rows×cols) + o timestamp do STM32 (current_time, s) da
         última amostra, ambos sob o MESMO lock. O gravador usa o relógio do
         firmware (micros() a 1 kHz) na planilha, em vez do relógio do PC, para
-        que cada linha do CSV carregue o instante REAL da amostra de 1 ms."""
+        que cada linha do CSV carregue o instante REAL da amostra de 1 ms.
+        Usa voltage_frame (último frame completo) — sem tearing no CSV."""
         with self._lock:
-            return self.voltage_matrix.copy(), float(self.current_time)
+            return self.voltage_frame.copy(), float(self.current_time)
 
     def snapshot(self) -> dict:
         """Retrato consistente do estado para renderização. As listas já vêm
@@ -426,7 +574,7 @@ class TouchSensorSource:
                 t_disp = self._t_ref_stm + (time.monotonic() - self._t_ref_pc)
                 if t_disp > self.current_time + RASTER_WINDOW:
                     t_disp = self.current_time + RASTER_WINDOW
-            volt = self.voltage_matrix.copy()
+            volt = self.voltage_frame.copy()
             ra = [list(lst) for lst in self.spike_times_RA]
             sa = [list(lst) for lst in self.spike_times_SA]
             post = list(self.spike_times_POST)
@@ -565,12 +713,16 @@ class TouchFigure:
         now_t = snap["t_now"]
         x_lo = max(0.0, now_t - RASTER_WINDOW)
 
-        # Heatmap (rot90 ×2 = mesma orientação do plotter standalone).
+        # Heatmap (rot90 ×2 = mesma orientação física do plotter standalone).
+        # IMPORTANTE: os números sobrepostos usam a MESMA matriz rotacionada que
+        # a imagem (vr), senão o número de cada célula mostra um taxel e a cor
+        # mostra outro (bug do standalone: imagem rotacionada, texto não).
         volt = snap["volt"]
-        self.im_volt.set_data(np.rot90(volt, 2))
+        vr = np.rot90(volt, 2)
+        self.im_volt.set_data(vr)
         for r in range(self.rows):
             for c in range(self.cols):
-                self.texts_volt[r][c].set_text(f"{volt[r, c]:.2f}")
+                self.texts_volt[r][c].set_text(f"{vr[r, c]:.2f}")
 
         # Raster RA / SA — timestamps ABSOLUTOS; o xlim desliza com now_t.
         x_ra, y_ra = [], []

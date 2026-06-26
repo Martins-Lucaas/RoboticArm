@@ -49,21 +49,14 @@ from launch_ros.actions import Node
 # do URDF nem sempre renderiza; o override <gazebo reference><visual>
 # <material><ambient/diffuse/specular> é o que efetivamente colore o link.
 #   touch_tool   → branco
-#   acopladores  → cinza
 #   célula carga → prateado (specular alto = brilho metálico)
+# (a montagem 5 kg já inclui as placas de fixação no próprio corpo prateado)
 # ──────────────────────────────────────────────────────────────────────
 _GZ_MAT_WHITE = (
     '<visual><material>'
     '<ambient>0.85 0.85 0.85 1</ambient>'
     '<diffuse>0.95 0.95 0.95 1</diffuse>'
     '<specular>0.30 0.30 0.30 1</specular>'
-    '</material></visual>'
-)
-_GZ_MAT_GRAY = (
-    '<visual><material>'
-    '<ambient>0.25 0.25 0.25 1</ambient>'
-    '<diffuse>0.45 0.45 0.45 1</diffuse>'
-    '<specular>0.20 0.20 0.20 1</specular>'
     '</material></visual>'
 )
 _GZ_MAT_SILVER = (
@@ -334,82 +327,55 @@ def _build_hand_suffix(cr10_urdf: str, hand_pack_share: str, arm_gz: str,
 
 def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
                               arm_gz: str) -> str:
-    """Injeta acopladores + Célula de Carga + TouchTool Square 20×20 mm + tcp_link no CR10.
+    """Injeta a Célula de Carga 5 kg montada + TouchTool Square 20×20 mm + tcp_link no CR10.
 
-    Cadeia (offsets desde Link6):
-      lower_coupling (+0mm) → force_sensor (+7mm, entra 8mm no acoplador inferior)
-      → upper_coupling (+59mm, entra 8mm no topo da célula)
-      → touch_tool (+74mm) → tcp_link (+188.5mm)
+    A montagem `CelulaDeCarga_5kg_Montagem` (placa-robô + barra single-point +
+    placa touch_tool) é um único corpo (force_sensor_link). A placa-robô assenta
+    plana no flange (Link6) e a barra fica em cantilever: o Rz(−90°) da junta de
+    fixação aponta a barra (mesh +X) para −Link6_y. O touch_tool monta na placa
+    superior — deslocada −55 mm em Link6_y e +28 mm em +Link6_z.
+
+    Frame do mesh (recentrado): origem no centro da placa-robô, face inferior em
+    Z=0, barra ao longo de +X, placa do touch_tool em (X=+55 mm, topo Z=+28 mm).
+
+    Cadeia (no frame do mesh, antes do Rz−90°):
+      force_sensor_link (placa-robô no flange) → touch_tool (+55,0,+28 mm)
+      → tcp_link (+114.5 mm no eixo do probe)
+    TCP resultante no frame Link6: (0, −55, +142.5) mm.
     """
-    sensor_mesh   = os.path.join(touch_pack_share, 'meshes', 'Celula De Carga.stl')
+    assembly_mesh = os.path.join(
+        touch_pack_share, 'meshes', 'CelulaDeCarga_5kg_Montagem.stl')
     tool_mesh     = os.path.join(touch_pack_share, 'meshes', 'touch_tool_square_20x20.stl')
-    coupling_mesh = os.path.join(touch_pack_share, 'meshes', 'Acoplador_CelulaDeCarga_Uniaxial.stl')
 
     tool_snippet = f'''
-    <!-- ── Acoplador inferior (Link6 → base da célula) ───────────── -->
-    <link name="lower_coupling_link">
+    <!-- ── Célula de Carga 5 kg montada (placa-robô + barra + placa tool) ── -->
+    <link name="force_sensor_link">
       <inertial>
-        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
-        <mass value="0.200"/>
-        <inertia ixx="8.4e-5" ixy="0.0" ixz="0.0"
-                 iyy="8.4e-5" iyz="0.0" izz="1.6e-4"/>
+        <origin xyz="0.030 0 0.014" rpy="0 0 0"/>
+        <mass value="0.400"/>
+        <inertia ixx="1.89e-4" ixy="0.0" ixz="0.0"
+                 iyy="5.47e-4" iyz="0.0" izz="6.84e-4"/>
       </inertial>
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
-        </geometry>
-        <material name="coupling_gray">
-          <color rgba="0.45 0.45 0.45 1.0"/>
-        </material>
-      </visual>
-      <collision name="col_lower_coupling">
-        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
-        <geometry><cylinder radius="0.040" length="0.015"/></geometry>
-      </collision>
-    </link>
-    <!-- ── Célula de Carga (em pé: Rx+90°, mesh-Y→+Z robô) ──────── -->
-    <link name="force_sensor_link">
-      <inertial>
-        <origin xyz="0 0 0.030" rpy="0 0 0"/>
-        <mass value="0.150"/>
-        <inertia ixx="4.70e-5" ixy="0.0" ixz="0.0"
-                 iyy="7.73e-5" iyz="0.0" izz="3.43e-5"/>
-      </inertial>
-      <visual>
-        <origin xyz="-0.0254 0.00635 0" rpy="1.5708 0 0"/>
-        <geometry>
-          <mesh filename="file://{sensor_mesh}" scale="0.001 0.001 0.001"/>
+          <mesh filename="file://{assembly_mesh}" scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="silver">
           <color rgba="0.82 0.82 0.88 1.0"/>
         </material>
       </visual>
-      <collision name="col_sensor">
-        <origin xyz="0 0 0.030" rpy="0 0 0"/>
-        <geometry><box size="0.0508 0.0127 0.060"/></geometry>
+      <collision name="col_robot_plate">
+        <origin xyz="0 0 0.004" rpy="0 0 0"/>
+        <geometry><cylinder radius="0.035" length="0.008"/></geometry>
       </collision>
-    </link>
-    <!-- ── Acoplador superior (topo da célula → touch_tool) ─────── -->
-    <link name="upper_coupling_link">
-      <inertial>
-        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
-        <mass value="0.200"/>
-        <inertia ixx="8.4e-5" ixy="0.0" ixz="0.0"
-                 iyy="8.4e-5" iyz="0.0" izz="1.6e-4"/>
-      </inertial>
-      <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="file://{coupling_mesh}" scale="0.001 0.001 0.001"/>
-        </geometry>
-        <material name="coupling_gray">
-          <color rgba="0.45 0.45 0.45 1.0"/>
-        </material>
-      </visual>
-      <collision name="col_upper_coupling">
-        <origin xyz="0 0 0.0075" rpy="0 0 0"/>
-        <geometry><cylinder radius="0.040" length="0.015"/></geometry>
+      <collision name="col_loadcell_bar">
+        <origin xyz="0.040 0 0.0143" rpy="0 0 0"/>
+        <geometry><box size="0.081 0.0127 0.0127"/></geometry>
+      </collision>
+      <collision name="col_tool_plate">
+        <origin xyz="0.055 0 0.024" rpy="0 0 0"/>
+        <geometry><cylinder radius="0.035" length="0.008"/></geometry>
       </collision>
     </link>
     <!-- ── Touch Tool ─────────────────────────────────────────────── -->
@@ -439,29 +405,18 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
       </collision>
     </link>
     <link name="tcp_link"/>
-    <!-- acoplador inferior no flange -->
-    <joint name="lower_coupling_attach" type="fixed">
-      <parent link="Link6"/>
-      <child link="lower_coupling_link"/>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-    </joint>
-    <!-- célula inicia +7 mm: entra 8 mm dentro do acoplador inferior -->
+    <!-- placa-robô assenta plana no flange; Rz−90° aponta a barra p/ −Link6_y -->
     <joint name="force_sensor_attach" type="fixed">
-      <parent link="lower_coupling_link"/>
+      <parent link="Link6"/>
       <child link="force_sensor_link"/>
-      <origin xyz="0 0 0.007" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 -1.5708"/>
     </joint>
-    <!-- acoplador superior começa 8 mm antes do topo da célula (+52 mm) -->
-    <joint name="upper_coupling_attach" type="fixed">
-      <parent link="force_sensor_link"/>
-      <child link="upper_coupling_link"/>
-      <origin xyz="0 0 0.052" rpy="0 0 0"/>
-    </joint>
-    <!-- touch tool sobre o acoplador superior (+15 mm) -->
+    <!-- touch tool na placa superior (X=+55 mm, topo Z=+28 mm no frame do mesh);
+         rpy Rz+90° desfaz o Rz−90° da montagem → tool/tcp alinhados ao Link6 -->
     <joint name="touch_tool_attach" type="fixed">
-      <parent link="upper_coupling_link"/>
+      <parent link="force_sensor_link"/>
       <child link="touch_tool_link"/>
-      <origin xyz="0 0 0.015" rpy="0 0 0"/>
+      <origin xyz="0.055 0 0.028" rpy="0 0 1.5708"/>
     </joint>
     <joint name="tcp_alias_joint" type="fixed">
       <parent link="touch_tool_link"/>
@@ -470,16 +425,6 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
     </joint>'''
 
     tool_gz = (
-        '\n  <gazebo reference="lower_coupling_link">'
-        '<self_collide>false</self_collide>'
-        '<gravity>true</gravity>'
-        '<mu1>0.40</mu1><mu2>0.40</mu2>'
-        '<kp>1.0e5</kp><kd>100.0</kd>'
-        '<maxContacts>4</maxContacts>'
-        '<minDepth>0.0002</minDepth>'
-        '<maxVel>0.05</maxVel>'
-        + _GZ_MAT_GRAY +
-        '</gazebo>'
         '\n  <gazebo reference="force_sensor_link">'
         '<self_collide>false</self_collide>'
         '<gravity>true</gravity>'
@@ -489,16 +434,6 @@ def _build_touch_tool_suffix(cr10_urdf: str, touch_pack_share: str,
         '<minDepth>0.0002</minDepth>'
         '<maxVel>0.05</maxVel>'
         + _GZ_MAT_SILVER +
-        '</gazebo>'
-        '\n  <gazebo reference="upper_coupling_link">'
-        '<self_collide>false</self_collide>'
-        '<gravity>true</gravity>'
-        '<mu1>0.40</mu1><mu2>0.40</mu2>'
-        '<kp>1.0e5</kp><kd>100.0</kd>'
-        '<maxContacts>4</maxContacts>'
-        '<minDepth>0.0002</minDepth>'
-        '<maxVel>0.05</maxVel>'
-        + _GZ_MAT_GRAY +
         '</gazebo>'
         '\n  <gazebo reference="touch_tool_link">'
         '<self_collide>false</self_collide>'

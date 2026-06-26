@@ -435,10 +435,13 @@ def update(frame):
         I_final_snapshot = list(I_final_data)
 
     # ── HEATMAP ──────────────────────────────────────────────────────
-    im_volt.set_data(np.rot90(vm, 2))
+    # Número usa a MESMA matriz rotacionada (vr) que a imagem: senão a cor da
+    # célula mostra um taxel e o número mostra outro (orientação divergente).
+    vr = np.rot90(vm, 2)
+    im_volt.set_data(vr)
     for r in range(ROWS):
         for c in range(COLS):
-            texts_volt[r][c].set_text(f"{vm[r, c]:.2f}")
+            texts_volt[r][c].set_text(f"{vr[r, c]:.2f}")
 
     # ── RASTER RA / SA ───────────────────────────────────────────────
     scatter_RA.set_offsets(np.c_[x_RA, y_RA])

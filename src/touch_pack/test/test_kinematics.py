@@ -29,13 +29,14 @@ def test_fk_pointing_pose_is_perpendicular():
 
 
 def test_fk_tool_offsets_along_approach():
-    """T_end desloca o TCP exatamente pela translação z do attach,
-    ao longo do eixo de abordagem do flange."""
+    """T_end desloca o TCP pela translação do attach expressa no frame do
+    flange (T_fl_R · att_t). Para attachs axiais isso reduz a att_z·z_flange;
+    a célula de carga montada tem ainda offset lateral em y (cantilever)."""
     q = _RNG.uniform(-1.5, 1.5, 6)
     T_fl = forward_kinematics(q, include_hand=False)
     for att in (T_HAND_ATTACH, T_TOUCH_TOOL_ATTACH):
         T_tcp = forward_kinematics(q, T_end=att)
-        expected = T_fl[:3, 3] + float(att[2, 3]) * T_fl[:3, 2]
+        expected = T_fl[:3, 3] + T_fl[:3, :3] @ att[:3, 3]
         assert np.allclose(T_tcp[:3, 3], expected, atol=1e-12)
 
 

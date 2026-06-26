@@ -122,7 +122,7 @@ from .ui_helpers import (
 # segue funcionando (cai para a subscrição /touch_sensor/value).
 try:
     from .touch_source import (
-        TouchSensorSource, TouchFigure,
+        TouchSensorSource, TouchFigure, detect_serial_port,
         ROWS as TOUCH_ROWS, COLS as TOUCH_COLS, NUM_TAXELS as TOUCH_TAXELS,
     )
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -131,6 +131,7 @@ try:
 except Exception:  # pragma: no cover
     TouchSensorSource = None
     TouchFigure = None
+    detect_serial_port = None
     FigureCanvasTkAgg = None
     FuncAnimation = None
     TOUCH_ROWS = TOUCH_COLS = 4
@@ -545,11 +546,15 @@ class PalpationGUI(Node):
         # TouchFigure a partir dela; o start() (abre a serial) vem depois,
         # já com a janela montada.
         if _TOUCH_PLOT_OK:
+            # frame_relay=True: quando ESTE PC tem a serial, retransmite as linhas
+            # brutas do STM32 por UDP (:8082) p/ PCs remotos sem USB exibirem os
+            # mesmos gráficos. Sem serial, a fonte cai p/ modo rede (recebe :8082).
             self._touch_source = TouchSensorSource(
                 port=(self._touch_port or None),
                 on_sample=self._on_touch_sample,
                 rows=self._touch_rows, cols=self._touch_cols,
-                has_total=self._touch_has_total)
+                has_total=self._touch_has_total,
+                frame_relay=True)
 
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
@@ -573,27 +578,76 @@ class PalpationGUI(Node):
         # da figura embutida na aba Sensores.
         self._start_touch_source()
         self.root.after(200, self._refresh_sensors_tab)
+        # Hot-plug serial↔rede: reconcilia a fonte do toque a cada 2 s.
+        self.root.after(2000, self._retry_touch_source)
 
     # ──────────────────────────────────────────────────────────────────
     # Touch sensor — fonte serial + publicação ROS
     # ──────────────────────────────────────────────────────────────────
     def _start_touch_source(self) -> None:
-        """Abre a serial do STM32 e passa a publicar /touch_sensor/value.
+        """Abre a serial do STM32; sem USB, cai para o modo REDE (UDP :8082).
 
-        Best-effort: sem matplotlib/pyserial ou sem STM32, a GUI segue no
-        modo degradado (sparkline via subscrição; figura mostra zeros)."""
+        - COM USB: lê a serial, publica /touch_sensor/value e retransmite o frame
+          completo (:8082) para PCs remotos.
+        - SEM USB: faz bind em :8082 e reconstrói heatmap/rasters/pós a partir do
+          frame retransmitido por um PC com USB na LAN.
+        Best-effort: sem matplotlib a figura fica desabilitada; sem nenhuma fonte
+        a sparkline ainda cai para o escalar de /touch_sensor/value."""
         if not _TOUCH_PLOT_OK or self._touch_source is None:
-            log.info('[TOUCH] matplotlib/pyserial ausentes — figura desabilitada')
+            log.info('[TOUCH] matplotlib ausente — figura desabilitada')
             return
-        ok = self._touch_source.start()
-        self._touch_serial_ok = ok
-        if ok:
-            log.info('[TOUCH] serial aberta em %s — publicando '
-                     '/touch_sensor/value', self._touch_source.port)
+        if self._touch_source.start():
+            self._touch_serial_ok = True
+            log.info('[TOUCH] serial em %s — publicando /touch_sensor/value e '
+                     'retransmitindo frame em :%d',
+                     self._touch_source.port, self._touch_source._frame_port)
         else:
-            log.warning('[TOUCH] serial indisponível (%s) — usando '
-                        '/touch_sensor/value de receptor externo, se houver',
-                        self._touch_source.error)
+            self._touch_serial_ok = False
+            log.info('[TOUCH] sem USB (%s) — tentando modo rede :%d',
+                     self._touch_source.error, self._touch_source._frame_port)
+            if self._touch_source.start_network():
+                log.info('[TOUCH] modo rede ativo — recebendo frame do toque '
+                         'em :%d', self._touch_source._frame_port)
+            else:
+                log.warning('[TOUCH] modo rede indisponível (%s) — usando só o '
+                            'escalar /touch_sensor/value, se houver',
+                            self._touch_source.error)
+
+    def _retry_touch_source(self) -> None:
+        """Hot-plug: a cada 2 s reconcilia a fonte do toque com o hardware.
+
+        USB presente → modo serial; USB ausente → modo rede. Cobre plugar o STM32
+        DEPOIS de abrir a GUI, e a queda da serial no meio de um teste (o worker
+        marca connected=False; aqui reabrimos ou caímos para rede)."""
+        try:
+            src = self._touch_source
+            if src is None or detect_serial_port is None:
+                return
+            has_usb = detect_serial_port() is not None
+            if has_usb and src.mode != 'serial':
+                # STM32 apareceu → troca para serial (encerra o modo rede).
+                src.stop()
+                self._touch_serial_ok = src.start()
+                if not self._touch_serial_ok:
+                    src.start_network()
+                else:
+                    log.info('[TOUCH] hot-plug: serial em %s', src.port)
+            elif not has_usb and src.mode != 'network':
+                # STM32 sumiu → cai para rede.
+                src.stop()
+                self._touch_serial_ok = False
+                src.start_network()
+                log.info('[TOUCH] hot-unplug: modo rede :%d', src._frame_port)
+            elif src.mode == 'serial' and not src.connected:
+                # Serial caiu mas o dispositivo ainda é listado → reabre.
+                src.stop()
+                self._touch_serial_ok = src.start()
+                if not self._touch_serial_ok:
+                    src.start_network()
+        except Exception as exc:
+            log.debug('retry touch source falhou: %s', exc)
+        finally:
+            self.root.after(2000, self._retry_touch_source)
 
     def _on_touch_sample(self, i_final: float) -> None:
         """Callback da thread serial: republica I_final em ROS e atualiza o
@@ -744,6 +798,25 @@ class PalpationGUI(Node):
         except Exception as exc:
             log.debug('touch anim toggle falhou: %s', exc)
 
+    def _touch_source_status(self, scalar_fresh: bool) -> tuple[str, str]:
+        """Texto/cor honestos da fonte do toque, do estado AO VIVO da fonte.
+
+        Reflete o modo real (serial/rede) e se há dados chegando AGORA — em vez
+        do antigo _touch_serial_ok fixado no start, que mentia após desconexão ou
+        ao abrir porta serial errada (sem dados)."""
+        src = self._touch_source
+        if src is not None and src.connected:
+            base = (f'serial {src.port}' if src.mode == 'serial'
+                    else f'rede :{src._frame_port}')
+            if src.is_fresh():
+                return base, OK
+            # Ligado mas mudo: porta serial errada / STM mudo / ninguém na LAN.
+            tail = 'sem dados' if src.mode == 'serial' else 'aguardando frame'
+            return f'{base} ({tail})', WARN
+        if scalar_fresh:
+            return 'via /touch_sensor/value', OK
+        return 'sem sinal do toque', TEXT_DIM
+
     def _update_sensors_panel(self) -> None:
         """Atualiza os números da célula de carga + sparkline na aba Sensores."""
         with self._lock:
@@ -784,15 +857,8 @@ class PalpationGUI(Node):
         self._sens_touch_lbl.config(
             text=f'{touch_val:+.3f}' if touch_fresh else '—')
 
-        if self._touch_serial_ok and self._touch_source is not None:
-            self._sens_touch_status_lbl.config(
-                text=f'serial {self._touch_source.port}', fg=OK)
-        elif touch_fresh:
-            self._sens_touch_status_lbl.config(
-                text='via /touch_sensor/value', fg=OK)
-        else:
-            self._sens_touch_status_lbl.config(
-                text='sem sinal do toque', fg=TEXT_DIM)
+        label, fg = self._touch_source_status(touch_fresh)
+        self._sens_touch_status_lbl.config(text=label, fg=fg)
 
         self._draw_force_spark(self._sens_force_spark)
 
@@ -877,9 +943,10 @@ class PalpationGUI(Node):
         if self._rec_writer is None:
             return   # fast-path sem lock; reconferido sob o lock abaixo
         now = time.time()
-        if self._touch_source is not None and self._touch_serial_ok:
+        if self._touch_source is not None and self._touch_source.connected:
             # Tensões + relógio do STM32 sob o MESMO lock: o timestamp do
-            # firmware (1 kHz) é o que data a amostra na planilha.
+            # firmware (1 kHz) é o que data a amostra na planilha. Vale para
+            # serial E rede (no modo rede o heatmap vem do frame retransmitido).
             volt, t_stm = self._touch_source.latest_voltages_and_time()
             volt_cols = [f'{volt[r, c]:.4f}'
                          for r in range(self._touch_rows)
@@ -5503,10 +5570,7 @@ class PalpationGUI(Node):
         if touch_fresh:
             self._touch_spark_data.append((time.time(), touch_val))
             self.touch_value_lbl.config(text=f'{touch_val:+.3f}', fg=TEXT)
-            if self._touch_serial_ok and self._touch_source is not None:
-                src_txt = f'serial {self._touch_source.port}'
-            else:
-                src_txt = 'via /touch_sensor/value'
+            src_txt, _fg = self._touch_source_status(touch_fresh)
             self.touch_status_lbl.config(text=f'recebendo ({src_txt})', fg=OK)
         else:
             self.touch_value_lbl.config(text='—', fg=TEXT_DIM)

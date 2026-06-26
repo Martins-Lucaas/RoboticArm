@@ -75,15 +75,20 @@ T_HAND_ATTACH = np.array([
     [0.0,  0.0,  0.0,  1.00000],
 ], dtype=float)
 
-# TCP do TouchTool Square 20×20 mm com acopladores encaixados na célula de carga.
-# Cadeia desde Link6:
-#   lower_coupling (0mm) → force_sensor (+7mm, célula entra 8mm no acoplador)
-#   → upper_coupling (+59mm, célula entra 8mm) → touch_tool (+74mm) → tcp (+188.5mm)
+# TCP do TouchTool Square 20×20 mm na Célula de Carga 5 kg montada
+# (CelulaDeCarga_5kg_Montagem). A célula é single-point/cantilever: a placa-robô
+# assenta plana no flange (Link6) e a barra cantilevera em −Link6_y, levando a
+# placa do touch_tool a −55 mm em Y e +28 mm em Z. O touch_tool monta nessa placa
+# apontando +Link6_z e seu probe estende +114.5 mm → TCP em (0, −55, +142.5) mm.
+# A orientação do TCP é mantida idêntica ao Link6 (o Rz+90° da junta touch_tool
+# desfaz o Rz−90° da montagem), logo o transform é translação pura.
+# NB: o offset lateral em Y é tratado integralmente pela FK/IK (forward_kinematics
+# e jacobian usam T_end completo); só o _geometric_guess o ignora no seed.
 T_TOUCH_TOOL_ATTACH = np.array([
-    [1.0,  0.0,  0.0,  0.000],
-    [0.0,  1.0,  0.0,  0.000],
-    [0.0,  0.0,  1.0,  0.1885],  # 188.5 mm — ponta do probe 20×20 mm
-    [0.0,  0.0,  0.0,  1.000],
+    [1.0,  0.0,  0.0,  0.0000],
+    [0.0,  1.0,  0.0, -0.0550],  # −55 mm — cantilever da barra em −Link6_y
+    [0.0,  0.0,  1.0,  0.1425],  # +142.5 mm — placa tool (+28) + probe (+114.5)
+    [0.0,  0.0,  0.0,  1.0000],
 ], dtype=float)
 
 # Limites articulares — convenção URDF (rad).

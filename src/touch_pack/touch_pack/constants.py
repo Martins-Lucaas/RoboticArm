@@ -95,6 +95,13 @@ TOUCH_PAYLOAD_FMT = '<If'
 # ESP32 da célula usa (DEST_IP em sensors/ForceDriver/src/main.cpp); a porta
 # 8081 (≠ 8080) é o que evita misturar os fluxos toque/força.
 TOUCH_UDP_BROADCAST_IP = '192.168.5.255'
+# Porta do RELAY do frame completo do toque (linhas brutas do STM32) para PCs
+# remotos SEM USB. O PC que tem a serial retransmite as linhas do firmware por
+# UDP nesta porta; um PC remoto faz bind aqui e injeta as linhas no MESMO parser
+# (TouchSensorSource._parse_line), reconstruindo heatmap/rasters/pós idênticos.
+# A 8081 segue carregando SÓ o escalar I_final (touch_receiver/force_sync
+# dependem desse formato '<If'); por isso o frame completo usa porta separada.
+TOUCH_FRAME_UDP_PORT = 8082
 
 # Idade máxima de uma amostra para entrar no par sincronizado (s).
 # A célula amostra a 100 Hz (10 ms); 0.25 s = ~25 amostras perdidas antes
