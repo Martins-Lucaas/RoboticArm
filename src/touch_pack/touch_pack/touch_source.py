@@ -95,11 +95,18 @@ class TouchSensorSource:
                  rows: int = ROWS, cols: int = COLS,
                  has_total: bool = True,
                  frame_relay: bool = False,
-                 frame_port: int = TOUCH_FRAME_UDP_PORT):
+                 frame_port: int = TOUCH_FRAME_UDP_PORT,
+                 on_raw_lines: Optional[Callable[[list], None]] = None):
         # port=None → auto-detect no start().
         self._port_req = port
         self.port: Optional[str] = None
         self._on_sample = on_sample
+        # Tap das LINHAS BRUTAS do firmware (já fatiadas, sem o "\n"), chamado a
+        # cada chunk FORA do lock. A GUI o usa para gravar os CSVs cru (ADC,
+        # spikes RA/SA, cuneiformes) idênticos ao plotter standalone, sem
+        # reparsing do estado agregado. Funciona no modo serial e no modo rede
+        # com relay de frame (:8082), onde as mesmas linhas chegam.
+        self._on_raw_lines = on_raw_lines
 
         # ── Modo de ingestão ──────────────────────────────────────────────
         # 'serial'  → lê o STM32 pela USB (start());
@@ -175,7 +182,13 @@ class TouchSensorSource:
         self.voltage_frame = np.zeros((self.rows, self.cols))
         self.spike_times_RA = [deque() for _ in range(self.num_taxels)]
         self.spike_times_SA = [deque() for _ in range(self.num_taxels)]
+        # Neurônio pós: o 4×4 manda UMA linha "POST" (neurônio único). O 5×5 manda
+        # três cuneiformes (CN_SA/CN_RA/CN_MM) plotadas em LINHAS SEPARADAS, como
+        # no standalone. Mantemos os dois: POST para o 4×4, as três para o 5×5.
         self.spike_times_POST: deque = deque()
+        self.spike_times_CN_SA: deque = deque()
+        self.spike_times_CN_RA: deque = deque()
+        self.spike_times_CN_MM: deque = deque()
         # I_final agora é série TEMPORAL: guarda (t, valor) e desliza pela mesma
         # janela RASTER_WINDOW que os rasters (antes eram só os últimos N
         # valores, indexados por amostra, sem noção de tempo). t vem de
@@ -343,6 +356,12 @@ class TouchSensorSource:
                 continue
 
             complete, pending = self._ingest(chunk.decode(errors="ignore"))
+            # Tap das linhas brutas (gravador de CSV cru da GUI) — FORA do lock.
+            if self._on_raw_lines is not None and complete:
+                try:
+                    self._on_raw_lines(complete)
+                except Exception:
+                    pass
             # Relay do frame completo (linhas brutas) p/ PCs remotos sem USB —
             # FORA do lock, e antes do escalar para minimizar latência do frame.
             if self._frame_relay:
@@ -377,6 +396,12 @@ class TouchSensorSource:
                 # Frame de :8082 chegou → marca fresco para o listener do escalar
                 # (:8081) se calar e não duplicar o I_final.
                 self._last_frame_rx = time.monotonic()
+                # Tap das linhas brutas (gravador de CSV cru da GUI) — FORA do lock.
+                if self._on_raw_lines is not None:
+                    try:
+                        self._on_raw_lines(_complete)
+                    except Exception:
+                        pass
             for i_final in pending:
                 if self._on_sample is not None:
                     try:
@@ -472,42 +497,28 @@ class TouchSensorSource:
                 pass
 
     def _note_time(self, t: float) -> None:
-        """Avança ``current_time`` para o timestamp mais recente e detecta
-        reset/wrap do ``micros()`` do STM32. Chamado SEMPRE sob ``self._lock``.
+        """Registra o timestamp do firmware (só p/ o CSV) e PODA a janela por
+        TEMPO REAL de chegada. Chamado SEMPRE sob ``self._lock``.
 
-        Sem isto, um salto grande para trás (STM32 reiniciado entre testes, ou
-        wrap do contador ~a cada 71 min) faria ``current_time`` despencar e a
-        poda ``current_time - t <= RASTER_WINDOW`` ficar negativa para sempre:
-        os spikes antigos NUNCA seriam descartados, as listas cresceriam sem
-        limite e o desenho iria travando aos poucos. Ao detectar a regressão,
-        limpa os buffers e re-ancora o relógio no novo timestamp.
+        Os instantes guardados nos buffers de spike/I_final são o relógio
+        monotônico do PC no momento da chegada (ver _parse_line), NÃO o
+        ``t`` do firmware. Por isso a janela desliza pelo relógio real e
+        NUNCA precisamos limpar tudo: cada spike simplesmente envelhece e sai
+        pela frente após RASTER_WINDOW s. Isso elimina o "reset" que ocorria
+        quando o relógio do ADC e o dos spikes tinham bases diferentes e a
+        antiga heurística ``t + RASTER_WINDOW < current_time`` zerava os
+        buffers a cada frame do heatmap.
 
-        Também PODA a janela aqui (≤50 Hz), descartando pela frente os spikes
-        que saíram dos últimos RASTER_WINDOW s. Mantém as listas pequenas o
-        tempo todo, então snapshot() (na thread da GUI) só copia — sem custo
-        O(N) de filtragem por frame, que era a causa dos travamentos."""
-        if t + RASTER_WINDOW < self.current_time:
-            for n in range(self.num_taxels):
-                self.spike_times_RA[n].clear()
-                self.spike_times_SA[n].clear()
-            self.spike_times_POST.clear()
-            self.I_final_data.clear()
-            self.current_time = t
-            self._last_evict = t
-            self._t_ref_stm = t
-            self._t_ref_pc = time.monotonic()
-            return
+        ``current_time`` segue sendo o timestamp do STM32 mais recente, usado
+        apenas por latest_voltages_and_time() para datar o CSV."""
         if t > self.current_time:
             self.current_time = t
-            # Re-ancora o relógio de display no dado mais novo: assim a janela
-            # "gruda" no presente quando há dados e desliza sozinha entre eles.
-            self._t_ref_stm = t
-            self._t_ref_pc = time.monotonic()
-        # Poda no máximo a ~50 Hz, independente da taxa de linhas da serial.
-        if self.current_time - self._last_evict < 0.02:
+        # Poda no máximo a ~50 Hz, por tempo real de chegada.
+        now = time.monotonic()
+        if now - self._last_evict < 0.02:
             return
-        self._last_evict = self.current_time
-        cutoff = self.current_time - RASTER_WINDOW
+        self._last_evict = now
+        cutoff = now - RASTER_WINDOW
         for n in range(self.num_taxels):
             ra = self.spike_times_RA[n]
             while ra and ra[0] < cutoff:
@@ -515,9 +526,10 @@ class TouchSensorSource:
             sa = self.spike_times_SA[n]
             while sa and sa[0] < cutoff:
                 sa.popleft()
-        post = self.spike_times_POST
-        while post and post[0] < cutoff:
-            post.popleft()
+        for cn in (self.spike_times_POST, self.spike_times_CN_SA,
+                   self.spike_times_CN_RA, self.spike_times_CN_MM):
+            while cn and cn[0] < cutoff:
+                cn.popleft()
         ifd = self.I_final_data
         while ifd and ifd[0][0] < cutoff:
             ifd.popleft()
@@ -526,6 +538,32 @@ class TouchSensorSource:
         """Parseia UMA linha e aplica ao estado. O CALLER já segura self._lock
         (lock batelado por chunk — ver _worker). I_final que chegar via TOTAL é
         empilhado em ``pending`` para broadcast/ROS fora do lock."""
+        # ── ADC (protocolo do 5x5_base: frame inteiro numa linha) ────────
+        # "ADC,v0,v1,...,vN-1,t=micros". Alimenta o heatmap e, no sensor sem
+        # TOTAL (5×5), sintetiza o escalar por frame (média das tensões).
+        if line.startswith("ADC"):
+            parts = line.split(",")
+            try:
+                tstamp = int(parts[-1].replace("t=", "").strip()) / 1e6
+            except (ValueError, IndexError):
+                return
+            vals = []
+            for v in parts[1:-1]:
+                v = v.strip()
+                if v.isdigit():
+                    vals.append(int(v))
+            if len(vals) != self.num_taxels:
+                return
+            self._note_time(tstamp)
+            self.voltage_matrix[:] = (
+                np.array(vals).reshape(self.rows, self.cols) * (VREF / 4095.0))
+            self.voltage_frame = self.voltage_matrix.copy()
+            if not self.has_total:
+                agg = self._frame_aggregate()
+                self.I_final_data.append((time.monotonic(), agg))
+                pending.append(agg)
+            return
+
         if line.startswith("DATA"):
             m = RE_DATA.search(line)
             if m:
@@ -547,8 +585,29 @@ class TouchSensorSource:
                     # tensões do frame recém-fechado, emitida aqui.
                     if not self.has_total:
                         agg = self._frame_aggregate()
-                        self.I_final_data.append((self.current_time, agg))
+                        self.I_final_data.append((time.monotonic(), agg))
                         pending.append(agg)
+
+        # CN_* ANTES de RA/SA: "CN_RA"/"CN_SA" também começam com "CN", mas o
+        # teste startswith("RA"/"SA") não os pega. Cada cuneiforme vai p/ sua
+        # PRÓPRIA deque → 3 linhas no raster (CN_SA/CN_FA/CN_MM), como o standalone
+        # (touch_sensor5x5_windows.py), em vez de colapsadas no neurônio pós.
+        elif (line.startswith("CN_MM") or line.startswith("CN_RA")
+              or line.startswith("CN_SA")):
+            # Os plotters standalone registram o spike SÓ pelo prefixo da linha —
+            # o firmware NÃO emite "t=" nas linhas CN. Exigir o regex aqui dropava
+            # TODOS os spikes → raster preso em 0.00. Spike no prefixo (relógio do
+            # PC); se houver "t=", usa só p/ datar o CSV/poda.
+            m = RE_POST.search(line)
+            if m:
+                self._note_time(int(m.group(1)) / 1e6)
+            now = time.monotonic()
+            if line.startswith("CN_MM"):
+                self.spike_times_CN_MM.append(now)
+            elif line.startswith("CN_RA"):
+                self.spike_times_CN_RA.append(now)
+            else:  # CN_SA
+                self.spike_times_CN_SA.append(now)
 
         elif line.startswith("RA"):
             m = RE_IDX_T.search(line)
@@ -558,7 +617,7 @@ class TouchSensorSource:
                     return
                 tstamp = int(m.group(2)) / 1e6
                 self._note_time(tstamp)
-                self.spike_times_RA[idx].append(tstamp)
+                self.spike_times_RA[idx].append(time.monotonic())
 
         elif line.startswith("SA"):
             m = RE_IDX_T.search(line)
@@ -568,14 +627,14 @@ class TouchSensorSource:
                     return
                 tstamp = int(m.group(2)) / 1e6
                 self._note_time(tstamp)
-                self.spike_times_SA[idx].append(tstamp)
+                self.spike_times_SA[idx].append(time.monotonic())
 
         elif line.startswith("POST"):
+            # Igual ao 4×4 standalone: spike no prefixo, sem exigir "t=".
             m = RE_POST.search(line)
             if m:
-                tstamp = int(m.group(1)) / 1e6
-                self._note_time(tstamp)
-                self.spike_times_POST.append(tstamp)
+                self._note_time(int(m.group(1)) / 1e6)
+            self.spike_times_POST.append(time.monotonic())
 
         elif line.startswith("TOTAL"):
             m = RE_TOTAL.search(line)
@@ -586,9 +645,7 @@ class TouchSensorSource:
                     return
                 if not np.isfinite(i_final):
                     return
-                # Ancora no relógio mais recente do STM32 (TOTAL não traz t)
-                # para a série deslizar junto com os rasters.
-                self.I_final_data.append((self.current_time, i_final))
+                self.I_final_data.append((time.monotonic(), i_final))
                 pending.append(i_final)
 
     def _frame_aggregate(self) -> float:
@@ -643,21 +700,18 @@ class TouchSensorSource:
         o lock — sem custo O(N) de filtragem na thread da GUI (era o que
         travava o desenho sob carga). O desenho em si roda fora do lock."""
         with self._lock:
-            t_now = self.current_time
-            # Relógio de DISPLAY contínuo: parte do último dado (t_ref_stm) e
-            # avança com o relógio real do PC, então a janela desliza suave a
-            # cada frame mesmo sem dado novo. Limitado a current_time + W: depois
-            # disso a janela já esvaziou (tudo correu para fora pela esquerda).
-            if self._t_ref_pc is None:
-                t_disp = self.current_time
-            else:
-                t_disp = self._t_ref_stm + (time.monotonic() - self._t_ref_pc)
-                if t_disp > self.current_time + RASTER_WINDOW:
-                    t_disp = self.current_time + RASTER_WINDOW
+            # Base de tempo do desenho = relógio REAL do PC (monotônico), o mesmo
+            # carimbado em cada spike/I_final na chegada. A janela desliza suave
+            # a cada frame mesmo sem dado novo, e os spikes saem por idade real.
+            t_now = time.monotonic()
+            t_disp = t_now
             volt = self.voltage_frame.copy()
             ra = [list(lst) for lst in self.spike_times_RA]
             sa = [list(lst) for lst in self.spike_times_SA]
             post = list(self.spike_times_POST)
+            cn_sa = list(self.spike_times_CN_SA)
+            cn_ra = list(self.spike_times_CN_RA)
+            cn_mm = list(self.spike_times_CN_MM)
             i_final = list(self.I_final_data)  # lista de (t, valor)
             latest_v = float(self.I_final_data[-1][1]) if self.I_final_data else 0.0
         return {
@@ -667,6 +721,9 @@ class TouchSensorSource:
             "ra": ra,
             "sa": sa,
             "post": post,
+            "cn_sa": cn_sa,
+            "cn_ra": cn_ra,
+            "cn_mm": cn_mm,
             "i_final": i_final,
             "latest_i_final": latest_v,
         }
@@ -727,8 +784,11 @@ class TouchFigure:
 
         # ── Raster RA / SA (janela deslizante, eixo de tempo absoluto) ──
         ax2.set_title("Raster RA / SA")
-        ax2.set_xlim(0, RASTER_WINDOW)
+        # Eixo de tempo RELATIVO e fixo (0 s = agora, -W = mais antigo): os
+        # spikes deslizam da direita p/ a esquerda e saem por idade real.
+        ax2.set_xlim(-RASTER_WINDOW, 0)
         ax2.set_ylim(-1, self.num_taxels * 2)
+        ax2.set_xlabel("t - agora (s)")
         self.scatter_RA = ax2.scatter([], [], s=10, color="red", label="RA")
         self.scatter_SA = ax2.scatter([], [], s=10, color="blue", label="SA")
         ax2.legend(loc="upper right", fontsize=8)
@@ -737,7 +797,7 @@ class TouchFigure:
         # Como no standalone: o painel mostra as últimas WINDOW_SIZE amostras
         # sobre o ÍNDICE da amostra (eixo X fixo 0..WINDOW_SIZE), não sobre
         # tempo. 4×4: I_final (corrente do neurônio, ±1000). 5×5: sem TOTAL,
-        # mostra a "ativação média" (V) sintetizada por frame — ver
+        # mostra o I_final sintetizado por frame (média das tensões, V) — ver
         # TouchSensorSource._frame_aggregate.
         self._x_fixed = np.arange(WINDOW_SIZE)
         (self.line_I_final,) = ax5.plot(
@@ -746,15 +806,34 @@ class TouchFigure:
             ax5.set_title("I_final")
             ax5.set_ylim(-1000, 1000)
         else:
-            ax5.set_title("Ativação média (V)")
+            # 5×5 não tem linha TOTAL: o escalar é a média das tensões do frame
+            # (ver _frame_aggregate). Rotulamos "I_final" como no plotter
+            # standalone (touch_sensor5x5_windows.py) — o usuário não quer o
+            # nome "Ativação média".
+            ax5.set_title("I_final")
+            ax5.set_ylabel("Mean Voltage (V)")
             ax5.set_ylim(0, VREF)
         ax5.set_xlim(0, WINDOW_SIZE)
 
-        # ── Neurônio pós (janela deslizante, eixo de tempo absoluto) ────
-        ax6.set_title("Neurônio Pós")
-        ax6.set_xlim(0, RASTER_WINDOW)
-        ax6.set_ylim(-1, 1)
-        self.scatter_POST = ax6.scatter([], [], s=20, color="black")
+        # ── Neurônio pós / cuneiformes (janela deslizante) ──────────────
+        # 4×4: neurônio pós único (linha "POST"). 5×5: três cuneiformes em LINHAS
+        # SEPARADAS (CN_SA=1, CN_FA=2, CN_MM=3), iguais ao standalone.
+        ax6.set_xlim(-RASTER_WINDOW, 0)
+        ax6.set_xlabel("t - agora (s)")
+        if self.has_total:
+            ax6.set_title("Neurônio Pós")
+            ax6.set_ylim(-1, 1)
+            self.scatter_POST = ax6.scatter([], [], s=20, color="black")
+            self.scatter_CN_SA = self.scatter_CN_RA = self.scatter_CN_MM = None
+        else:
+            ax6.set_title("Raster Cuneiforme")
+            ax6.set_ylim(0.3, 3.7)
+            ax6.set_yticks([1, 2, 3])
+            ax6.set_yticklabels(["CN_SA", "CN_FA", "CN_MM"])
+            self.scatter_POST = None
+            self.scatter_CN_SA = ax6.scatter([], [], s=14, color="#006B6B")
+            self.scatter_CN_RA = ax6.scatter([], [], s=14, color="#8C2D5D")
+            self.scatter_CN_MM = ax6.scatter([], [], s=14, color="#3D4F8A")
 
         try:
             self.fig.tight_layout()
@@ -765,33 +844,38 @@ class TouchFigure:
         # figura inteira é redesenhada — então os limites de eixo podem deslizar
         # em tempo absoluto a cada frame. A lista ainda é devolvida por update()
         # para compatibilidade com a FuncAnimation.
+        post_artists = ([self.scatter_POST] if self.has_total
+                        else [self.scatter_CN_SA, self.scatter_CN_RA,
+                              self.scatter_CN_MM])
         self.blit_artists = [
             self.im_volt,
             self.scatter_RA,
             self.scatter_SA,
-            self.scatter_POST,
             self.line_I_final,
-        ] + [t for row in self.texts_volt for t in row]
+        ] + post_artists + [t for row in self.texts_volt for t in row]
 
     # ──────────────────────────────────────────────────────────────────
     def init_blit(self) -> list:
         """Estado inicial da FuncAnimation (init_func)."""
         self.scatter_RA.set_offsets(np.empty((0, 2)))
         self.scatter_SA.set_offsets(np.empty((0, 2)))
-        self.scatter_POST.set_offsets(np.empty((0, 2)))
+        if self.has_total:
+            self.scatter_POST.set_offsets(np.empty((0, 2)))
+        else:
+            self.scatter_CN_SA.set_offsets(np.empty((0, 2)))
+            self.scatter_CN_RA.set_offsets(np.empty((0, 2)))
+            self.scatter_CN_MM.set_offsets(np.empty((0, 2)))
         self.line_I_final.set_data(self._x_fixed, np.zeros(WINDOW_SIZE))
         return self.blit_artists
 
     # ──────────────────────────────────────────────────────────────────
     def update(self, *_frame) -> list:
         snap = self.source.snapshot()
-        # Estilo standalone: o raster e o neurônio pós usam TEMPO ABSOLUTO
-        # (segundos do relógio do STM32) e a janela DESLIZA mudando o xlim para
-        # (agora-RASTER_WINDOW .. agora). now_t = timestamp mais recente do
-        # firmware. Como o redraw é completo (blit=False), mexer no xlim a cada
-        # frame é permitido — exatamente o que o touch_sensor*.py faz.
+        # Tempo RELATIVO ao agora (relógio real do PC): cada spike é plotado em
+        # x = t_chegada - now_t, no intervalo [-RASTER_WINDOW, 0]. O xlim é fixo
+        # (definido no __init__), então a janela "desliza" porque os dados se
+        # movem, não o eixo — acumulam e saem pela esquerda por idade real.
         now_t = snap["t_now"]
-        x_lo = max(0.0, now_t - RASTER_WINDOW)
 
         # Heatmap (rot90 ×2 = mesma orientação física do plotter standalone).
         # IMPORTANTE: os números sobrepostos usam a MESMA matriz rotacionada que
@@ -809,22 +893,29 @@ class TouchFigure:
         ra = snap["ra"]
         for n in range(self.num_taxels):
             for t in ra[n]:
-                x_ra.append(t)
+                x_ra.append(t - now_t)
                 y_ra.append(n)
         x_sa, y_sa = [], []
         sa = snap["sa"]
         for n in range(self.num_taxels):
             for t in sa[n]:
-                x_sa.append(t)
+                x_sa.append(t - now_t)
                 y_sa.append(n + self.num_taxels)
         self.scatter_RA.set_offsets(_offsets(x_ra, y_ra))
         self.scatter_SA.set_offsets(_offsets(x_sa, y_sa))
-        self.ax_raster.set_xlim(x_lo, now_t if now_t > x_lo else x_lo + RASTER_WINDOW)
 
-        # Neurônio pós — timestamps absolutos sobre a mesma janela do raster.
-        x_post = list(snap["post"])
-        self.scatter_POST.set_offsets(_offsets(x_post, [0] * len(x_post)))
-        self.ax_post.set_xlim(x_lo, now_t if now_t > x_lo else x_lo + RASTER_WINDOW)
+        # Neurônio pós (4×4) ou cuneiformes em 3 linhas (5×5) — mesmo eixo
+        # relativo do raster.
+        if self.has_total:
+            x_post = [t - now_t for t in snap["post"]]
+            self.scatter_POST.set_offsets(_offsets(x_post, [0] * len(x_post)))
+        else:
+            for scat, key, y in (
+                    (self.scatter_CN_SA, "cn_sa", 1),
+                    (self.scatter_CN_RA, "cn_ra", 2),
+                    (self.scatter_CN_MM, "cn_mm", 3)):
+                xs = [t - now_t for t in snap[key]]
+                scat.set_offsets(_offsets(xs, [y] * len(xs)))
 
         # Painel escalar — últimas WINDOW_SIZE amostras sobre ÍNDICE (como o
         # standalone): pega os valores mais recentes do buffer e os alinha à

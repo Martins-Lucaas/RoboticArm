@@ -85,7 +85,11 @@ const float V_GAIN = (R1 + R2) / R2;
 // célula em repouso (porta 8080): ainda sobravam +0.001416 V → somado de novo
 // (0.45886 + 0.001416 = 0.460276), agora o repouso sai em 0. Se mudar de
 // célula/amp ou houver deriva térmica, reajuste (a GUI ainda faz tare por cima).
-const float V_OFFSET = 0.460276f;
+// TEMPORARIAMENTE ZERADO (troca p/ célula de 5 kg): o offset antigo (0.460276)
+// era da MK CSA/ZL-100 e não vale mais. Com 0, o firmware manda a tensão do amp
+// "crua" (só amplificada/dividida, sem subtrair repouso) e a tare da GUI/calib
+// cuida do zero. Reaferir e repor o offset da célula nova quando recalibrar.
+const float V_OFFSET = 0.0f;
 
 // ======================================================
 // TEMPORIZAÇÃO — 1 kHz não-bloqueante + ENVIO EM LOTE

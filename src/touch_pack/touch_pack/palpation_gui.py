@@ -140,6 +140,12 @@ except Exception:  # pragma: no cover
 
 log = logging.getLogger('touch_pack.palpation_gui')
 
+# Regex p/ os CSVs "crus" (ADC, spikes RA/SA, cuneiformes) — gravados junto do
+# __sensors.csv quando o usuário aperta "Salvar dados". Idênticos ao plotter
+# de coleta standalone (sensors/Touch_sensor/touch_sensor5x5_windows.py).
+_REF_SPIKE_RE = re.compile(r"idx=(\d+),adc=(\d+),t=(\d+)")
+_REF_T_RE = re.compile(r"t=(\d+)")
+
 # Faixas dos parâmetros — adequadas ao protocolo Gupta et al. 2021.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 1.0,  30.0,  10.0    # mm/s
 FORCE_MIN, FORCE_MAX, FORCE_DEFAULT = 0.2,   5.0,   1.0    # N (apenas display)
@@ -498,6 +504,16 @@ class PalpationGUI(Node):
         self._rec_path: str | None = None
         self._rec_count: int = 0
         self._rec_after: str | None = None
+        # CSVs "crus" gravados em paralelo ao __sensors.csv, no MESMO instante
+        # de início/fim e com o MESMO timestamp no nome: adc_*, spikes_*,
+        # cuneiformes_* — idênticos ao plotter de coleta standalone. Alimentados
+        # pelo tap de linhas brutas da fonte (_on_raw_lines), na thread serial.
+        self._ref_adc_fh = None
+        self._ref_adc_writer = None
+        self._ref_spike_fh = None
+        self._ref_spike_writer = None
+        self._ref_cn_fh = None
+        self._ref_cn_writer = None
         # Cabeçalho do CSV montado a partir da GRADE escolhida (4×4 ou 5×5).
         # touch_t_stm_s = relógio do firmware (micros()/1e6 a 1 kHz): é ELE que
         # data cada amostra de 1 ms, em vez do relógio do PC (t_unix). As colunas
@@ -554,7 +570,8 @@ class PalpationGUI(Node):
                 on_sample=self._on_touch_sample,
                 rows=self._touch_rows, cols=self._touch_cols,
                 has_total=self._touch_has_total,
-                frame_relay=True)
+                frame_relay=True,
+                on_raw_lines=self._on_raw_lines)
 
         # ─── Tkinter root ────────────────────────────────────────────
         self.root = tk.Tk()
@@ -921,12 +938,18 @@ class PalpationGUI(Node):
         except OSError as exc:
             self._set_rec_status(f'falha ao abrir CSV: {exc}', DANGER)
             return
+        # CSVs crus (ADC / spikes / cuneiformes), mesmo timestamp do __sensors.
+        # Best-effort: se algum falhar, o __sensors.csv segue gravando.
+        ref = self._open_reference_csvs(ts)
         with self._lock:
             self._rec_fh = fh
             self._rec_writer = writer
             self._rec_path = path
             self._rec_t0 = time.time()
             self._rec_count = 0
+            (self._ref_adc_fh, self._ref_adc_writer,
+             self._ref_spike_fh, self._ref_spike_writer,
+             self._ref_cn_fh, self._ref_cn_writer) = ref
         self.rec_btn.config(text='■ Parar gravação', bg=DANGER, fg='white')
         self._set_rec_status(f'gravando → {os.path.basename(path)}', OK)
         self._rec_after = self.root.after(
@@ -978,6 +1001,79 @@ class PalpationGUI(Node):
             except (ValueError, OSError) as exc:
                 log.warning('falha ao gravar amostra sincronizada: %s', exc)
 
+    # ── CSVs "crus" (ADC / spikes / cuneiformes), iguais ao standalone ──
+    def _open_reference_csvs(self, ts: str) -> tuple:
+        """Abre os três CSVs crus com o cabeçalho do plotter de coleta
+        standalone (adc_*, spikes_*, cuneiformes_*) e devolve a tupla
+        (adc_fh, adc_writer, spike_fh, spike_writer, cn_fh, cn_writer).
+
+        Best-effort: se a abertura falhar, devolve None nos campos — a gravação
+        do __sensors.csv não é afetada. Os tempos gravados nestes arquivos são o
+        relógio do firmware (t=micros()/1e6), idênticos ao standalone."""
+        try:
+            adc_fh = open(os.path.join(RUNS_DIR, f'adc_{ts}.csv'), 'w', newline='')
+            adc_w = csv.writer(adc_fh)
+            adc_w.writerow(['tempo']
+                           + [f'taxel_{i}' for i in range(self._touch_taxels)])
+            spike_fh = open(os.path.join(RUNS_DIR, f'spikes_{ts}.csv'),
+                            'w', newline='')
+            spike_w = csv.writer(spike_fh)
+            spike_w.writerow(['tempo', 'tipo', 'idx', 'adc'])
+            cn_fh = open(os.path.join(RUNS_DIR, f'cuneiformes_{ts}.csv'),
+                         'w', newline='')
+            cn_w = csv.writer(cn_fh)
+            cn_w.writerow(['tempo', 'tipo'])
+        except OSError as exc:
+            log.warning('falha ao abrir CSVs crus: %s', exc)
+            return (None, None, None, None, None, None)
+        return (adc_fh, adc_w, spike_fh, spike_w, cn_fh, cn_w)
+
+    def _on_raw_lines(self, lines: list) -> None:
+        """Tap das linhas brutas do firmware (thread serial, ~1 kHz por chunk).
+
+        Quando há gravação ativa, grava ADC/RA/SA/CN_* nos CSVs crus exatamente
+        como o plotter de coleta standalone. Fast-path sem lock quando não há
+        gravação; sob o lock as linhas vão para os writers (reconferidos, pois
+        _stop_recording os zera sob o MESMO lock)."""
+        if self._ref_adc_writer is None:
+            return  # fast-path: nada a gravar
+        with self._lock:
+            adc_w = self._ref_adc_writer
+            spike_w = self._ref_spike_writer
+            cn_w = self._ref_cn_writer
+            if adc_w is None:
+                return  # _stop_recording correu entre o fast-path e aqui
+            try:
+                for line in lines:
+                    self._write_reference_line(line.strip(), adc_w, spike_w, cn_w)
+            except (ValueError, OSError) as exc:
+                log.warning('falha ao gravar CSV cru: %s', exc)
+
+    def _write_reference_line(self, line, adc_w, spike_w, cn_w) -> None:
+        """Parseia UMA linha e grava no CSV cru correspondente (sob self._lock)."""
+        if not line:
+            return
+        if line.startswith('ADC'):
+            parts = line.split(',')
+            try:
+                tstamp = int(parts[-1].replace('t=', '').strip()) / 1e6
+            except (ValueError, IndexError):
+                return
+            vals = [int(v.strip()) for v in parts[1:-1] if v.strip().isdigit()]
+            if len(vals) != self._touch_taxels:
+                return
+            adc_w.writerow([tstamp, *vals])
+        elif line.startswith('CN_MM') or line.startswith('CN_RA') \
+                or line.startswith('CN_SA'):
+            m = _REF_T_RE.search(line)
+            t = int(m.group(1)) / 1e6 if m else 0.0
+            cn_w.writerow([t, line[:5]])
+        elif line.startswith('RA') or line.startswith('SA'):
+            m = _REF_SPIKE_RE.search(line)
+            if m:
+                spike_w.writerow([int(m.group(3)) / 1e6, line[:2],
+                                  int(m.group(1)), int(m.group(2))])
+
     def _recording_status_tick(self) -> None:
         """Só atualiza o rótulo de status (na thread Tk); as linhas são gravadas
         pelo callback do toque, não aqui."""
@@ -1005,11 +1101,21 @@ class PalpationGUI(Node):
             self._rec_fh = None
             self._rec_writer = None
             self._rec_path = None
+            ref_fhs = [self._ref_adc_fh, self._ref_spike_fh, self._ref_cn_fh]
+            self._ref_adc_fh = self._ref_adc_writer = None
+            self._ref_spike_fh = self._ref_spike_writer = None
+            self._ref_cn_fh = self._ref_cn_writer = None
         if fh is not None:
             try:
                 fh.flush(); fh.close()
             except OSError:
                 pass
+        for rfh in ref_fhs:
+            if rfh is not None:
+                try:
+                    rfh.flush(); rfh.close()
+                except OSError:
+                    pass
         try:
             self.rec_btn.config(
                 text='●  Salvar dados (força+toque)', bg=BTN_NEUTRAL, fg=TEXT)
